@@ -42,6 +42,14 @@ config GS201_AOC_BOOT
 	  AoC's services; it only checks that the firmware comes up. For
 	  bring-up only.
 
+config GS201_AOC_RAILS
+	tristate "gs201 AoC microphone and sensor supplies over ACPM (bring-up)"
+	depends on EXYNOS_ACPM_PROTOCOL
+	help
+	  Reads, and with enable=1 turns on, the five S2MPG12/S2MPG13 LDOs that
+	  feed the AoC's digital microphones and sensors, until there is an
+	  S2MPG12/13 regulator driver. For bring-up only.
+
 endmenu
 
 endif
