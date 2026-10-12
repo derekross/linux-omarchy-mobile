@@ -894,6 +894,23 @@
 	};
 };
 
+&pcie_0 {
+	modem {
+		compatible = "samsung,s5300-modem";
+		ap2cp-pda-active-gpios = <&gph1 1 GPIO_ACTIVE_HIGH>;
+		ap2cp-cp-pwr-on-gpios = <&gph1 2 GPIO_ACTIVE_HIGH>;
+		ap2cp-nreset-gpios = <&gph1 3 GPIO_ACTIVE_HIGH>;
+		ap2cp-cp-wrst-gpios = <&gph1 6 GPIO_ACTIVE_HIGH>;
+		ap2cp-pm-wrst-gpios = <&gpa0 3 GPIO_ACTIVE_HIGH>;
+		ap2cp-wakeup-gpios = <&gph0 2 GPIO_ACTIVE_HIGH>;
+		ap2cp-dump-noti-gpios = <&gph0 3 GPIO_ACTIVE_HIGH>;
+		cp2ap-cp-wrst-gpios = <&gpa0 2 GPIO_ACTIVE_HIGH>;
+		cp2ap-ps-hold-gpios = <&gpa8 2 GPIO_ACTIVE_HIGH>;
+		cp2ap-wakeup-gpios = <&gpa8 3 GPIO_ACTIVE_HIGH>;
+		cp2ap-phone-active-gpios = <&gpa8 4 GPIO_ACTIVE_HIGH>;
+	};
+};
+
 /*
  * Camera power (CAMERA-PLAN.md 1.2), from Google's GPL pantah camera PMIC
  * device tree: two fixed supplies switched by S2MPG13 GPIOs feed the
