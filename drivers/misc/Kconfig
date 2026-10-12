@@ -229,6 +229,19 @@ config GEHC_ACHC
 	  To compile this driver as a module, choose M here: the
 	  module will be called gehc-achc.
 
+config GOODIX_FP
+	tristate "Goodix under-display fingerprint sensor (AP side)"
+	depends on OF && NET && INPUT
+	help
+	  Power, reset and interrupt handling for Goodix optical under-display
+	  fingerprint sensors whose bus is owned by a trusted application in
+	  the secure world, as on the Google Pixel 7 Pro. Provides the
+	  /dev/goodix_fp device and netlink interrupt events that the vendor
+	  fingerprint HAL uses.
+
+	  To compile this driver as a module, choose M here: the module will be
+	  called goodix-fp.
+
 config HI6421V600_IRQ
 	tristate "HiSilicon Hi6421v600 IRQ and powerkey"
 	depends on OF
