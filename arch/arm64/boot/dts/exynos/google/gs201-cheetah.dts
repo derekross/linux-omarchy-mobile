@@ -24,6 +24,7 @@
 
 	aliases {
 		spi0 = &spi_0;
+		spi5 = &spi_5;
 	};
 
 	chosen {
@@ -909,6 +910,79 @@
 		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
 		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
 		samsung,pin-pud-pdn = <GS101_PIN_PULL_DOWN>;
+	};
+};
+
+/*
+ * GNSS: Broadcom BCM4775x on PERIC0 USI5 SPI (Google's spi5), 26 MHz, mode 3,
+ * as on stock (spi5 node and bcm4775@0 in the stock device tree). Chip
+ * select is driven as a GPIO, like the touchscreen's. The stock lhd/gpsd
+ * daemons drive it through /dev/ttyBCM. Disabled until the gnss-test
+ * overlay (GNSS-PLAN.md, G2).
+ */
+&usi5 {
+	samsung,mode = <USI_MODE_SPI>;
+};
+
+&spi_5 {
+	pinctrl-0 = <&spi5_bus &spi5_cs_gpio>;
+	cs-gpios = <&gpp10 3 GPIO_ACTIVE_LOW>;
+	num-cs = <1>;
+
+	gnss@0 {
+		compatible = "brcm,bcm4775-gnss";
+		reg = <0>;
+		spi-max-frequency = <26000000>;
+		spi-cpol;
+		spi-cpha;
+		interrupts-extended = <&gpa6 4 IRQ_TYPE_LEVEL_HIGH>;
+		/* Raw levels: lhd writes 1 to the nstandby attribute to run it */
+		nstandby-gpios = <&gph2 3 GPIO_ACTIVE_HIGH>;
+		mcu-req-gpios = <&gpp4 3 GPIO_ACTIVE_HIGH>;
+		mcu-resp-gpios = <&gph2 2 GPIO_ACTIVE_HIGH>;
+		host-req-gpios = <&gpa6 4 GPIO_ACTIVE_HIGH>;
+		vddcore-supply = <&ldo9s>;
+		vddrf-supply = <&ldo10s>;
+		vddaux-supply = <&ldo11s>;
+		pinctrl-0 = <&gnss_nstandby &gnss_mcu_resp &gnss_mcu_req
+			     &gnss_host_req>;
+		pinctrl-names = "default";
+	};
+};
+
+&pinctrl_hsi2 {
+	gnss_mcu_resp: gnss-mcu-resp-pins {
+		samsung,pins = "gph2-2";
+		samsung,pin-function = <GS101_PIN_FUNC_INPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_DOWN>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
+		samsung,pin-pud-pdn = <GS101_PIN_PULL_DOWN>;
+	};
+
+	gnss_nstandby: gnss-nstandby-pins {
+		samsung,pins = "gph2-3";
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
+		samsung,pin-pud-pdn = <GS101_PIN_PULL_NONE>;
+	};
+};
+
+&pinctrl_peric0 {
+	gnss_mcu_req: gnss-mcu-req-pins {
+		samsung,pins = "gpp4-3";
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+};
+
+&pinctrl_far_alive {
+	gnss_host_req: gnss-host-req-pins {
+		samsung,pins = "gpa6-4";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
 	};
 };
 
