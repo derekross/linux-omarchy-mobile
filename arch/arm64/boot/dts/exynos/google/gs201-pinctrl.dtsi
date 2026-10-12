@@ -404,6 +404,20 @@
 		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
 	};
 
+	spi5_bus: spi5-bus-pins {
+		samsung,pins = "gpp10-0", "gpp10-1", "gpp10-2";
+		samsung,pin-function = <GS101_PIN_FUNC_3>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
+	spi5_cs_gpio: spi5-cs-gpio-pins {
+		samsung,pins = "gpp10-3";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
 	spi6_bus: spi6-bus-pins {
 		samsung,pins = "gpp12-0", "gpp12-1", "gpp12-2";
 		samsung,pin-function = <GS101_PIN_FUNC_3>;
