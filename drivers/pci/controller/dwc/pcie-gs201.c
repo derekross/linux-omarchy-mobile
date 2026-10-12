@@ -311,6 +311,27 @@ static void gs201_pcie_set_iocc(struct gs201_pcie *gp, bool enable)
 			   enable ? GS201_SYSREG_SHARABLE_ENABLE : 0);
 }
 
+/*
+ * Google's driver programs the coherency once after the root port setup and
+ * again once the endpoint is enumerated (exynos_pcie_rc_establish_link() and
+ * the end of exynos_pcie_rc_probe()). Do the same, and print what the
+ * registers hold, since a device that is marked dma-coherent but is not
+ * snooped sees stale ring memory.
+ */
+static void gs201_pcie_check_iocc(struct gs201_pcie *gp, const char *when)
+{
+	struct dw_pcie *pci = &gp->pci;
+	u32 shr = 0;
+
+	if (!gp->sysreg || !gp->coherent)
+		return;
+
+	gs201_pcie_set_iocc(gp, true);
+	regmap_read(gp->sysreg, gp->sysreg_offset, &shr);
+	dev_info(pci->dev, "IOCC %s: AxCACHE 0x%08x, shareability 0x%x\n", when,
+		 dw_pcie_readl_dbi(pci, COHERENCY_CONTROL_3_OFF), shr);
+}
+
 static void gs201_pcie_setup_elbi(struct gs201_pcie *gp)
 {
 	gs201_trace(gp, "about to set up ELBI 0x3bc 0x3a0 0x3a8 0x474 0x1078 and the LTSSM history");
@@ -735,6 +756,7 @@ static int gs201_pcie_start_link(struct dw_pcie *pci)
 	if (!ret) {
 		dev_info(dev, "link up on try %u\n", try);
 		gs201_pcie_enable_irqs(gp);
+		gs201_pcie_check_iocc(gp, "after link up");
 	}
 
 	dev_dbg(dev, "D-state %lu, LTSSM %#x\n",
@@ -1150,6 +1172,8 @@ static int gs201_pcie_probe(struct platform_device *pdev)
 		gs201_pcie_remove_irq(gp);
 		return ret;
 	}
+
+	gs201_pcie_check_iocc(gp, "after enumeration");
 
 	return 0;
 }
