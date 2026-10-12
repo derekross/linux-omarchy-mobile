@@ -49,6 +49,8 @@
 #define MSGBUF_TYPE_RX_CMPLT			0x12
 #define MSGBUF_TYPE_LPBK_DMAXFER		0x13
 #define MSGBUF_TYPE_LPBK_DMAXFER_CMPLT		0x14
+#define MSGBUF_TYPE_H2D_MAILBOX_DATA		0x23
+#define MSGBUF_TYPE_D2H_MAILBOX_DATA		0x24
 
 #define NR_TX_PKTIDS				2048
 #define NR_RX_PKTIDS				2048
@@ -136,6 +138,23 @@ struct msgbuf_rx_ioctl_resp_or_event {
 struct msgbuf_completion_hdr {
 	__le16				status;
 	__le16				flow_ring_id;
+};
+
+/*
+ * Mailbox data as control messages, for firmware that doesn't use the
+ * shared-memory mailbox (Broadcom's h2d_mailbox_data and d2h_mailbox_data).
+ */
+struct msgbuf_h2d_mailbox_data {
+	struct msgbuf_common_hdr	msg;
+	__le32				mb_data;
+	__le32				rsvd[7];
+};
+
+struct msgbuf_d2h_mailbox_data {
+	struct msgbuf_common_hdr	msg;
+	struct msgbuf_completion_hdr	compl_hdr;
+	__le32				mb_data;
+	__le32				rsvd;
 };
 
 /* Data struct for the MSGBUF_TYPE_GEN_STATUS */
@@ -1438,6 +1457,7 @@ brcmf_msgbuf_process_flow_ring_delete_response(struct brcmf_msgbuf *msgbuf,
 static void brcmf_msgbuf_process_msgtype(struct brcmf_msgbuf *msgbuf, void *buf)
 {
 	struct brcmf_pub *drvr = msgbuf->drvr;
+	struct msgbuf_d2h_mailbox_data *mb_data;
 	struct msgbuf_common_hdr *msg;
 
 	msg = (struct msgbuf_common_hdr *)buf;
@@ -1477,6 +1497,11 @@ static void brcmf_msgbuf_process_msgtype(struct brcmf_msgbuf *msgbuf, void *buf)
 		brcmf_dbg(MSGBUF, "MSGBUF_TYPE_RX_CMPLT\n");
 		brcmf_msgbuf_process_rx_complete(msgbuf, buf);
 		break;
+	case MSGBUF_TYPE_D2H_MAILBOX_DATA:
+		brcmf_dbg(MSGBUF, "MSGBUF_TYPE_D2H_MAILBOX_DATA\n");
+		mb_data = (struct msgbuf_d2h_mailbox_data *)buf;
+		brcmf_bus_d2h_mb_data(drvr->bus_if, le32_to_cpu(mb_data->mb_data));
+		break;
 	default:
 		bphy_err(drvr, "Unsupported msgtype %d\n", msg->msgtype);
 		break;
@@ -1513,6 +1538,37 @@ again:
 
 	if (commonring->r_ptr == 0)
 		goto again;
+}
+
+
+/* Mailbox data for the device, sent as a control message. */
+int brcmf_proto_msgbuf_h2d_mb_data(struct device *dev, u32 data)
+{
+	struct brcmf_bus *bus_if = dev_get_drvdata(dev);
+	struct brcmf_pub *drvr = bus_if->drvr;
+	struct msgbuf_h2d_mailbox_data *mb_data;
+	struct brcmf_commonring *commonring;
+	struct brcmf_msgbuf *msgbuf;
+	int err;
+
+	if (!drvr || !drvr->proto || !drvr->proto->pd)
+		return -EAGAIN;
+	msgbuf = (struct brcmf_msgbuf *)drvr->proto->pd;
+
+	commonring = msgbuf->commonrings[BRCMF_H2D_MSGRING_CONTROL_SUBMIT];
+	brcmf_commonring_lock(commonring);
+	mb_data = brcmf_commonring_reserve_for_write(commonring);
+	if (!mb_data) {
+		brcmf_commonring_unlock(commonring);
+		return -ENOMEM;
+	}
+	memset(mb_data, 0, sizeof(*mb_data));
+	mb_data->msg.msgtype = MSGBUF_TYPE_H2D_MAILBOX_DATA;
+	mb_data->mb_data = cpu_to_le32(data);
+	err = brcmf_commonring_write_complete(commonring);
+	brcmf_commonring_unlock(commonring);
+
+	return err;
 }
 
 
