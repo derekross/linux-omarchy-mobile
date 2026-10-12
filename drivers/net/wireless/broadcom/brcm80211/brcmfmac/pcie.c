@@ -1473,8 +1473,10 @@ static int brcmf_pcie_init_ringbuffers(struct brcmf_pciedev_info *devinfo)
 		devinfo->idxbuf = dma_alloc_coherent(&devinfo->pdev->dev, bufsz,
 						     &devinfo->idxbuf_dmahandle,
 						     GFP_KERNEL);
-		if (!devinfo->idxbuf)
+		if (!devinfo->idxbuf) {
+			brcmf_err(bus, "no DMA memory for ring indices, using TCM\n");
 			devinfo->dma_idx_sz = 0;
+		}
 	}
 
 	if (devinfo->dma_idx_sz == 0) {
@@ -1848,6 +1850,7 @@ brcmf_pcie_init_share_ram_info(struct brcmf_pciedev_info *devinfo,
 
 	shared->flags = brcmf_pcie_read_tcm32(devinfo, sharedram_addr);
 	shared->version = (u8)(shared->flags & BRCMF_PCIE_SHARED_VERSION_MASK);
+	brcmf_dbg(PCIE, "shared flags 0x%08x\n", shared->flags);
 	brcmf_dbg(PCIE, "PCIe protocol version %d\n", shared->version);
 	if ((shared->version > BRCMF_PCIE_MAX_SHARED_VERSION) ||
 	    (shared->version < BRCMF_PCIE_MIN_SHARED_VERSION)) {
