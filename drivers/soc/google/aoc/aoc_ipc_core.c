@@ -593,6 +593,14 @@ bool aoc_ring_reset_write_pointer(aoc_service *service, aoc_direction dir)
 	wp = ioread32(&r->wp);
 	bytes_remaining = sz - wp;
 
+	/*
+	 * Already at the ring start (a ring never written, or one that ended
+	 * on a wrap): nothing to skip. Advancing by a whole ring here would
+	 * mark it full of stale data, and the first write would find no room.
+	 */
+	if (wp == 0)
+		return true;
+
 	if (bytes_remaining > 0)
 		_region_advance_tx(r, bytes_remaining);
 
