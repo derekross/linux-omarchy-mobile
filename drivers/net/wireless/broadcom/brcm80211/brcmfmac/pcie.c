@@ -1198,6 +1198,18 @@ static irqreturn_t brcmf_pcie_isr_thread(int irq, void *arg)
 			if (devinfo->state == BRCMFMAC_PCIE_STATE_UP)
 				brcmf_proto_msgbuf_rx_trigger(
 							&devinfo->pdev->dev);
+			/* With INTx and DMA'd indices the interrupt can
+			 * overtake the index update it announces; Broadcom's
+			 * driver looks again later
+			 * (dhd_bus_handle_intx_ahead_dma_indices()).
+			 */
+			if (devinfo->dma_idx_sz &&
+			    devinfo->pdev->device == BRCM_PCIE_4389_DEVICE_ID &&
+			    devinfo->state == BRCMFMAC_PCIE_STATE_UP) {
+				usleep_range(500, 1000);
+				brcmf_proto_msgbuf_rx_trigger(
+							&devinfo->pdev->dev);
+			}
 		}
 	}
 	brcmf_pcie_bus_console_read(devinfo, false);
