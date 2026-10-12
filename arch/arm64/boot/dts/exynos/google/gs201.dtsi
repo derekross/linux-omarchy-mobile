@@ -21,6 +21,7 @@
 		pinctrl1 = &pinctrl_far_alive;
 		pinctrl4 = &pinctrl_peric0;
 		pinctrl5 = &pinctrl_peric1;
+		pinctrl6 = &pinctrl_hsi1;
 		pinctrl7 = &pinctrl_hsi2;
 	};
 
@@ -912,6 +913,20 @@
 			snps,dis_u2_susphy_quirk;
 			snps,dis_u3_susphy_quirk;
 			snps,has-lpm-erratum;
+			status = "disabled";
+		};
+
+		/*
+		 * HSI1 pins: the modem's PCIe GEN4A_0 (CLKREQ#, PERST#), its control
+		 * lines and the NFC controller's reset and power-idle lines.
+		 */
+		pinctrl_hsi1: pinctrl@11840000 {
+			compatible = "google,gs201-pinctrl";
+			reg = <0x11840000 0x1000>;
+			/* TODO: update once support for this CMU exists */
+			clocks = <0>;
+			clock-names = "pclk";
+			interrupts = <GIC_SPI 387 IRQ_TYPE_LEVEL_HIGH>;
 			status = "disabled";
 		};
 

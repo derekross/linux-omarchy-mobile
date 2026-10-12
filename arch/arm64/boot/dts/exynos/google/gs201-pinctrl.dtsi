@@ -512,6 +512,23 @@
 	};
 };
 
+&pinctrl_hsi1 {
+	gph0: gph0-gpio-bank {
+		gpio-controller;
+		#gpio-cells = <2>;
+		interrupt-controller;
+		#interrupt-cells = <2>;
+	};
+
+	gph1: gph1-gpio-bank {
+		gpio-controller;
+		#gpio-cells = <2>;
+		interrupt-controller;
+		#interrupt-cells = <2>;
+	};
+
+};
+
 &pinctrl_hsi2 {
 	gph2: gph2-gpio-bank {
 		gpio-controller;
