@@ -149,6 +149,9 @@ void aoc_sysmmu_dump(struct aoc_sysmmu *mmu, const char *when)
 			 when, v, readl(mmu->base + REG_CTRL_VM(v)),
 			 readl(mmu->base + REG_CFG_VM(v)),
 			 (u64)readl(mmu->base + REG_FLPT_BASE_VM(v)) << PT_BASE_SHIFT);
+	dev_info(mmu->dev, "%s: VID 0 fault va %#x info %#x\n", when,
+		 readl(mmu->base + REG_FAULT_VA_VM(0)),
+		 readl(mmu->base + REG_FAULT_INFO_VM(0)));
 }
 EXPORT_SYMBOL_GPL(aoc_sysmmu_dump);
 
@@ -223,6 +226,87 @@ static int aoc_sysmmu_fill(struct aoc_sysmmu *mmu,
 	return 0;
 }
 
+/* Write the configuration and the table base; the table is built. */
+static void aoc_sysmmu_program(struct aoc_sysmmu *mmu)
+{
+	unsigned int v, ntlb;
+	u32 cfg, ctrl;
+
+	/*
+	 * As __sysmmu_enable(): block, QoS and TLBs (__sysmmu_init_config()),
+	 * then per VID table base, flush, enable with stall on fault, then
+	 * enable.
+	 */
+	ctrl = readl(mmu->base + REG_MMU_CTRL);
+	writel(ctrl | CTRL_MMU_BLOCK, mmu->base + REG_MMU_CTRL);
+	cfg = readl(mmu->base + REG_MMU_CFG);
+	cfg &= ~CFG_QOS(0xf);
+	cfg |= CFG_QOS_OVRRIDE | CFG_QOS(ASOC_QOS);
+	ntlb = CAPA1_NUM_TLB(readl(mmu->base + REG_MMU_CAPA1));
+	writel(TLB_CFG_MASK(ASOC_DEFAULT_TLB), mmu->base + REG_TLB_CFG(0));
+	for (v = 0; v < ARRAY_SIZE(asoc_tlb); v++) {
+		u32 i = asoc_tlb[v].index;
+
+		if (i >= ntlb)
+			continue;
+		writel(TLB_CFG_MASK(asoc_tlb[v].cfg), mmu->base + REG_TLB_CFG(i));
+		writel(TLB_MATCH_CFG_MASK(asoc_tlb[v].match_cfg),
+		       mmu->base + REG_TLB_MATCH_CFG(i));
+		writel(asoc_tlb[v].match_id, mmu->base + REG_TLB_MATCH_ID(i));
+	}
+	writel(cfg, mmu->base + REG_MMU_CFG);
+
+	if (mmu->vm) {
+		for (v = 0; v < MAX_VIDS; v++) {
+			u32 vctrl;
+
+			if (!(BIT(v) & mmu->vid_mask))
+				continue;
+			writel(mmu->table_dma >> PT_BASE_SHIFT,
+			       mmu->base + REG_FLPT_BASE_VM(v));
+			writel(1, mmu->base + REG_ALL_INV_VM(v));
+			vctrl = readl(mmu->base + REG_CTRL_VM(v));
+			writel(vctrl | CTRL_FAULT_STALL_MODE | CTRL_VID_ENABLE,
+			       mmu->base + REG_CTRL_VM(v));
+		}
+	} else {
+		writel(mmu->table_dma >> PT_BASE_SHIFT, mmu->base + REG_FLPT_BASE);
+		writel(1, mmu->base + REG_ALL_INV);
+	}
+	writel((ctrl & ~CTRL_MMU_BLOCK) | CTRL_MMU_ENABLE, mmu->base + REG_MMU_CTRL);
+}
+
+/**
+ * aoc_sysmmu_lost() - has a block reset cleared the configuration?
+ *
+ * BLK_AOC must be on. True if translation is enabled in software but the
+ * registers no longer say so (global enable, VID enable or table base).
+ */
+bool aoc_sysmmu_lost(struct aoc_sysmmu *mmu)
+{
+	if (!mmu->enabled)
+		return false;
+	if (!(readl(mmu->base + REG_MMU_CTRL) & CTRL_MMU_ENABLE))
+		return true;
+	if (!mmu->vm)
+		return readl(mmu->base + REG_FLPT_BASE) !=
+		       (u32)(mmu->table_dma >> PT_BASE_SHIFT);
+	return !(readl(mmu->base + REG_CTRL_VM(0)) & CTRL_VID_ENABLE) ||
+	       readl(mmu->base + REG_FLPT_BASE_VM(0)) !=
+	       (u32)(mmu->table_dma >> PT_BASE_SHIFT);
+}
+EXPORT_SYMBOL_GPL(aoc_sysmmu_lost);
+
+/* Program the registers again after a block reset. BLK_AOC must be on. */
+void aoc_sysmmu_reprogram(struct aoc_sysmmu *mmu)
+{
+	if (!mmu->enabled)
+		return;
+	aoc_sysmmu_program(mmu);
+	aoc_sysmmu_dump(mmu, "reprogrammed");
+}
+EXPORT_SYMBOL_GPL(aoc_sysmmu_reprogram);
+
 /**
  * aoc_sysmmu_enable() - install @n windows and turn translation on
  *
@@ -231,8 +315,7 @@ static int aoc_sysmmu_fill(struct aoc_sysmmu *mmu,
 int aoc_sysmmu_enable(struct aoc_sysmmu *mmu,
 		      const struct aoc_sysmmu_window *win, unsigned int n)
 {
-	unsigned int v, ntlb;
-	u32 cfg;
+	unsigned int v;
 	int ret;
 
 	if (mmu->enabled)
@@ -277,49 +360,11 @@ int aoc_sysmmu_enable(struct aoc_sysmmu *mmu,
 		mmu->irq_on = true;
 	}
 
-	/*
-	 * As __sysmmu_enable(): block, QoS and TLBs (__sysmmu_init_config()),
-	 * then per VID table base, flush, enable with stall on fault, then
-	 * enable.
-	 */
 	mmu->saved_ctrl = readl(mmu->base + REG_MMU_CTRL);
-	writel(mmu->saved_ctrl | CTRL_MMU_BLOCK, mmu->base + REG_MMU_CTRL);
-	cfg = readl(mmu->base + REG_MMU_CFG);
-	cfg &= ~CFG_QOS(0xf);
-	cfg |= CFG_QOS_OVRRIDE | CFG_QOS(ASOC_QOS);
-	ntlb = CAPA1_NUM_TLB(readl(mmu->base + REG_MMU_CAPA1));
-	writel(TLB_CFG_MASK(ASOC_DEFAULT_TLB), mmu->base + REG_TLB_CFG(0));
-	for (v = 0; v < ARRAY_SIZE(asoc_tlb); v++) {
-		u32 i = asoc_tlb[v].index;
-
-		if (i >= ntlb)
-			continue;
-		writel(TLB_CFG_MASK(asoc_tlb[v].cfg), mmu->base + REG_TLB_CFG(i));
-		writel(TLB_MATCH_CFG_MASK(asoc_tlb[v].match_cfg),
-		       mmu->base + REG_TLB_MATCH_CFG(i));
-		writel(asoc_tlb[v].match_id, mmu->base + REG_TLB_MATCH_ID(i));
-	}
-	writel(cfg, mmu->base + REG_MMU_CFG);
-
-	if (mmu->vm) {
-		for (v = 0; v < MAX_VIDS; v++) {
-			u32 ctrl;
-
-			if (!(BIT(v) & mmu->vid_mask))
-				continue;
-			writel(mmu->table_dma >> PT_BASE_SHIFT,
-			       mmu->base + REG_FLPT_BASE_VM(v));
-			writel(1, mmu->base + REG_ALL_INV_VM(v));
-			ctrl = readl(mmu->base + REG_CTRL_VM(v));
-			mmu->saved_ctrl_vm[v] = ctrl;
-			writel(ctrl | CTRL_FAULT_STALL_MODE | CTRL_VID_ENABLE,
-			       mmu->base + REG_CTRL_VM(v));
-		}
-	} else {
-		writel(mmu->table_dma >> PT_BASE_SHIFT, mmu->base + REG_FLPT_BASE);
-		writel(1, mmu->base + REG_ALL_INV);
-	}
-	writel(mmu->saved_ctrl | CTRL_MMU_ENABLE, mmu->base + REG_MMU_CTRL);
+	if (mmu->vm)
+		for (v = 0; v < MAX_VIDS; v++)
+			mmu->saved_ctrl_vm[v] = readl(mmu->base + REG_CTRL_VM(v));
+	aoc_sysmmu_program(mmu);
 	mmu->enabled = true;
 
 	aoc_sysmmu_dump(mmu, "enabled");
