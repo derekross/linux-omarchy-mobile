@@ -2377,6 +2377,76 @@ static void brcmf_set_join_pref(struct brcmf_if *ifp,
 		bphy_err(drvr, "Set join_pref error (%d)\n", err);
 }
 
+static u32 ssid_len_of(struct cfg80211_connect_params *sme)
+{
+	return min_t(u32, sme->ssid_len, IEEE80211_MAX_SSID_LEN);
+}
+
+/*
+ * The "join" iovar with versioned parameters (wl_extjoin_params_v1_t), as
+ * Broadcom's driver fills it (bcmdhd wl_cfg80211.c
+ * wl_fillup_assoc_params_v1()). @chanspec 0 means no channel.
+ */
+static s32 brcmf_join_v1(struct brcmf_if *ifp,
+			 struct cfg80211_connect_params *sme, u32 ssid_len,
+			 u16 chanspec)
+{
+	struct brcmf_pub *drvr = ifp->drvr;
+	struct brcmf_ext_join_params_v1_le *jp;
+	size_t len;
+	s32 err;
+
+	len = offsetof(struct brcmf_ext_join_params_v1_le, assoc_le) +
+	      offsetof(struct brcmf_assoc_params_v1_le, chanspec_list);
+	if (chanspec)
+		len += sizeof(u16);
+
+	/* room for the one chanspec */
+	jp = kzalloc(sizeof(*jp) + sizeof(__le16), GFP_KERNEL);
+	if (!jp)
+		return -ENOMEM;
+
+	jp->ssid_le.SSID_len = cpu_to_le32(ssid_len);
+	memcpy(jp->ssid_le.SSID, sme->ssid, ssid_len);
+
+	jp->scan_le.scan_type = -1;
+	jp->scan_le.home_time = cpu_to_le32(-1);
+	if (chanspec) {
+		jp->scan_le.active_time =
+			cpu_to_le32(BRCMF_SCAN_JOIN_ACTIVE_DWELL_TIME_MS);
+		jp->scan_le.passive_time =
+			cpu_to_le32(BRCMF_SCAN_JOIN_PASSIVE_DWELL_TIME_MS);
+		jp->scan_le.nprobes =
+			cpu_to_le32(BRCMF_SCAN_JOIN_ACTIVE_DWELL_TIME_MS /
+				    BRCMF_SCAN_JOIN_PROBE_INTERVAL_MS);
+		jp->assoc_le.chanspec_num = cpu_to_le32(1);
+		jp->assoc_le.chanspec_list[0] = cpu_to_le16(chanspec);
+	} else {
+		jp->scan_le.active_time = cpu_to_le32(-1);
+		jp->scan_le.passive_time = cpu_to_le32(-1);
+		jp->scan_le.nprobes = cpu_to_le32(-1);
+	}
+
+	if (sme->bssid)
+		memcpy(jp->assoc_le.bssid, sme->bssid, ETH_ALEN);
+	else
+		eth_broadcast_addr(jp->assoc_le.bssid);
+
+	/* get the firmware's own error code for the log */
+	ifp->fwil_fwerr = true;
+	err = brcmf_fil_bsscfg_data_set(ifp, "join", jp, len);
+	ifp->fwil_fwerr = false;
+	kfree(jp);
+
+	if (err)
+		bphy_err(drvr, "join (v1, chanspec 0x%04x, %zu bytes) failed: firmware error %d\n",
+			 chanspec, len, err);
+	else
+		brcmf_dbg(CONN, "join (v1, chanspec 0x%04x) sent\n", chanspec);
+
+	return err ? -EBADE : 0;
+}
+
 static s32
 brcmf_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev,
 		       struct cfg80211_connect_params *sme)
@@ -2531,6 +2601,15 @@ brcmf_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev,
 		if (err)
 			goto done;
 	}
+	if (brcmf_feat_is_enabled(ifp, BRCMF_FEAT_JOIN_V1)) {
+		brcmf_set_join_pref(ifp, &sme->bss_select);
+		err = brcmf_join_v1(ifp, sme, ssid_len_of(sme),
+				    cfg->channel ? chanspec : 0);
+		if (!err)
+			goto done;
+		goto set_ssid;
+	}
+
 	/* Join with specific BSSID and cached SSID
 	 * If SSID is zero join based on BSSID only
 	 */
@@ -2594,6 +2673,8 @@ brcmf_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev,
 		/* This is it. join command worked, we are done */
 		goto done;
 
+set_ssid:
+	ssid_len = ssid_len_of(sme);
 	/* join command failed, fallback to set ssid */
 	memset(&join_params, 0, sizeof(join_params));
 	join_params_size = sizeof(join_params.ssid_le);
