@@ -988,6 +988,17 @@ static ssize_t firmware_store(struct device *dev, struct device_attribute *attr,
 		return -EINVAL;
 	}
 
+	/*
+	 * The GSA loads and authenticates the AoC image only while the AoC is
+	 * stopped, and this port cannot reset the AoC (no ACPM AoC reset), so a
+	 * second load would only take the running AoC down. Refuse it.
+	 */
+	if (aoc_state != AOC_STATE_OFFLINE) {
+		dev_err(dev, "AoC already started (state %d); reboot to load firmware again\n",
+			aoc_state);
+		return -EBUSY;
+	}
+
 	/* Strip whitespace (including \n) */
 	trimmed = strim(buffer);
 
