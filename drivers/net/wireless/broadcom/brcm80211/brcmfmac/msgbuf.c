@@ -49,7 +49,7 @@
 #define MSGBUF_TYPE_LPBK_DMAXFER_CMPLT		0x14
 
 #define NR_TX_PKTIDS				2048
-#define NR_RX_PKTIDS				1024
+#define NR_RX_PKTIDS				2048
 
 #define BRCMF_IOCTL_REQ_PKTID			0xFFFE
 
@@ -1664,10 +1664,17 @@ int brcmf_proto_msgbuf_attach(struct brcmf_pub *drvr)
 		goto fail;
 
 	msgbuf->rx_dataoffset = if_msgbuf->rx_dataoffset;
-	msgbuf->max_rxbufpost = if_msgbuf->max_rxbufpost;
 
 	msgbuf->max_ioctlrespbuf = BRCMF_MSGBUF_MAX_IOCTLRESPBUF_POST;
 	msgbuf->max_eventbuf = BRCMF_MSGBUF_MAX_EVENTBUF_POST;
+
+	/* Data, ioctl response and event buffers share the rx packet IDs
+	 * (ID 0 is never used): leave enough for the control buffers.
+	 */
+	msgbuf->max_rxbufpost = min_t(u32, if_msgbuf->max_rxbufpost,
+				      NR_RX_PKTIDS - 1 -
+				      msgbuf->max_ioctlrespbuf -
+				      msgbuf->max_eventbuf);
 
 	msgbuf->tx_pktids = brcmf_msgbuf_init_pktids(NR_TX_PKTIDS,
 						     DMA_TO_DEVICE);
