@@ -1737,6 +1737,15 @@ int aoc_voip_set_params(struct aoc_alsa_stream *alsa_stream)
 }
 #endif
 
+/*
+ * Bring-up: the entry point's second setup command (buffer and period size)
+ * is new in the android14 gs-6.1 driver; the gs-5.10 driver sends only the
+ * first. ep_setup2=0 skips it, to compare the two with this firmware.
+ */
+static bool ep_setup2 = true;
+module_param(ep_setup2, bool, 0644);
+MODULE_PARM_DESC(ep_setup2, "Send CMD_AUDIO_OUTPUT_EP_SETUP2 at PCM prepare (bring-up)");
+
 static int aoc_audio_playback_set_params(struct aoc_alsa_stream *alsa_stream,
 					 uint32_t channels, uint32_t samplerate,
 					 uint32_t bps, bool pcm_float_fmt,
@@ -1816,6 +1825,8 @@ static int aoc_audio_playback_set_params(struct aoc_alsa_stream *alsa_stream,
 	}
 
 #if !IS_ENABLED(CONFIG_SOC_GS101)
+	if (!ep_setup2)
+		goto exit;
 	err = aoc_audio_playback_set_params2(alsa_stream, cmd.mode);
 	if (err < 0)
 		pr_err("ERR:%d in playback set parameters2\n", err);
