@@ -1,0 +1,373 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * DMA window for the Google gs201 PCIe GEN4A_1 (Wi-Fi) controller
+ *
+ * The HSI2 block has a Samsung System MMU (version 8.1) in front of the
+ * PCIe channel 1 master. Stock Android translates the Wi-Fi chip's DMA
+ * through it (VID 1). Here it is used as a firewall instead: one first-level
+ * table that maps a single reserved region 1:1 (IOVA = PA), so the device
+ * keeps using physical addresses but cannot reach anything else. Any other
+ * access is a translation fault, logged by this driver.
+ *
+ * Register map, table format and enable sequence follow Google's driver,
+ * google-modules/soc/gs/drivers/iommu/exynos-pcie-iommu-whi.[ch]
+ * (__sysmmu_enable_nocount(), __sysmmu_set_ptbase(), the fault handler).
+ *
+ * The "mode" parameter stages the bring-up:
+ *   0  read the registers and log them, change nothing (default)
+ *   1  enforce: map the region from google,dma-window, nothing else
+ *   2  enforce with an empty table (every DMA faults; a negative test)
+ *   3  map everything 1:1 except the region (only DMA into the region
+ *      faults; a negative test that is safe to run on every VID)
+ *
+ * Which VID the PCIe master's traffic carries is not programmed by any
+ * kernel code (stock or here); "vids" selects the VIDs to translate, and a
+ * fault line names the VID it came from.
+ *
+ * Copyright (C) 2020 Samsung Electronics Co., Ltd.
+ */
+
+#include <linux/bits.h>
+#include <linux/clk.h>
+#include <linux/dma-mapping.h>
+#include <linux/interrupt.h>
+#include <linux/io.h>
+#include <linux/module.h>
+#include <linux/of.h>
+#include <linux/of_reserved_mem.h>
+#include <linux/platform_device.h>
+#include <linux/sizes.h>
+
+#define REG_MMU_CTRL			0x0000
+#define REG_MMU_CFG			0x0004
+#define REG_MMU_STATUS			0x0008
+#define REG_MMU_VERSION			0x0034
+#define REG_INT_STATUS			0x0060
+#define REG_INT_CLEAR			0x0064
+/* With VM (CAPA1 bit 14) the fault registers are per VID, 0x10 apart */
+#define REG_FAULT_ADDR_VA(n)		(0x1000 + (n) * 0x10)
+#define REG_FAULT_INFO0(n)		(0x1004 + (n) * 0x10)
+#define REG_MMU_TLB_CFG0		0x2004
+#define REG_MMU_CTRL_VID(n)		(0x8000 + (n) * 0x1000)
+#define REG_MMU_CFG_VID(n)		(0x8004 + (n) * 0x1000)
+#define REG_PT_BASE_PPN_VID(n)		(0x800c + (n) * 0x1000)
+#define REG_MMU_FLUSH_VID(n)		(0x8010 + (n) * 0x1000)
+
+#define CTRL_ENABLE			0x5
+#define CTRL_MMU_ENABLE			BIT(0)
+#define CTRL_FAULT_STALL_MODE		BIT(3)
+
+#define MMU_RAW_VER(reg)		(((reg) >> 17) & 0x7fff)
+#define MMU_MAJ_VER(val)		((val) >> 11)
+#define MMU_MIN_VER(val)		(((val) >> 4) & 0x7f)
+
+/* 36-bit IOVA, 1 MiB first-level sections, 256 KiB-aligned table */
+#define NUM_LV1ENTRIES			SZ_64K
+#define LV1_TABLE_SIZE			(NUM_LV1ENTRIES * sizeof(u32))
+#define SECT_ORDER			20
+#define SECT_SIZE			BIT(SECT_ORDER)
+#define PG_ENT_SHIFT			4
+#define LV1_SECT			2
+#define LV1_SHAREABLE			BIT(6)
+#define PT_BASE_SHIFT			12
+
+static unsigned int mode;
+module_param(mode, uint, 0444);
+MODULE_PARM_DESC(mode, "0: log only (default), 1: map the DMA region only, 2: empty table, 3: everything but the DMA region (negative tests)");
+
+static bool stall;
+module_param(stall, bool, 0444);
+MODULE_PARM_DESC(stall, "Leave the VID in stall-on-fault mode (default: error response)");
+
+static unsigned int vids;
+module_param(vids, uint, 0444);
+MODULE_PARM_DESC(vids, "Bitmask of VIDs to translate (default: the DT's google,vid only); with mode=3, 0xff finds the one the controller uses");
+
+static bool shareable = true;
+module_param(shareable, bool, 0444);
+MODULE_PARM_DESC(shareable, "Mark the mapped sections shareable (the controller is cache coherent)");
+
+struct gs201_sysmmu {
+	struct device *dev;
+	void __iomem *base;
+	struct clk_bulk_data *clks;
+	int num_clks;
+	u32 vid;
+	u32 vid_mask;
+	u32 *table;
+	dma_addr_t table_dma;
+	u32 saved_ctrl;
+	u32 saved_ctrl_vid[8];
+	bool enforcing;
+};
+
+static void gs201_sysmmu_dump(struct gs201_sysmmu *mmu, const char *when)
+{
+	u32 ver = readl(mmu->base + REG_MMU_VERSION);
+	unsigned int v;
+
+	dev_info(mmu->dev, "%s: version %#x (v%u.%u) ctrl %#x cfg %#x status %#x int %#x\n",
+		 when, ver, MMU_MAJ_VER(MMU_RAW_VER(ver)),
+		 MMU_MIN_VER(MMU_RAW_VER(ver)),
+		 readl(mmu->base + REG_MMU_CTRL),
+		 readl(mmu->base + REG_MMU_CFG),
+		 readl(mmu->base + REG_MMU_STATUS),
+		 readl(mmu->base + REG_INT_STATUS));
+
+	for (v = 0; v < 8; v++) {
+		if (!(BIT(v) & (mmu->vid_mask | BIT(mmu->vid))))
+			continue;
+		/* pt_base is printed as an address: PPN << 12 */
+		dev_info(mmu->dev, "%s: VID %u ctrl %#x cfg %#x table at %#llx\n",
+			 when, v, readl(mmu->base + REG_MMU_CTRL_VID(v)),
+			 readl(mmu->base + REG_MMU_CFG_VID(v)),
+			 (u64)readl(mmu->base + REG_PT_BASE_PPN_VID(v)) <<
+			 PT_BASE_SHIFT);
+	}
+}
+
+static irqreturn_t gs201_sysmmu_irq(int irq, void *data)
+{
+	struct gs201_sysmmu *mmu = data;
+	u32 status, info;
+	unsigned int v;
+	u64 addr;
+
+	status = readl(mmu->base + REG_INT_STATUS);
+	if (!status)
+		return IRQ_NONE;
+
+	/* Four interrupt bits per VID: PTW access, page fault, multi-hit, access */
+	v = __ffs(status) / 4;
+	addr = readl(mmu->base + REG_FAULT_ADDR_VA(v));
+	info = readl(mmu->base + REG_FAULT_INFO0(v));
+	addr |= (u64)((info >> 28) & 0xf) << 32;
+
+	dev_err_ratelimited(mmu->dev,
+			    "blocked %s at %#llx (int %#x, VID %u, type %u, AxID %#x)\n",
+			    (info & BIT(20)) ? "WRITE" : "READ", addr, status,
+			    v, __ffs(status) % 4, info & 0xffff);
+
+	writel(status, mmu->base + REG_INT_CLEAR);
+	return IRQ_HANDLED;
+}
+
+static int gs201_sysmmu_build_table(struct gs201_sysmmu *mmu)
+{
+	struct reserved_mem *rmem = NULL;
+	struct device_node *np;
+	phys_addr_t pa, end;
+	u32 ent;
+
+	/*
+	 * Not "memory-region": for a restricted-dma-pool that would make the
+	 * pool this device's own bounce buffer, and the table, mapped below,
+	 * would be bounced into the very window the PCIe device may write.
+	 */
+	np = of_parse_phandle(mmu->dev->of_node, "google,dma-window", 0);
+	if (np) {
+		rmem = of_reserved_mem_lookup(np);
+		of_node_put(np);
+	}
+	if (!rmem)
+		return dev_err_probe(mmu->dev, -EINVAL,
+				     "no google,dma-window to allow\n");
+
+	if (!IS_ALIGNED(rmem->base, SECT_SIZE) ||
+	    !IS_ALIGNED(rmem->size, SECT_SIZE) ||
+	    rmem->base + rmem->size > BIT_ULL(36))
+		return dev_err_probe(mmu->dev, -EINVAL,
+				     "region %pa + %pa is not 1 MiB sections below 64 GiB\n",
+				     &rmem->base, &rmem->size);
+
+	/* 256 KiB, naturally aligned (Google: "FLPD must be aligned in 256KB") */
+	mmu->table = (u32 *)__get_free_pages(GFP_KERNEL | __GFP_ZERO,
+					     get_order(LV1_TABLE_SIZE));
+	if (!mmu->table)
+		return -ENOMEM;
+
+	end = rmem->base + rmem->size;
+	if (mode == 3) {
+		for (ent = 0; ent < NUM_LV1ENTRIES; ent++) {
+			pa = (phys_addr_t)ent << SECT_ORDER;
+			if (pa >= rmem->base && pa < end)
+				continue;
+			mmu->table[ent] = (u32)(pa >> PG_ENT_SHIFT) | LV1_SECT |
+					  (shareable ? LV1_SHAREABLE : 0);
+		}
+		dev_info(mmu->dev, "blocking only %pa..%pa, everything else 1:1\n",
+			 &rmem->base, &end);
+	} else if (mode == 1) {
+		for (pa = rmem->base; pa < end; pa += SECT_SIZE) {
+			ent = (u32)(pa >> PG_ENT_SHIFT) | LV1_SECT;
+			if (shareable)
+				ent |= LV1_SHAREABLE;
+			mmu->table[pa >> SECT_ORDER] = ent;
+		}
+		dev_info(mmu->dev, "allowing %pa..%pa (%llu sections)\n",
+			 &rmem->base, &end,
+			 (u64)(rmem->size >> SECT_ORDER));
+	} else {
+		dev_info(mmu->dev, "empty table: every DMA will fault\n");
+	}
+
+	/* The table walker is not coherent: map it for the device (cleans). */
+	mmu->table_dma = dma_map_single(mmu->dev, mmu->table, LV1_TABLE_SIZE,
+					DMA_TO_DEVICE);
+	if (dma_mapping_error(mmu->dev, mmu->table_dma)) {
+		free_pages((unsigned long)mmu->table,
+			   get_order(LV1_TABLE_SIZE));
+		mmu->table = NULL;
+		return -ENOMEM;
+	}
+	if (mmu->table_dma != virt_to_phys(mmu->table) ||
+	    (mmu->table_dma < end &&
+	     mmu->table_dma + LV1_TABLE_SIZE > rmem->base)) {
+		dev_err(mmu->dev, "table at %pad is bounced or inside the window\n",
+			&mmu->table_dma);
+		dma_unmap_single(mmu->dev, mmu->table_dma, LV1_TABLE_SIZE,
+				 DMA_TO_DEVICE);
+		free_pages((unsigned long)mmu->table,
+			   get_order(LV1_TABLE_SIZE));
+		mmu->table = NULL;
+		return -EINVAL;
+	}
+	dev_info(mmu->dev, "table at %pad (outside the window)\n",
+		 &mmu->table_dma);
+	return 0;
+}
+
+static void gs201_sysmmu_enable(struct gs201_sysmmu *mmu)
+{
+	unsigned int v;
+	u32 ctrl;
+
+	mmu->saved_ctrl = readl(mmu->base + REG_MMU_CTRL);
+
+	/* As __sysmmu_enable_nocount(): TLB0, table base, flush, enable */
+	writel(0, mmu->base + REG_MMU_TLB_CFG0);
+	for (v = 0; v < 8; v++) {
+		if (!(BIT(v) & mmu->vid_mask))
+			continue;
+		writel(mmu->table_dma >> PT_BASE_SHIFT,
+		       mmu->base + REG_PT_BASE_PPN_VID(v));
+		writel(1, mmu->base + REG_MMU_FLUSH_VID(v));
+	}
+	writel(mmu->saved_ctrl | CTRL_ENABLE, mmu->base + REG_MMU_CTRL);
+
+	for (v = 0; v < 8; v++) {
+		if (!(BIT(v) & mmu->vid_mask))
+			continue;
+		ctrl = readl(mmu->base + REG_MMU_CTRL_VID(v));
+		mmu->saved_ctrl_vid[v] = ctrl;
+		if (stall)
+			ctrl |= CTRL_FAULT_STALL_MODE;
+		else
+			ctrl &= ~CTRL_FAULT_STALL_MODE;
+		writel(ctrl | CTRL_MMU_ENABLE, mmu->base + REG_MMU_CTRL_VID(v));
+		writel(1, mmu->base + REG_MMU_FLUSH_VID(v));
+	}
+	mmu->enforcing = true;
+}
+
+static void gs201_sysmmu_disable(struct gs201_sysmmu *mmu)
+{
+	unsigned int v;
+
+	if (!mmu->enforcing)
+		return;
+	for (v = 0; v < 8; v++)
+		if (BIT(v) & mmu->vid_mask)
+			writel(mmu->saved_ctrl_vid[v],
+			       mmu->base + REG_MMU_CTRL_VID(v));
+	writel(mmu->saved_ctrl, mmu->base + REG_MMU_CTRL);
+	mmu->enforcing = false;
+}
+
+static int gs201_sysmmu_probe(struct platform_device *pdev)
+{
+	struct device *dev = &pdev->dev;
+	struct gs201_sysmmu *mmu;
+	int irq, ret;
+
+	mmu = devm_kzalloc(dev, sizeof(*mmu), GFP_KERNEL);
+	if (!mmu)
+		return -ENOMEM;
+	mmu->dev = dev;
+	platform_set_drvdata(pdev, mmu);
+
+	mmu->vid = 1;
+	of_property_read_u32(dev->of_node, "google,vid", &mmu->vid);
+	if (mmu->vid > 7)
+		return dev_err_probe(dev, -EINVAL, "bad VID %u\n", mmu->vid);
+	mmu->vid_mask = (vids & 0xff) ?: BIT(mmu->vid);
+
+	mmu->base = devm_platform_ioremap_resource(pdev, 0);
+	if (IS_ERR(mmu->base))
+		return PTR_ERR(mmu->base);
+
+	ret = devm_clk_bulk_get_all_enabled(dev, &mmu->clks);
+	if (ret < 0)
+		return dev_err_probe(dev, ret, "clocks\n");
+	mmu->num_clks = ret;
+
+	gs201_sysmmu_dump(mmu, "probe");
+	if (!mode)
+		return 0;
+	if (mode > 3)
+		return dev_err_probe(dev, -EINVAL, "bad mode %u\n", mode);
+
+	ret = dma_set_mask(dev, DMA_BIT_MASK(36));
+	if (ret)
+		return ret;
+
+	irq = platform_get_irq(pdev, 0);
+	if (irq < 0)
+		return irq;
+	ret = devm_request_irq(dev, irq, gs201_sysmmu_irq, 0, dev_name(dev),
+			       mmu);
+	if (ret)
+		return ret;
+
+	ret = gs201_sysmmu_build_table(mmu);
+	if (ret)
+		return ret;
+
+	gs201_sysmmu_enable(mmu);
+	gs201_sysmmu_dump(mmu, "enforcing");
+	return 0;
+}
+
+static void gs201_sysmmu_remove(struct platform_device *pdev)
+{
+	struct gs201_sysmmu *mmu = platform_get_drvdata(pdev);
+
+	gs201_sysmmu_disable(mmu);
+	if (mmu->table) {
+		dma_unmap_single(mmu->dev, mmu->table_dma, LV1_TABLE_SIZE,
+				 DMA_TO_DEVICE);
+		free_pages((unsigned long)mmu->table,
+			   get_order(LV1_TABLE_SIZE));
+	}
+}
+
+static const struct of_device_id gs201_sysmmu_of_match[] = {
+	{ .compatible = "google,gs201-pcie-sysmmu" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, gs201_sysmmu_of_match);
+
+static struct platform_driver gs201_sysmmu_driver = {
+	.probe = gs201_sysmmu_probe,
+	.remove = gs201_sysmmu_remove,
+	.driver = {
+		.name = "gs201-pcie-sysmmu",
+		.of_match_table = gs201_sysmmu_of_match,
+		/* unbinding while the device is busy would drop the firewall */
+		.suppress_bind_attrs = true,
+	},
+};
+module_platform_driver(gs201_sysmmu_driver);
+
+MODULE_DESCRIPTION("Google gs201 PCIe System MMU as a DMA window");
+MODULE_LICENSE("GPL");
