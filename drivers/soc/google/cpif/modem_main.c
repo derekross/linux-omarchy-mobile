@@ -987,7 +987,16 @@ static struct platform_driver cpif_driver = {
 	},
 };
 
-module_platform_driver(cpif_driver);
+/*
+ * No module_exit(): the driver has no remove(), so unbinding would leave its
+ * character and network devices, interrupts and notifiers behind. Loaded,
+ * the module stays until reboot.
+ */
+static int __init cpif_init(void)
+{
+	return platform_driver_register(&cpif_driver);
+}
+module_init(cpif_init);
 
 MODULE_DESCRIPTION("Exynos CP interface Driver");
 MODULE_LICENSE("GPL");
