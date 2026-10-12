@@ -20,7 +20,19 @@ properties:
     const: google,gs201-gsa
 
   reg:
-    maxItems: 1
+    minItems: 1
+    items:
+      - description: mailbox registers
+      - description:
+          the GSA's stage-2 MPU. Without a hypervisor to program it, the
+          driver turns its checks off (CTRL0 only) while the GSA reads an
+          image by DMA.
+
+  reg-names:
+    minItems: 1
+    items:
+      - const: mbox
+      - const: s2mpu
 
   interrupts:
     maxItems: 1
@@ -37,6 +49,7 @@ examples:
     #include <dt-bindings/interrupt-controller/arm-gic.h>
     gsa@17c90000 {
         compatible = "google,gs201-gsa";
-        reg = <0x17c90000 0x1000>;
+        reg = <0x17c90000 0x1000>, <0x17c60000 0x10000>;
+        reg-names = "mbox", "s2mpu";
         interrupts = <GIC_SPI 363 IRQ_TYPE_LEVEL_HIGH>;
     };
