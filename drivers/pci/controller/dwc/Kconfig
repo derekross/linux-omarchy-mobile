@@ -415,6 +415,15 @@ config PCIE_GS201
 	  Wi-Fi chip to it. The controller uses the DesignWare core plus a
 	  Samsung wrapper, and needs the gs201 PCIe PHY driver.
 
+config PCIE_GS201_SYSMMU
+	tristate "Google gs201 PCIe System MMU as a DMA window"
+	depends on PCIE_GS201
+	help
+	  Confine the DMA of the device on the gs201 PCIe GEN4A_1 controller
+	  (the Pixel 7 Wi-Fi chip) to one reserved memory region, with the
+	  System MMU that sits in front of the controller. The region is
+	  mapped 1:1, so the device driver keeps using physical addresses.
+
 config PCIE_FU740
 	bool "SiFive FU740 PCIe controller"
 	depends on PCI_MSI
