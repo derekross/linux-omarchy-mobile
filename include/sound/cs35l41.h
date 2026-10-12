@@ -814,6 +814,7 @@ struct cs35l41_hw_cfg {
 	struct cs35l41_gpio_cfg gpio1;
 	struct cs35l41_gpio_cfg gpio2;
 	unsigned int spk_pos;
+	bool dsp_no_hibernate;
 
 	enum cs35l41_boost_type bst_type;
 };
