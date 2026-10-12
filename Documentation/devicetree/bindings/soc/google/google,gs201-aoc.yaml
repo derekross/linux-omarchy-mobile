@@ -28,9 +28,6 @@ properties:
           parameters
       - description: the AoC power control unit (A32 reset control and
           revision), in the AoC block
-      - description: the AoC A32 to AP mailbox
-      - description: the AoC F1 to AP mailbox
-      - description: the AoC P6 to AP mailbox
 
   reg-names:
     minItems: 3
@@ -39,12 +36,14 @@ properties:
       - const: s2mpu
       - const: chipid
       - const: pcu
-      - const: mbox-a32
-      - const: mbox-f1
-      - const: mbox-p6
 
   interrupts:
     maxItems: 1
+
+  mboxes:
+    description: the 48 doorbell channels of the three AoC mailboxes (A32,
+      F1, P6), 16 each, in that order
+    maxItems: 48
 
   interrupt-names:
     items:

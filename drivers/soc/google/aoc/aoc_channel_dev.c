@@ -357,7 +357,7 @@ static struct aocc_device_entry *aocc_device_entry_for_inode(struct inode *inode
 	return NULL;
 }
 
-static char *aocc_devnode(struct device *dev, umode_t *mode)
+static char *aocc_devnode(const struct device *dev, umode_t *mode)
 {
 	if (!mode || !dev)
 		return NULL;
@@ -769,10 +769,6 @@ static int aocc_probe(struct aoc_service_dev *dev)
 {
 	struct chan_prvdata *prvdata;
 	int ret = 0;
-	struct sched_param param = {
-		.sched_priority = 10,
-	};
-
 	pr_notice("probe service with name %s\n", dev_name(&dev->dev));
 
 	prvdata = devm_kzalloc(&dev->dev, sizeof(*prvdata), GFP_KERNEL);
@@ -798,9 +794,10 @@ static int aocc_probe(struct aoc_service_dev *dev)
 		prvdata->user_wakelock = wakeup_source_register(&dev->dev, dev_name(&dev->dev));
 		dev->prvdata = prvdata;
 		prvdata->demux_task =  kthread_run(&aocc_demux_kthread, dev, dev_name(&dev->dev));
-		sched_setscheduler(prvdata->demux_task, SCHED_FIFO, &param);
 		if (IS_ERR(prvdata->demux_task))
 			ret = PTR_ERR(prvdata->demux_task);
+		else
+			sched_set_fifo_low(prvdata->demux_task);
 	}
 
 	aocc_sh_mem_doorbell_probe(dev);
@@ -914,8 +911,8 @@ static int __init aocc_init(void)
 
 	aocc_major_dev = MKDEV(aocc_major, 0);
 
-	aocc_class = class_create(THIS_MODULE, AOCC_CHARDEV_NAME);
-	if (!aocc_class) {
+	aocc_class = class_create(AOCC_CHARDEV_NAME);
+	if (IS_ERR(aocc_class)) {
 		pr_err("Failed to create class\n");
 		goto fail;
 	}
@@ -942,4 +939,5 @@ static void __exit aocc_exit(void)
 module_init(aocc_init);
 module_exit(aocc_exit);
 
+MODULE_DESCRIPTION("Google AoC channelized service character devices");
 MODULE_LICENSE("GPL v2");

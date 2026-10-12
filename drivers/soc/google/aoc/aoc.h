@@ -18,7 +18,7 @@
 #include <linux/platform_device.h>
 #include <linux/sizes.h>
 #include <linux/timer.h>
-#include <soc/google/debug-snapshot.h>
+#include "aoc-compat.h"
 #include "aoc_ipc_core.h"
 
 /* TODO: Remove internal calls, or promote to "public" */
@@ -104,7 +104,9 @@ struct aoc_prvdata {
 	atomic_t aoc_process_active;
 
 	struct device *dev;
-	struct iommu_domain *domain;
+	struct aoc_sysmmu *mmu;
+	void __iomem *s2mpu_virt;
+	void __iomem *chipid_virt;
 	void *ipc_base;
 
 	void *sram_virt;
@@ -230,7 +232,7 @@ struct aoc_driver {
 	int (*probe)(struct aoc_service_dev *dev);
 	int (*remove)(struct aoc_service_dev *dev);
 };
-#define AOC_DRIVER(_d) container_of((_d), struct aoc_driver, drv)
+#define AOC_DRIVER(_d) container_of_const((_d), struct aoc_driver, drv)
 
 int aoc_driver_register(struct aoc_driver *driver);
 void aoc_driver_unregister(struct aoc_driver *driver);
@@ -240,9 +242,6 @@ void aoc_set_map_handler(struct aoc_service_dev *dev, aoc_map_handler handler,
 void aoc_remove_map_handler(struct aoc_service_dev *dev);
 void aoc_trigger_watchdog(const char *reason);
 
-extern u32 gs_chipid_get_revision(void);
-extern u32 gs_chipid_get_type(void);
-extern u32 gs_chipid_get_product_id(void);
 
 bool aoc_release_from_reset(struct aoc_prvdata *prvdata);
 

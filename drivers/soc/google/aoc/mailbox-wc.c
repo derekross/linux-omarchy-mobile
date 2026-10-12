@@ -39,7 +39,7 @@
 #define DT_NON_WAKE_CHANNEL_KEY "wc-mbox-non-wake-channels"
 
 static int wc_mbox_probe(struct platform_device *dev);
-static int wc_mbox_remove(struct platform_device *dev);
+static void wc_mbox_remove(struct platform_device *dev);
 static int wc_mbox_suspend(struct platform_device *dev, pm_message_t state);
 static int wc_mbox_resume(struct platform_device *dev);
 
@@ -61,7 +61,7 @@ struct wc_mbox_prvdata {
 
 static const struct of_device_id wc_mbox_match[] = {
 	{
-		.compatible = "google,mailbox-whitechapel",
+		.compatible = "google,gs201-aoc-mbox",
 	},
 	{},
 };
@@ -74,7 +74,6 @@ static struct platform_driver wc_mbox_driver = {
 	.resume = wc_mbox_resume,
 	.driver = {
 		.name = "wc-mbox",
-		.owner = THIS_MODULE,
 		.of_match_table = of_match_ptr(wc_mbox_match),
 	},
 };
@@ -370,13 +369,13 @@ static int wc_mbox_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int wc_mbox_remove(struct platform_device *pdev)
+static void wc_mbox_remove(struct platform_device *pdev)
 {
 	struct wc_mbox_prvdata *prvdata = platform_get_drvdata(pdev);
 	struct device *dev = &(pdev->dev);
 
 	if (!prvdata)
-		return -EINVAL;
+		return;
 
 	dev_dbg(dev, "removing mailbox\n");
 
@@ -385,8 +384,6 @@ static int wc_mbox_remove(struct platform_device *pdev)
 	devm_free_irq(dev, prvdata->interrupt, dev);
 
 	devm_iounmap(dev, prvdata->base);
-
-	return 0;
 }
 
 /* Module functions */
