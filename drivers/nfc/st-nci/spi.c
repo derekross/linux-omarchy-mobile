@@ -50,7 +50,7 @@ static int st_nci_spi_enable(void *phy_id)
 	gpiod_set_value(phy->gpiod_reset, 1);
 	usleep_range(80000, 85000);
 
-	if (phy->ndlc->powered == 0 && phy->irq_active == 0) {
+	if (!phy->irq_active) {
 		enable_irq(phy->spi_dev->irq);
 		phy->irq_active = true;
 	}
@@ -246,7 +246,7 @@ static int st_nci_spi_probe(struct spi_device *dev)
 
 	r = ndlc_probe(phy, &spi_phy_ops, &dev->dev,
 			ST_NCI_FRAME_HEADROOM, ST_NCI_FRAME_TAILROOM,
-			&phy->ndlc, &phy->se_status);
+			&phy->ndlc, &phy->se_status, false);
 	if (r < 0) {
 		nfc_err(&dev->dev, "Unable to register ndlc layer\n");
 		return r;
