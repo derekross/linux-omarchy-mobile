@@ -397,6 +397,8 @@
 		cirrus,boost-ind-nanohenry = <1000>;
 		cirrus,boost-cap-microfarad = <30>;
 		cirrus,asp-sdout-hiz = <3>;
+		/* the stock protection firmware does not survive hibernation */
+		cirrus,dsp-no-hibernate;
 		/* GPIO2 = push-pull interrupt, active high */
 		cirrus,gpio2-src-select = <5>;
 		cirrus,gpio2-output-enable;
@@ -421,6 +423,8 @@
 		cirrus,boost-ind-nanohenry = <1000>;
 		cirrus,boost-cap-microfarad = <30>;
 		cirrus,asp-sdout-hiz = <3>;
+		/* the stock protection firmware does not survive hibernation */
+		cirrus,dsp-no-hibernate;
 		cirrus,gpio2-src-select = <5>;
 		cirrus,gpio2-output-enable;
 		status = "disabled";
