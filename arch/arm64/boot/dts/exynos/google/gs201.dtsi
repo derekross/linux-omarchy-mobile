@@ -292,6 +292,7 @@
 		cp-rmem1@e8000000 { reg = <0x0 0xe8000000 0x2000000>; no-map; };
 		cp-rmem@ea400000 { reg = <0x0 0xea400000 0x800000>; no-map; };
 		/* The modem's MSI target (stock cp_msi_rmem) */
+		cp_msi_mem: cp-msi@f6200000 { reg = <0x0 0xf6200000 0x1000>; no-map; };
 		abl@f8800000 { reg = <0x0 0xf8800000 0x2000000>; no-map; };
 		/* ABL adds debug_kinfo_reserved@fd3fe000 (one page) after this. */
 		debug@fd3f0000 { reg = <0x0 0xfd3f0000 0xe000>; no-map; };
@@ -964,6 +965,7 @@
 			interrupt-names = "ctrl", "msi0", "msi1", "msi2", "msi3", "msi4";
 			phys = <&pcie_0_phy>;
 			phy-names = "pcie";
+			memory-region = <&cp_msi_mem>;
 			pinctrl-0 = <&pcie0_clkreq>, <&pcie0_perst>;
 			pinctrl-names = "active";
 			reset-gpios = <&gph0 0 GPIO_ACTIVE_LOW>;
