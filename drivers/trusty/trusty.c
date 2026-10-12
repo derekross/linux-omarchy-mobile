@@ -40,6 +40,19 @@ module_param(use_high_wq, bool, 0660);
 static int nop_nice_value = -20; /* default to highest */
 module_param(nop_nice_value, int, 0660);
 
+/*
+ * Trusty runs its threads only on the CPU whose nop thread calls into it,
+ * and a trusted application may be pinned to one CPU: while that CPU is
+ * offline the application never runs and its clients block forever.
+ * Android does not take CPUs offline at runtime, but Linux userspace may,
+ * so refuse it by default. Suspend, hibernation and shutdown still take
+ * CPUs down.
+ */
+static bool allow_cpu_offline;
+module_param(allow_cpu_offline, bool, 0644);
+MODULE_PARM_DESC(allow_cpu_offline,
+		 "Allow taking CPUs offline at runtime while Trusty is bound");
+
 struct trusty_work {
 	struct trusty_state *s;
 	unsigned int cpu;
@@ -57,6 +70,7 @@ struct trusty_state {
 	bool trusty_panicked;
 	struct device *dev;
 	struct hlist_node cpuhp_node;
+	bool removing;		/* instance teardown, not a CPU going offline */
 	struct trusty_work __percpu *nop_works;
 	struct list_head nop_queue;
 	spinlock_t nop_lock; /* protects nop_queue */
@@ -1042,13 +1056,18 @@ static int trusty_nop_thread(void *context)
 	return ret;
 }
 
+/*
+ * Both callbacks address the per-CPU state by the CPU being brought up or
+ * down, not by the CPU they happen to run on. kthread_unpark() rebinds the
+ * per-CPU nop thread to its CPU before waking it.
+ */
 static int trusty_cpu_up(unsigned int cpu, struct hlist_node *node)
 {
 	struct trusty_state *s;
 	struct trusty_work *tw;
 
 	s = container_of(node, struct trusty_state, cpuhp_node);
-	tw = this_cpu_ptr(s->nop_works);
+	tw = per_cpu_ptr(s->nop_works, cpu);
 	kthread_unpark(tw->nop_thread);
 
 	dev_dbg(s->dev, "cpu %d up\n", cpu);
@@ -1062,7 +1081,16 @@ static int trusty_cpu_down(unsigned int cpu, struct hlist_node *node)
 	struct trusty_work *tw;
 
 	s = container_of(node, struct trusty_state, cpuhp_node);
-	tw = this_cpu_ptr(s->nop_works);
+
+	if (!allow_cpu_offline && !READ_ONCE(s->removing) &&
+	    !cpuhp_tasks_frozen && system_state == SYSTEM_RUNNING) {
+		dev_warn_ratelimited(s->dev,
+			"refusing to take cpu %u offline (trusty_core.allow_cpu_offline=0)\n",
+			cpu);
+		return -EBUSY;
+	}
+
+	tw = per_cpu_ptr(s->nop_works, cpu);
 
 	dev_dbg(s->dev, "cpu %d down\n", cpu);
 	kthread_park(tw->nop_thread);
@@ -1178,6 +1206,7 @@ static int trusty_probe(struct platform_device *pdev)
 err_add_children:
 	trusty_free_sched_share(s->trusty_sched_share_state);
 err_alloc_sched_share:
+	WRITE_ONCE(s->removing, true);
 	cpuhp_state_remove_instance(trusty_cpuhp_slot, &s->cpuhp_node);
 err_add_cpuhp_instance:
 err_thread_create:
@@ -1211,6 +1240,7 @@ static void trusty_remove(struct platform_device *pdev)
 
 	device_for_each_child(&pdev->dev, NULL, trusty_remove_child);
 
+	WRITE_ONCE(s->removing, true);
 	cpuhp_state_remove_instance(trusty_cpuhp_slot, &s->cpuhp_node);
 
 	for_each_possible_cpu(cpu) {
