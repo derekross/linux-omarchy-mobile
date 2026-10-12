@@ -11,6 +11,7 @@
 #include <linux/types.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/unaligned.h>
 
 #include <brcmu_utils.h>
 #include <brcmu_wifi.h>
@@ -20,6 +21,7 @@
 #include "proto.h"
 #include "msgbuf.h"
 #include "commonring.h"
+#include "feature.h"
 #include "flowring.h"
 #include "bus.h"
 #include "tracepoint.h"
@@ -62,6 +64,9 @@
 #define BRCMF_MSGBUF_PKT_FLAGS_FRAME_802_3	0x01
 #define BRCMF_MSGBUF_PKT_FLAGS_FRAME_802_11	0x02
 #define BRCMF_MSGBUF_PKT_FLAGS_FRAME_MASK	0x07
+/* TX post: the data buffer starts with a host-built 802.3 + LLC/SNAP header */
+#define BRCMF_MSGBUF_TXPOST_FLAGS_HOST_SFH_LLC	0x10
+#define BRCMF_MSGBUF_SFH_LLC_LEN		8
 #define BRCMF_MSGBUF_PKT_FLAGS_PRIO_SHIFT	5
 
 #define BRCMF_MSGBUF_TX_FLUSH_CNT1		32
@@ -742,6 +747,60 @@ static u32 brcmf_msgbuf_flowring_create(struct brcmf_msgbuf *msgbuf, int ifidx,
 }
 
 
+/*
+ * Host short-form header + LLC (firmware capability "host_sfhllc"): the
+ * host turns the Ethernet frame into 802.3 + LLC/SNAP (RFC 1042, or
+ * bridge-tunnel for the 802.1H types) before posting it, as Broadcom's
+ * driver does (bcmdhd dhd_common.c dhd_ether_to_8023_hdr(), dhd_msgbuf.c
+ * BCMPCIE_TXPOST_FLAGS_HOST_SFH_LLC), and turns it back on completion.
+ */
+static int brcmf_msgbuf_sfh_llc_insert(struct sk_buff *skb)
+{
+	u8 *p;
+	u16 type;
+
+	if (skb->len < ETH_HLEN)
+		return -EINVAL;
+	if (skb_headroom(skb) < BRCMF_MSGBUF_SFH_LLC_LEN &&
+	    pskb_expand_head(skb, BRCMF_MSGBUF_SFH_LLC_LEN, 0, GFP_ATOMIC))
+		return -ENOMEM;
+
+	type = get_unaligned_be16(skb->data + 2 * ETH_ALEN);
+	p = skb_push(skb, BRCMF_MSGBUF_SFH_LLC_LEN);
+	memmove(p, p + BRCMF_MSGBUF_SFH_LLC_LEN, 2 * ETH_ALEN);
+	put_unaligned_be16(skb->len - ETH_HLEN, p + 2 * ETH_ALEN);
+	p += ETH_HLEN;
+	p[0] = 0xaa;
+	p[1] = 0xaa;
+	p[2] = 0x03;
+	p[3] = 0x00;
+	p[4] = 0x00;
+	p[5] = (type == 0x80f3 || type == 0x8137) ? 0xf8 : 0x00;
+	put_unaligned_be16(type, p + 6);
+	return 0;
+}
+
+static void brcmf_msgbuf_sfh_llc_remove(struct sk_buff *skb)
+{
+	u8 *p = skb->data;
+	u16 type;
+
+	if (skb->len < ETH_HLEN + BRCMF_MSGBUF_SFH_LLC_LEN ||
+	    get_unaligned_be16(p + 2 * ETH_ALEN) >= ETH_P_802_3_MIN ||
+	    p[ETH_HLEN] != 0xaa || p[ETH_HLEN + 1] != 0xaa)
+		return;
+
+	type = get_unaligned_be16(p + ETH_HLEN + 6);
+	memmove(p + BRCMF_MSGBUF_SFH_LLC_LEN, p, 2 * ETH_ALEN);
+	p = skb_pull(skb, BRCMF_MSGBUF_SFH_LLC_LEN);
+	put_unaligned_be16(type, p + 2 * ETH_ALEN);
+}
+
+static bool brcmf_msgbuf_sfh_llc(struct brcmf_msgbuf *msgbuf)
+{
+	return msgbuf->drvr->feat_flags & BIT(BRCMF_FEAT_HOST_SFHLLC);
+}
+
 static void brcmf_msgbuf_txflow(struct brcmf_msgbuf *msgbuf, u16 flowid)
 {
 	struct brcmf_flowring *flow = msgbuf->flow;
@@ -754,6 +813,8 @@ static void brcmf_msgbuf_txflow(struct brcmf_msgbuf *msgbuf, u16 flowid)
 	u32 pktid;
 	struct msgbuf_tx_msghdr *tx_msghdr;
 	u64 address;
+	u8 ethhdr[ETH_HLEN];
+	bool sfh;
 
 	commonring = msgbuf->flowrings[flowid];
 	if (!brcmf_commonring_write_available(commonring))
@@ -770,9 +831,15 @@ static void brcmf_msgbuf_txflow(struct brcmf_msgbuf *msgbuf, u16 flowid)
 			break;
 		}
 		skb_orphan(skb);
+		memcpy(ethhdr, skb->data, ETH_HLEN);
+		sfh = brcmf_msgbuf_sfh_llc(msgbuf) &&
+		      !brcmf_msgbuf_sfh_llc_insert(skb);
 		if (brcmf_msgbuf_alloc_pktid(msgbuf->drvr->bus_if->dev,
-					     msgbuf->tx_pktids, skb, ETH_HLEN,
+					     msgbuf->tx_pktids, skb,
+					     sfh ? 0 : ETH_HLEN,
 					     &physaddr, &pktid)) {
+			if (sfh)
+				brcmf_msgbuf_sfh_llc_remove(skb);
 			brcmf_flowring_reinsert(flow, flowid, skb);
 			bphy_err(drvr, "No PKTID available !!\n");
 			break;
@@ -781,6 +848,8 @@ static void brcmf_msgbuf_txflow(struct brcmf_msgbuf *msgbuf, u16 flowid)
 		if (!ret_ptr) {
 			brcmf_msgbuf_get_pktid(msgbuf->drvr->bus_if->dev,
 					       msgbuf->tx_pktids, pktid);
+			if (sfh)
+				brcmf_msgbuf_sfh_llc_remove(skb);
 			brcmf_flowring_reinsert(flow, flowid, skb);
 			break;
 		}
@@ -792,11 +861,19 @@ static void brcmf_msgbuf_txflow(struct brcmf_msgbuf *msgbuf, u16 flowid)
 		tx_msghdr->msg.request_id = cpu_to_le32(pktid + 1);
 		tx_msghdr->msg.ifidx = brcmf_flowring_ifidx_get(flow, flowid);
 		tx_msghdr->flags = BRCMF_MSGBUF_PKT_FLAGS_FRAME_802_3;
+		if (sfh)
+			tx_msghdr->flags |=
+				BRCMF_MSGBUF_TXPOST_FLAGS_HOST_SFH_LLC;
 		tx_msghdr->flags |= (skb->priority & 0x07) <<
 				    BRCMF_MSGBUF_PKT_FLAGS_PRIO_SHIFT;
 		tx_msghdr->seg_cnt = 1;
-		memcpy(tx_msghdr->txhdr, skb->data, ETH_HLEN);
-		tx_msghdr->data_len = cpu_to_le16(skb->len - ETH_HLEN);
+		memcpy(tx_msghdr->txhdr, ethhdr, ETH_HLEN);
+		tx_msghdr->data_len = cpu_to_le16(sfh ? skb->len :
+						  skb->len - ETH_HLEN);
+		if (get_unaligned_be16(ethhdr + 2 * ETH_ALEN) == ETH_P_PAE)
+			brcmf_dbg(MSGBUF, "TX EAPOL pktid %u flow %u len %u%s\n",
+				  pktid, flowid, skb->len,
+				  sfh ? " (802.3+LLC)" : "");
 		address = (u64)physaddr;
 		tx_msghdr->data_buf_addr.high_addr = cpu_to_le32(address >> 32);
 		tx_msghdr->data_buf_addr.low_addr =
@@ -937,6 +1014,12 @@ brcmf_msgbuf_process_txstatus(struct brcmf_msgbuf *msgbuf, void *buf)
 				     msgbuf->tx_pktids, idx);
 	if (!skb)
 		return;
+	if (brcmf_msgbuf_sfh_llc(msgbuf))
+		brcmf_msgbuf_sfh_llc_remove(skb);
+	if (skb->len >= ETH_HLEN &&
+	    get_unaligned_be16(skb->data + 2 * ETH_ALEN) == ETH_P_PAE)
+		brcmf_dbg(MSGBUF, "TX EAPOL done pktid %u status %u\n", idx,
+			  le16_to_cpu(tx_status->compl_hdr.status));
 
 	if (!brcmf_msgbuf_get_flowid(msgbuf, flow_ring_id, &flowid)) {
 		brcmf_txfinalize(brcmf_get_ifp(msgbuf->drvr, tx_status->msg.ifidx),
@@ -1254,6 +1337,10 @@ brcmf_msgbuf_process_rx_complete(struct brcmf_msgbuf *msgbuf, void *buf)
 		return;
 	}
 
+	if (skb->len >= ETH_HLEN &&
+	    get_unaligned_be16(skb->data + 2 * ETH_ALEN) == ETH_P_PAE)
+		brcmf_dbg(MSGBUF, "RX EAPOL pktid %u len %u flags 0x%x\n", idx,
+			  skb->len, flags);
 	skb->protocol = eth_type_trans(skb, ifp->ndev);
 	brcmf_netif_rx(ifp, skb);
 }
