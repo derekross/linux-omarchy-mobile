@@ -245,6 +245,7 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 #define BRCMF_PCIE_SHARED_DMA_INDEX		0x10000
 #define BRCMF_PCIE_SHARED_DMA_2B_IDX		0x100000
 #define BRCMF_PCIE_SHARED_HOSTRDY_DB1		0x10000000
+#define BRCMF_PCIE_SHARED_DAR			0x80000000
 
 #define BRCMF_PCIE_FLAGS_HTOD_SPLIT		0x4000
 #define BRCMF_PCIE_FLAGS_DTOH_SPLIT		0x8000
@@ -478,6 +479,19 @@ static const struct brcmf_pcie_reginfo brcmf_reginfo_default = {
 	.h2d_mailbox_1 = BRCMF_PCIE_PCIE2REG_H2D_MAILBOX_1,
 	.int_d2h_db = BRCMF_PCIE_MB_INT_D2H_DB,
 	.int_fn0 = BRCMF_PCIE_MB_INT_FN0,
+};
+
+/* Core rev >= 64 with the doorbells in the PCIe core's own registers, for
+ * firmware that does not offer the DAR doorbells (BRCMF_PCIE_SHARED_DAR).
+ */
+static const struct brcmf_pcie_reginfo brcmf_reginfo_64_nodar = {
+	.intmask = BRCMF_PCIE_64_PCIE2REG_INTMASK,
+	.mailboxint = BRCMF_PCIE_64_PCIE2REG_MAILBOXINT,
+	.mailboxmask = BRCMF_PCIE_64_PCIE2REG_MAILBOXMASK,
+	.h2d_mailbox_0 = BRCMF_PCIE_PCIE2REG_H2D_MAILBOX_0,
+	.h2d_mailbox_1 = BRCMF_PCIE_PCIE2REG_H2D_MAILBOX_1,
+	.int_d2h_db = BRCMF_PCIE_64_MB_INT_D2H_DB,
+	.int_fn0 = 0,
 };
 
 static const struct brcmf_pcie_reginfo brcmf_reginfo_64 = {
@@ -1851,6 +1865,19 @@ brcmf_pcie_init_share_ram_info(struct brcmf_pciedev_info *devinfo,
 	shared->flags = brcmf_pcie_read_tcm32(devinfo, sharedram_addr);
 	shared->version = (u8)(shared->flags & BRCMF_PCIE_SHARED_VERSION_MASK);
 	brcmf_dbg(PCIE, "shared flags 0x%08x\n", shared->flags);
+
+	/* Broadcom's driver rings the DAR doorbells only when the firmware
+	 * offers them, and the core's own H2D mailbox registers otherwise.
+	 * The BCM4389 firmware does not, and ignores the DAR doorbells.
+	 */
+	if (devinfo->reginfo == &brcmf_reginfo_64 &&
+	    devinfo->pdev->device == BRCM_PCIE_4389_DEVICE_ID &&
+	    !(shared->flags & BRCMF_PCIE_SHARED_DAR)) {
+		devinfo->reginfo = &brcmf_reginfo_64_nodar;
+		brcmf_dbg(PCIE, "no DAR: doorbells at 0x%x/0x%x\n",
+			  devinfo->reginfo->h2d_mailbox_0,
+			  devinfo->reginfo->h2d_mailbox_1);
+	}
 	brcmf_dbg(PCIE, "PCIe protocol version %d\n", shared->version);
 	if ((shared->version > BRCMF_PCIE_MAX_SHARED_VERSION) ||
 	    (shared->version < BRCMF_PCIE_MIN_SHARED_VERSION)) {
