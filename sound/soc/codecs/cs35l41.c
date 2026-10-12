@@ -1032,6 +1032,8 @@ static int cs35l41_handle_pdata(struct device *dev, struct cs35l41_hw_cfg *hw_cf
 			hw_cfg->bst_type = val;
 	}
 
+	hw_cfg->dsp_no_hibernate = device_property_read_bool(dev, "cirrus,dsp-no-hibernate");
+
 	ret = device_property_read_u32(dev, "cirrus,boost-peak-milliamp", &val);
 	if (ret >= 0)
 		hw_cfg->bst_ipk = val;
@@ -1401,7 +1403,8 @@ static int cs35l41_runtime_suspend(struct device *dev)
 
 	dev_dbg(cs35l41->dev, "Runtime suspend\n");
 
-	if (!cs35l41->dsp.preloaded || !cs35l41->dsp.cs_dsp.running)
+	if (!cs35l41->dsp.preloaded || !cs35l41->dsp.cs_dsp.running ||
+	    cs35l41->hw_cfg.dsp_no_hibernate)
 		return 0;
 
 	wm_adsp_hibernate(&cs35l41->dsp, true);
@@ -1420,7 +1423,8 @@ static int cs35l41_runtime_resume(struct device *dev)
 
 	dev_dbg(cs35l41->dev, "Runtime resume\n");
 
-	if (!cs35l41->dsp.preloaded || !cs35l41->dsp.cs_dsp.running)
+	if (!cs35l41->dsp.preloaded || !cs35l41->dsp.cs_dsp.running ||
+	    cs35l41->hw_cfg.dsp_no_hibernate)
 		return 0;
 
 	regcache_cache_only(cs35l41->regmap, false);
