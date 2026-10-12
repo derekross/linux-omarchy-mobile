@@ -33,6 +33,15 @@ config GS201_AOC_SYSMMU
 	  expects (from the firmware image header), as 1 MiB sections. Used by
 	  the AoC driver.
 
+config GS201_AOC_BOOT
+	tristate "gs201 AoC firmware boot (bring-up)"
+	depends on GOOGLE_GSA && GS201_AOC_SYSMMU && DEBUG_FS
+	help
+	  Boots the AoC firmware step by step from debugfs: power request,
+	  System MMU windows, GSA authentication, start. It does not run the
+	  AoC's services; it only checks that the firmware comes up. For
+	  bring-up only.
+
 endmenu
 
 endif
