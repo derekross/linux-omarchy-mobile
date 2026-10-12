@@ -533,6 +533,34 @@ struct brcmf_ext_join_params_le {
 	struct brcmf_assoc_params_le assoc_le;
 };
 
+/**
+ * struct brcmf_assoc_params_v1_le - versioned association parameters.
+ *
+ * @version: structure version (left 0, as Broadcom's driver does).
+ * @flags: ASSOC_HINT_BSSID_PRESENT etc.
+ * @bssid: target BSSID, or broadcast.
+ * @bssid_cnt: 0: use @chanspec_num and the single @bssid.
+ * @chanspec_num: 0: all channels, else count of @chanspec_list entries.
+ * @chanspec_list: chanspecs.
+ */
+struct brcmf_assoc_params_v1_le {
+	__le16 version;
+	__le16 flags;
+	u8 bssid[ETH_ALEN];
+	__le16 bssid_cnt;
+	__le32 chanspec_num;
+	__le16 chanspec_list[];
+};
+
+/* extended join params, versioned (wl_extjoin_params_v1_t) */
+struct brcmf_ext_join_params_v1_le {
+	__le16 version;
+	__le16 pad;
+	struct brcmf_ssid_le ssid_le;
+	struct brcmf_join_scan_params_le scan_le;
+	struct brcmf_assoc_params_v1_le assoc_le;
+};
+
 struct brcmf_wsec_key {
 	u32 index;		/* key index */
 	u32 len;		/* key length */
