@@ -26,6 +26,13 @@ config GOOGLE_GSA_TRUSTY
 	  only the mailbox command can be tried (aoc_cmd_mbox=1), which no
 	  Google kernel uses.
 
+config GS201_AOC_SYSMMU
+	tristate "gs201 AoC System MMU static windows"
+	help
+	  Programs the AoC's System MMU with the fixed windows its firmware
+	  expects (from the firmware image header), as 1 MiB sections. Used by
+	  the AoC driver.
+
 endmenu
 
 endif
