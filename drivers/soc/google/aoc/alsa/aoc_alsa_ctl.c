@@ -3041,7 +3041,7 @@ int snd_aoc_new_ctl(struct aoc_chip *chip)
 			return err;
 	}
 
-	pdm_callback_register(snd_aoc_pdm_state, NUM_OF_BUILTIN_MIC, chip);
+	/* No PDM error callback provider on this kernel */
 
 	return 0;
 }

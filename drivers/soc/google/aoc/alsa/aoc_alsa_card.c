@@ -350,7 +350,7 @@ static int hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 		hw_param_interval(params, SNDRV_PCM_HW_PARAM_RATE);
 	struct snd_interval *channels =
 		hw_param_interval(params, SNDRV_PCM_HW_PARAM_CHANNELS);
-	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 	struct aoc_chip *chip =
 		(struct aoc_chip *)snd_soc_card_get_drvdata(rtd->card);
 	struct snd_card_pdata *pdata =
@@ -505,7 +505,7 @@ static int i2s_hw_params(struct snd_pcm_substream *substream,
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_dai *codec_dai;
-	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 
 	u32 rate, bclk, channel;
 	int i, bit_width, ret;
@@ -550,11 +550,33 @@ static int i2s_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
+/*
+ * Codecs without TDM slot controls of their own (mainline cs35l41 only has
+ * set_channel_map) take their slots from their device tree node:
+ * google,tdm-rx-slots (ASP RX1, RX2) and google,tdm-tx-slots (ASP TX1..4).
+ */
+static void set_codec_slots(struct snd_soc_dai *dai)
+{
+	struct device_node *np = dai->component->dev->of_node;
+	unsigned int rx[8], tx[8];
+	int nrx, ntx, ret;
+
+	if (!np)
+		return;
+	nrx = of_property_read_variable_u32_array(np, "google,tdm-rx-slots", rx, 1, 8);
+	ntx = of_property_read_variable_u32_array(np, "google,tdm-tx-slots", tx, 1, 8);
+	if (nrx <= 0 && ntx <= 0)
+		return;
+	ret = snd_soc_dai_set_channel_map(dai, max(ntx, 0), tx, max(nrx, 0), rx);
+	if (ret && ret != -ENOTSUPP)
+		pr_warn("%s: set channel map %s fail %d", __func__, dai->name, ret);
+}
+
 static int tdm_hw_params(struct snd_pcm_substream *substream,
 	struct snd_pcm_hw_params *param)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 	struct snd_soc_dai *codec_dai;
 	struct snd_soc_dai_link *dai_link = rtd->dai_link;
 	u32 rate, bclk, channel, tdmslot;
@@ -628,6 +650,7 @@ static int tdm_hw_params(struct snd_pcm_substream *substream,
 		if (ret && ret != -ENOTSUPP)
 			pr_warn("%s: set tdm slot %s fail %d", __func__,
 					 codec_dai->name, ret);
+		set_codec_slots(codec_dai);
 
 		set_pll_clk(codec_dai, bclk, rate, pdata);
 		set_sys_clk(codec_dai, bclk, rate, SND_SOC_CLOCK_IN, pdata);
@@ -1108,7 +1131,7 @@ static int of_parse_dai_cpu(struct device *dev,
 	dai->num_cpus = 1;
 	component->of_node = of_node;
 
-	ret = snd_soc_of_get_dai_name(of_cpu_root, &component->dai_name);
+	ret = snd_soc_of_get_dai_name(of_cpu_root, &component->dai_name, 0);
 	if (ret) {
 		if (ret == -EPROBE_DEFER) {
 			pr_info("%s: wait cpu_dai for %s", __func__, dai->name);
@@ -1192,8 +1215,9 @@ static int of_parse_one_dai(struct device_node *node, struct device *dev,
 			dai->trigger[1] = SND_SOC_DPCM_TRIGGER_POST;
 			break;
 		case 2:
-			dai->trigger[0] = SND_SOC_DPCM_TRIGGER_BESPOKE;
-			dai->trigger[1] = SND_SOC_DPCM_TRIGGER_BESPOKE;
+			/* BESPOKE triggers are gone from ASoC */
+			dai->trigger[0] = SND_SOC_DPCM_TRIGGER_POST;
+			dai->trigger[1] = SND_SOC_DPCM_TRIGGER_POST;
 			break;
 		default:
 			dai->trigger[0] = SND_SOC_DPCM_TRIGGER_PRE;
@@ -1236,8 +1260,10 @@ static int of_parse_one_dai(struct device_node *node, struct device *dev,
 			dai->name);
 	}
 
-	dai->dpcm_playback = of_property_read_bool(node, "playback");
-	dai->dpcm_capture = of_property_read_bool(node, "capture");
+	dai->playback_only = of_property_read_bool(node, "playback") &&
+			     !of_property_read_bool(node, "capture");
+	dai->capture_only = of_property_read_bool(node, "capture") &&
+			    !of_property_read_bool(node, "playback");
 	dai->no_pcm = of_property_read_bool(node, "no-pcm");
 	dai->dynamic = of_property_read_bool(node, "dynamic");
 	dai->ignore_pmdown_time =
@@ -1306,8 +1332,8 @@ static int aoc_of_parse_dai_link(struct device_node *node,
 #ifdef DUMP_DAI_LINK_INFO
 		pr_info("dai: %s\n", dai_link->name);
 		pr_info("id: %u\n", (uint32_t)dai_link->id);
-		pr_info("playback %u capture %u\n", dai_link->dpcm_playback,
-			dai_link->dpcm_capture);
+		pr_info("playback-only %u capture-only %u\n", dai_link->playback_only,
+			dai_link->capture_only);
 		pr_info("no-pcm: %u\n", dai_link->no_pcm);
 		pr_info("dynamic: %u\n", dai_link->dynamic);
 		pr_info("\n");
@@ -1771,9 +1797,86 @@ static void init_backend_control(struct snd_soc_pcm_runtime *rtd, u32 id)
 	    !be_res_map[idx].controls)
 		return;
 
-	cpu_dai = asoc_rtd_to_cpu(rtd, 0);
+	cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 	snd_soc_add_dai_controls(cpu_dai,
 		 be_res_map[idx].controls, be_res_map[idx].num_controls);
+}
+
+/*
+ * Speaker limits for cheetah's two CS35L41 amplifiers (device/cheetah/
+ * AUDIO-PLAN.md, section 4), enforced here so no mixer setting can exceed
+ * them:
+ *  - "Digital PCM Volume" never above 817 (0 dB; -102 dB + (n-1) x 0.125 dB),
+ *    and it starts at 657 (-20 dB) for first sound;
+ *  - "Analog PCM Volume" never above 10 (10.5 dB) while the amplifiers'
+ *    protection firmware is not running (DSP bypassed), 17 (stock speaker
+ *    gain) with speaker_protection=1.
+ * The boost peak current (2.5 A) and the boost inductor and capacitor are
+ * fixed by the device tree (cirrus,boost-*), not by any control.
+ */
+static bool speaker_protection;
+module_param(speaker_protection, bool, 0444);
+MODULE_PARM_DESC(speaker_protection, "The CS35L41 protection firmware runs with calibration: allow the stock analog gain (17)");
+
+#define AMP_DIGITAL_MAX		817	/* 0 dB */
+#define AMP_DIGITAL_FIRST	657	/* -20 dB */
+#define AMP_ANALOG_MAX_BYPASS	10
+#define AMP_ANALOG_MAX_PROT	17
+
+static void aoc_set_initial(struct snd_soc_card *card, const char *name, long val)
+{
+	struct snd_ctl_elem_value *v;
+	struct snd_kcontrol *kctl = snd_soc_card_get_kcontrol(card, name);
+
+	if (!kctl)
+		return;
+	v = kzalloc(sizeof(*v), GFP_KERNEL);
+	if (!v)
+		return;
+	v->value.integer.value[0] = val;
+	v->value.integer.value[1] = val;
+	if (kctl->put(kctl, v) < 0)
+		pr_warn("%s: could not set %s to %ld\n", __func__, name, val);
+	kfree(v);
+}
+
+/*
+ * snd_soc_limit_volume() rejects SX controls (their min is a register offset
+ * above max); their platform_max is still honoured by info, get and put.
+ */
+static int aoc_limit_sx(struct snd_soc_card *card, const char *name, int max)
+{
+	struct snd_kcontrol *kctl = snd_soc_card_get_kcontrol(card, name);
+	struct soc_mixer_control *mc;
+
+	if (!kctl)
+		return -ENOENT;
+	mc = (struct soc_mixer_control *)kctl->private_value;
+	if (max > mc->max)
+		return -EINVAL;
+	mc->platform_max = max;
+	return 0;
+}
+
+static void aoc_speaker_limits(struct snd_soc_card *card)
+{
+	static const char * const prefixes[] = { "Top", "Bottom" };
+	int analog = speaker_protection ? AMP_ANALOG_MAX_PROT : AMP_ANALOG_MAX_BYPASS;
+	char name[64];
+	int i, ret;
+
+	for (i = 0; i < ARRAY_SIZE(prefixes); i++) {
+		snprintf(name, sizeof(name), "%s Digital PCM Volume", prefixes[i]);
+		ret = aoc_limit_sx(card, name, AMP_DIGITAL_MAX);
+		if (!ret)
+			aoc_set_initial(card, name, AMP_DIGITAL_FIRST);
+		pr_info("%s: %s: limit %d, initial %d: %d\n", __func__, name,
+			AMP_DIGITAL_MAX, AMP_DIGITAL_FIRST, ret);
+
+		snprintf(name, sizeof(name), "%s Analog PCM Volume", prefixes[i]);
+		ret = snd_soc_limit_volume(card, name, analog);
+		pr_info("%s: %s: limit %d: %d\n", __func__, name, analog, ret);
+	}
 }
 
 static int aoc_card_late_probe(struct snd_soc_card *card)
@@ -1820,6 +1923,8 @@ static int aoc_card_late_probe(struct snd_soc_card *card)
 	/* add for aocdump detect aoc SSR */
 	for (i = 0; i < ARRAY_SIZE(aoc_detect); i++)
 		init_audio_state_query(card, aoc_detect[i]);
+
+	aoc_speaker_limits(card);
 
 	return 0;
 }
@@ -1970,7 +2075,7 @@ err:
 	return ret;
 }
 
-static int aoc_snd_card_remove(struct platform_device *pdev)
+static void aoc_snd_card_remove(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 
@@ -1979,7 +2084,6 @@ static int aoc_snd_card_remove(struct platform_device *pdev)
 		snd_soc_card_set_drvdata(card, NULL);
 	}
 
-	return 0;
 }
 
 static const struct of_device_id aoc_snd_of_match[] = {

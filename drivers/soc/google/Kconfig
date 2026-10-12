@@ -74,6 +74,16 @@ config GS201_AOC_CHAR
 	  (aoc_char_dev), and channelized ones for services such as the
 	  sensor framework (aoc_channel_dev).
 
+config GS201_AOC_ALSA
+	tristate "gs201 AoC sound card (Google's driver)"
+	depends on GS201_AOC && SND_SOC
+	select SND_COMPRESS_OFFLOAD
+	help
+	  Google's AoC ALSA/ASoC driver, ported: the AoC's playback and
+	  capture endpoints, its audio routing controls, and a sound card with
+	  the speaker amplifiers on TDM 0. The card enforces the speaker
+	  limits in device/cheetah/AUDIO-PLAN.md.
+
 endmenu
 
 endif

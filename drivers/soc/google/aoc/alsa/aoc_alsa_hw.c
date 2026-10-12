@@ -9,8 +9,8 @@
  * published by the Free Software Foundation.
  */
 
-#include <soc/google/modem_notifier.h>
 
+#include <linux/uio.h>
 #include "aoc_alsa.h"
 #include "aoc_alsa_drv.h"
 #include "aoc_alsa_path.h"
@@ -3039,7 +3039,7 @@ int aoc_audio_voip_stop(struct aoc_alsa_stream *alsa_stream)
 /* TODO: this function is modified to deal with the issue where ALSA appl_ptr
  * and the reader pointer in AoC ringer buffer are out-of-sync due to overflow
  */
-int aoc_audio_read(struct aoc_alsa_stream *alsa_stream, void *dest,
+int aoc_audio_read(struct aoc_alsa_stream *alsa_stream, struct iov_iter *dest,
 		   uint32_t count)
 {
 	int err = 0;
@@ -3074,17 +3074,18 @@ int aoc_audio_read(struct aoc_alsa_stream *alsa_stream, void *dest,
 	if (!aoc_online_state(dev))
 		memset(tmp, 0, count);
 
-	err = copy_to_user(dest, tmp, count);
-	if (err != 0) {
-		pr_err("ERR: %d bytes not copied to user space\n", err);
+	if (copy_to_iter(tmp, count, dest) != count) {
+		pr_err("ERR: capture data not copied to user space\n");
 		err = -EFAULT;
+	} else {
+		err = 0;
 	}
 
 out:
 	return err < 0 ? err : 0;
 }
 
-int aoc_audio_write(struct aoc_alsa_stream *alsa_stream, void *src,
+int aoc_audio_write(struct aoc_alsa_stream *alsa_stream, struct iov_iter *src,
 		    uint32_t count)
 {
 	int err = 0;
@@ -3116,9 +3117,8 @@ int aoc_audio_write(struct aoc_alsa_stream *alsa_stream, void *src,
 		if (alsa_stream->cstream)
 			pr_debug("compr offload, count: %d, blocksize: %d\n", count, block_size);
 
-		err = copy_from_user(tmp, src, block_size);
-		if (err != 0) {
-			pr_err("ERR: %d bytes not read from user space\n", err);
+		if (copy_from_iter(tmp, block_size, src) != block_size) {
+			pr_err("ERR: playback data not read from user space\n");
 			err = -EFAULT;
 			goto out;
 		}
@@ -3130,7 +3130,6 @@ int aoc_audio_write(struct aoc_alsa_stream *alsa_stream, void *src,
 		}
 
 		count -= block_size;
-		src += block_size;
 	}
 
 out:
@@ -3825,7 +3824,7 @@ int prepare_phonecall(struct aoc_alsa_stream *alsa_stream)
 	if (err < 0)
 		pr_err("ERR:%d Telephony modem start fail\n", err);
 
-#if IS_ENABLED(CONFIG_EXYNOS_MODEM_IF)
+#if IS_ENABLED(CONFIG_GOOGLE_MODEMCTL)
 	modem_voice_call_notify_event(MODEM_VOICE_CALL_ON, NULL);
 #endif
 
@@ -3849,7 +3848,7 @@ int teardown_phonecall(struct aoc_alsa_stream *alsa_stream)
 	if (err < 0)
 		pr_err("ERR:%d Telephony modem stop fail\n", err);
 
-#if IS_ENABLED(CONFIG_EXYNOS_MODEM_IF)
+#if IS_ENABLED(CONFIG_GOOGLE_MODEMCTL)
 	modem_voice_call_notify_event(MODEM_VOICE_CALL_OFF, NULL);
 #endif
 

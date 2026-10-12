@@ -239,8 +239,7 @@ static int snd_aoc_pcm_open(struct snd_soc_component *component,
 		alsa_stream->isr_type = INTR;
 	} else {
 		alsa_stream->timer_interval_ns = PCM_TIMER_INTERVAL_NANOSECS;
-		hrtimer_init(&(alsa_stream->hr_timer), CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-		alsa_stream->hr_timer.function = &aoc_incall_hifi_hrtimer_irq_handler;
+		hrtimer_setup(&(alsa_stream->hr_timer), aoc_incall_hifi_hrtimer_irq_handler, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 		alsa_stream->isr_type = TIMER;
 	}
 
@@ -519,7 +518,7 @@ static int snd_aoc_pcm_trigger(struct snd_soc_component *component,
 /* Copy data from user space to hardware buffer  */
 static int snd_aoc_pcm_playback_copy_user(struct snd_soc_component *component,
 					  struct snd_pcm_substream *substream, int channel,
-					  unsigned long pos, void __user *buf, unsigned long count)
+					  unsigned long pos, struct iov_iter *buf, unsigned long count)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct aoc_alsa_stream *alsa_stream = runtime->private_data;
@@ -535,7 +534,7 @@ static int snd_aoc_pcm_playback_copy_user(struct snd_soc_component *component,
 /* Copy data from hardware buffer to user space */
 static int snd_aoc_pcm_capture_copy_user(struct snd_soc_component *component,
 					 struct snd_pcm_substream *substream, int channel,
-					 unsigned long pos, void __user *buf, unsigned long count)
+					 unsigned long pos, struct iov_iter *buf, unsigned long count)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct aoc_alsa_stream *alsa_stream = runtime->private_data;
@@ -551,7 +550,7 @@ static int snd_aoc_pcm_capture_copy_user(struct snd_soc_component *component,
 /* Copy data between hardware buffer and user space */
 static int snd_aoc_pcm_copy_user(struct snd_soc_component *component,
 				 struct snd_pcm_substream *substream, int channel,
-				 unsigned long pos, void __user *buf, unsigned long count)
+				 unsigned long pos, struct iov_iter *buf, unsigned long count)
 {
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 		return snd_aoc_pcm_playback_copy_user(component, substream, channel, pos, buf,
@@ -598,7 +597,7 @@ static int aoc_pcm_new(struct snd_soc_component *component, struct snd_soc_pcm_r
 	dma_set_mask_and_coherent(component->dev, DMA_BIT_MASK(64));
 
 	/* Allocate DMA memory */
-	if (rtd->dai_link->dpcm_playback) {
+	if (rtd->pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream) {
 		substream = rtd->pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream;
 		snd_pcm_lib_preallocate_pages(substream, SNDRV_DMA_TYPE_CONTINUOUS,
 					      component->dev,
@@ -606,7 +605,7 @@ static int aoc_pcm_new(struct snd_soc_component *component, struct snd_soc_pcm_r
 					      snd_aoc_playback_hw.buffer_bytes_max);
 	}
 
-	if (rtd->dai_link->dpcm_capture) {
+	if (rtd->pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream) {
 		substream = rtd->pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream;
 		snd_pcm_lib_preallocate_pages(substream, SNDRV_DMA_TYPE_CONTINUOUS,
 					      component->dev,
@@ -625,11 +624,11 @@ static const struct snd_soc_component_driver aoc_pcm_component = {
 	.ioctl = snd_aoc_pcm_lib_ioctl,
 	.hw_params = snd_aoc_pcm_hw_params,
 	.hw_free = snd_aoc_pcm_hw_free,
-	.copy_user = snd_aoc_pcm_copy_user,
+	.copy = snd_aoc_pcm_copy_user,
 	.prepare = snd_aoc_pcm_prepare,
 	.trigger = snd_aoc_pcm_trigger,
 	.pointer = snd_aoc_pcm_pointer,
-	.pcm_construct = aoc_pcm_new,
+	.pcm_new = aoc_pcm_new,
 };
 
 static int aoc_pcm_probe(struct platform_device *pdev)

@@ -12,7 +12,6 @@
 #include <linux/device.h>
 #include <linux/module.h>
 #include <linux/of.h>
-#include <linux/of_gpio.h>
 #include <linux/platform_device.h>
 #include <linux/string.h>
 #include <sound/soc.h>
@@ -38,7 +37,10 @@ struct be_path_cache port_array[PORT_MAX] = {
 static const struct snd_soc_dai_ops be_dai_ops;
 static struct mutex path_mutex;
 
-static int aoc_compress_new(struct snd_soc_pcm_runtime *rtd, int num);
+static int aoc_compress_new(struct snd_soc_pcm_runtime *rtd);
+static const struct snd_soc_dai_ops aoc_compr_dai_ops = {
+	.compress_new = aoc_compress_new,
+};
 
 static const uint32_t rx_ep_list[] = {
 	IDX_EP2_RX,           /* low-latency-playback */
@@ -182,7 +184,7 @@ static struct snd_soc_dai_driver aoc_dai_drv[] = {
 			.channels_min = 1,
 			.channels_max = 2,
 		},
-		.compress_new = aoc_compress_new,
+		.ops = &aoc_compr_dai_ops,
 		.name = "EP7 PB",
 		.id = IDX_EP7_RX,
 	},
@@ -910,9 +912,9 @@ static struct snd_soc_dai_driver aoc_dai_drv[] = {
 
 };
 
-static int aoc_compress_new(struct snd_soc_pcm_runtime *rtd, int num)
+static int aoc_compress_new(struct snd_soc_pcm_runtime *rtd)
 {
-	int ret = snd_soc_new_compress(rtd, num);
+	int ret = snd_soc_new_compress(rtd);
 	if (ret >= 0) {
 		rtd->pcm->nonatomic = true;
 	}
@@ -1224,7 +1226,7 @@ static int aoc_path_put(uint32_t ep_id, uint32_t hw_id,
 			struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_soc_dapm_widget *widget =
-		snd_soc_dapm_kcontrol_widget(kcontrol);
+		snd_soc_dapm_kcontrol_to_widget(kcontrol);
 	struct snd_soc_component *component =
 		snd_soc_dapm_to_component(widget->dapm);
 	struct aoc_chip *chip =
@@ -2398,7 +2400,7 @@ static int aoc_of_xlate_dai_name(struct snd_soc_component *component,
 
 static int aoc_cmp_probe(struct snd_soc_component *comp)
 {
-	struct snd_soc_dapm_context *dapm = snd_soc_component_get_dapm(comp);
+	struct snd_soc_dapm_context *dapm = snd_soc_component_to_dapm(comp);
 	int ret;
 
 	ret = snd_soc_dapm_new_controls(dapm, aoc_widget,
