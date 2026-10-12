@@ -332,7 +332,8 @@
 		compatible = "simple-bus";
 		#address-cells = <1>;
 		#size-cells = <1>;
-		ranges = <0x0 0x0 0x0 0x40000000>;
+		/* Registers below 1 GiB, PCIe windows at 0x40000000-0x7fffffff */
+		ranges = <0x0 0x0 0x0 0x80000000>;
 
 		/*
 		 * Clock controllers. Consumers below still use the fixed-clock
@@ -926,6 +927,76 @@
 			clocks = <&cmu_hsi2 CLK_GOUT_HSI2_GPIO_HSI2_PCLK>;
 			clock-names = "pclk";
 			interrupts = <GIC_SPI 421 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+
+		/*
+		 * PCIe GEN4A_1 in HSI2, the Wi-Fi controller on Pixel 7. Google's
+		 * tree calls it pcie_1 (ch-num 1); the modem's GEN4A_0 in HSI1 is
+		 * not described.
+		 *
+		 * Off by default: until the HSI2 S2MPU (DMA firewall) is
+		 * programmed, a device on this link can DMA anywhere in RAM.
+		 */
+		pcie_1: pcie@14520000 {
+			compatible = "google,gs201-pcie";
+			reg = <0x14520000 0x1400>,
+			      <0x14800000 0x301000>,
+			      <0x60ffe000 0x2000>,
+			      <0x14500000 0x1000>;
+			reg-names = "elbi", "dbi", "config", "ia";
+			#address-cells = <3>;
+			#size-cells = <2>;
+			device_type = "pci";
+			ranges = <0x82000000 0x0 0x60000000 0x60000000 0x0 0xff0000>;
+			bus-range = <0x00 0xff>;
+			interrupts = <GIC_SPI 428 IRQ_TYPE_LEVEL_HIGH>;
+			#interrupt-cells = <1>;
+			interrupt-map-mask = <0 0 0 7>;
+			interrupt-map = <0 0 0 1 &pcie_1_intc 1>,
+					<0 0 0 2 &pcie_1_intc 2>,
+					<0 0 0 3 &pcie_1_intc 3>,
+					<0 0 0 4 &pcie_1_intc 4>;
+			clocks = <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCIE_003_G4X2_DWC_PCIE_CTL_INST_0_DBI_ACLK_UG>,
+				 <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCIE_003_G4X2_DWC_PCIE_CTL_INST_0_MSTR_ACLK_UG>,
+				 <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCIE_003_G4X2_DWC_PCIE_CTL_INST_0_SLV_ACLK_UG>,
+				 <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCIE_003_PCIE_SUB_CTRL_INST_0_I_DRIVER_APB_CLK>,
+				 <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_IA_GEN4A_1_I_CLK>,
+				 <&cmu_hsi2 CLK_GOUT_HSI2_QE_PCIE_GEN4A_HSI2_ACLK>,
+				 <&cmu_hsi2 CLK_GOUT_HSI2_QE_PCIE_GEN4A_HSI2_PCLK>;
+			phys = <&pcie_1_phy>;
+			phy-names = "pcie";
+			pinctrl-0 = <&pcie1_clkreq>, <&pcie1_perst>;
+			pinctrl-names = "default";
+			reset-gpios = <&gph2 0 GPIO_ACTIVE_LOW>;
+			samsung,cmu = <&cmu_hsi2>;
+			samsung,sysreg = <&sysreg_hsi2 0x730>;
+			dma-coherent;
+			num-lanes = <1>;
+			max-link-speed = <2>;
+			status = "disabled";
+
+			pcie_1_intc: legacy-interrupt-controller {
+				#address-cells = <0>;
+				interrupt-controller;
+				#interrupt-cells = <1>;
+			};
+		};
+
+		pcie_1_phy: phy@14550000 {
+			compatible = "google,gs201-pcie-phy";
+			reg = <0x14550000 0x2000>,
+			      <0x14540000 0x1000>,
+			      <0x14521400 0x10>,
+			      <0x14560000 0xd000>;
+			reg-names = "pma", "pcs", "rst", "udbg";
+			clocks = <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCIE_003_PCIE_SUB_CTRL_INST_0_PHY_REFCLK_IN>,
+				 <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCS_PMA_INST_0_PHY_UDBG_I_APB_PCLK>,
+				 <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCS_PMA_INST_0_PIPE_PAL_PCIE_INST_0_I_APB_PCLK>,
+				 <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCS_PMA_INST_0_SF_PCIEPHY210X2_LN05LPE_QCH_TM_WRAPPER_INST_0_I_APB_PCLK>,
+				 <&cmu_hsi2 CLK_GOUT_HSI2_AS_APB_PCIEPHY_HSI2_PCLKM>;
+			samsung,pmu-syscon = <&pmu_system_controller 0x3ec4>;
+			#phy-cells = <0>;
 			status = "disabled";
 		};
 
