@@ -32,6 +32,7 @@
 #include <linux/of.h>
 #include <linux/poll.h>
 #include <linux/seq_file.h>
+#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/spi/spi.h>
 #include <linux/timekeeping.h>
@@ -46,6 +47,29 @@
 /* Time from the supplies to nstandby, and from nstandby to the MCU */
 #define BCM_POWER_ON_DELAY_US	2000
 #define BCM_WAKE_TIMEOUT_MS	100
+
+/*
+ * Bring-up evidence for correlating with lhd's own log: open/close of
+ * /dev/ttyBCM, power, nstandby, wake handshake failures and the first SSI
+ * frames of each session. On by default while the chip is being brought up.
+ */
+static bool events = true;
+module_param(events, bool, 0644);
+MODULE_PARM_DESC(events, "Log ttyBCM open/close, power, nstandby and the first frames (default: on)");
+
+static unsigned int event_frames = 16;
+module_param(event_frames, uint, 0644);
+MODULE_PARM_DESC(event_frames, "SSI frames logged per session when events=1 (default 16)");
+
+static bool ssi_dump;
+module_param(ssi_dump, bool, 0644);
+MODULE_PARM_DESC(ssi_dump, "Hex-dump every SSI transfer from the next open (heavy; default: off)");
+
+#define bcm_event(priv, fmt, ...)					\
+	do {								\
+		if (events)						\
+			dev_info(&(priv)->spi->dev, fmt, ##__VA_ARGS__);\
+	} while (0)
 
 static const char * const bcm_supply_names[BCM_NUM_SUPPLIES] = {
 	"vddcore", "vddrf", "vddaux",
@@ -69,6 +93,9 @@ static int bcm_power_on(struct bcm_spi_priv *priv)
 			usleep_range(BCM_POWER_ON_DELAY_US,
 				     BCM_POWER_ON_DELAY_US + 500);
 			priv->powered = true;
+			bcm_event(priv, "power on (supplies enabled, standby)\n");
+		} else {
+			dev_err(&priv->spi->dev, "supplies: %d\n", ret);
 		}
 	}
 	mutex_unlock(&priv->power_lock);
@@ -84,6 +111,7 @@ static void bcm_power_off(struct bcm_spi_priv *priv)
 		gpiod_set_raw_value_cansleep(priv->nstandby, 0);
 		regulator_bulk_disable(BCM_NUM_SUPPLIES, priv->supplies);
 		priv->powered = false;
+		bcm_event(priv, "power off\n");
 	}
 	mutex_unlock(&priv->power_lock);
 }
@@ -105,16 +133,32 @@ static ssize_t nstandby_store(struct device *dev,
 {
 	struct bcm_spi_priv *priv = spi_get_drvdata(to_spi_device(dev));
 	bool on = buf[0] != '0';
+	int ret;
+
+	bcm_event(priv, "nstandby <- %d by %s[%d] (ttyBCM %s, %s)\n", on,
+		  current->comm, task_pid_nr(current),
+		  priv->busy ? "open" : "closed",
+		  priv->powered ? "powered" : "unpowered");
+
+	/*
+	 * Stock keeps the supplies on all the time; here they follow use.
+	 * Raising nstandby powers the chip if /dev/ttyBCM is not open yet,
+	 * so the order lhd uses doesn't matter.
+	 */
+	if (on) {
+		ret = bcm_power_on(priv);
+		if (ret)
+			return ret;
+	}
 
 	mutex_lock(&priv->power_lock);
-	/* The chip leaves standby only while its supplies are on. */
-	if (on && !priv->powered) {
-		mutex_unlock(&priv->power_lock);
-		return -EPERM;
-	}
 	/* Raw level, as Google's: 1 runs the chip. */
 	gpiod_set_raw_value_cansleep(priv->nstandby, on);
 	mutex_unlock(&priv->power_lock);
+
+	/* Back to standby with nobody holding the link: power off too. */
+	if (!on && !priv->busy)
+		bcm_power_off(priv);
 
 	return count;
 }
@@ -196,8 +240,8 @@ int bcm_spi_sync(struct bcm_spi_priv *priv, void *tx_buf, void *rx_buf,
 	ret = spi_sync_transfer(priv->spi, &xfer, 1);
 	pk_log(priv, "r ", rx_buf, len);
 	if (ret)
-		dev_err(&priv->spi->dev, "spi_sync error for cmd 0x%x: %d\n",
-			((struct bcm_ssi_tx_frame *)tx_buf)->cmd, ret);
+		dev_err_ratelimited(&priv->spi->dev, "spi_sync error for cmd 0x%x: %d\n",
+				    ((struct bcm_ssi_tx_frame *)tx_buf)->cmd, ret);
 
 	return ret;
 }
@@ -265,6 +309,12 @@ static int bcm_ssi_tx(struct bcm_spi_priv *priv, int length)
 
 	bcm_ssi_chk_pzc(priv, rx->status);
 
+	if (events && priv->ev_frames < event_frames) {
+		priv->ev_frames++;
+		dev_info(&priv->spi->dev, "tx frame %u bytes, rx status 0x%02x, FD in %u\n",
+			 m_write, rx->status, bytes_to_write);
+	}
+
 	return 0;
 }
 
@@ -287,7 +337,10 @@ static int bcm_ssi_rx(struct bcm_spi_priv *priv, size_t *length)
 
 	payload_len = bcm_ssi_get_len(strm->ctrl_byte, rx->data);
 	if (!payload_len) {
-		dev_dbg(&priv->spi->dev, "RX length is 0\n");
+		if (events)
+			dev_info_ratelimited(&priv->spi->dev,
+					     "host_req but RX length 0 (status 0x%02x)\n",
+					     rx->status);
 		return -EAGAIN;
 	}
 
@@ -308,6 +361,12 @@ static int bcm_ssi_rx(struct bcm_spi_priv *priv, size_t *length)
 	payload_len = bcm_ssi_get_len(strm->ctrl_byte, rx->data);
 	if (payload_len < *length)
 		*length = payload_len;
+
+	if (events && priv->ev_frames < event_frames) {
+		priv->ev_frames++;
+		dev_info(&priv->spi->dev, "rx frame %zu bytes, status 0x%02x\n",
+			 *length, rx->status);
+	}
 
 	return 0;
 }
@@ -367,7 +426,9 @@ static bool bcm477x_hello(struct bcm_spi_priv *priv)
 	while (!gpiod_get_value_cansleep(priv->mcu_resp)) {
 		if (count++ > BCM_WAKE_TIMEOUT_MS) {
 			gpiod_set_value_cansleep(priv->mcu_req, 0);
-			dev_err(&priv->spi->dev, "MCU_RESP does not answer MCU_REQ\n");
+			dev_err_ratelimited(&priv->spi->dev,
+					    "MCU_RESP does not answer MCU_REQ (nstandby %d)\n",
+					    gpiod_get_raw_value_cansleep(priv->nstandby));
 			return false;
 		}
 
@@ -578,7 +639,11 @@ static int bcm_spi_open(struct inode *inode, struct file *filp)
 	priv->ssi_tx_pzc_retries = 0;
 	priv->ssi_tx_pzc_retry_delays = 0;
 	priv->rx_buffer_avail_bytes = HSI_PZC_MAX_RX_BUFFER;
+	priv->ev_frames = 0;
+	priv->dbg.ssi = ssi_dump;
 	bcm_ssi_init_strm(priv);
+	bcm_event(priv, "ttyBCM opened by %s[%d]\n", current->comm,
+		  task_pid_nr(current));
 
 	filp->private_data = priv;
 	bcm_irq_enable(priv);
@@ -591,6 +656,9 @@ static int bcm_spi_release(struct inode *inode, struct file *filp)
 {
 	struct bcm_spi_priv *priv = filp->private_data;
 
+	bcm_event(priv, "ttyBCM closed by %s[%d] after %lu bytes in, %d tx failures\n",
+		  current->comm, task_pid_nr(current), priv->packet_received,
+		  priv->ssi_tx_fail);
 	disable_irq_wake(priv->irq);
 	bcm_irq_disable(priv);
 	priv->busy = false;

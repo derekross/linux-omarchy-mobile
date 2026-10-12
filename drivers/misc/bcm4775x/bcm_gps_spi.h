@@ -129,6 +129,7 @@ struct bcm_spi_priv {
 	int ssi_tx_pzc_retries;
 	int ssi_tx_pzc_retry_delays;
 	unsigned long rx_buffer_avail_bytes;
+	unsigned int ev_frames;		/* frames logged this session */
 
 	struct bbd_debug dbg;
 	struct bbd_device *bbd;
