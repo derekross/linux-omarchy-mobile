@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/soc/google/google,gs201-gsa.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Google gs201 GSA mailbox
+
+maintainers:
+  - Derek Ross <derekross@gmail.com>
+
+description:
+  The GSA is the security core of Google Tensor SoCs. It authenticates and
+  loads the firmware of other cores, such as the AoC audio and sensor DSP.
+  The application processor sends it commands through a mailbox of shared
+  command and response registers, with one interrupt for responses.
+
+properties:
+  compatible:
+    const: google,gs201-gsa
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+
+required:
+  - compatible
+  - reg
+  - interrupts
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/interrupt-controller/arm-gic.h>
+    gsa@17c90000 {
+        compatible = "google,gs201-gsa";
+        reg = <0x17c90000 0x1000>;
+        interrupts = <GIC_SPI 363 IRQ_TYPE_LEVEL_HIGH>;
+    };
