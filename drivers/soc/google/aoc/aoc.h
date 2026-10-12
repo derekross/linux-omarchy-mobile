@@ -90,6 +90,7 @@ typedef int (*aoc_map_handler)(u32 handle, phys_addr_t p, size_t size,
 
 struct aoc_prvdata {
 	struct mbox_slot *mbox_channels;
+	struct dentry *debugfs;
 	struct aoc_service_dev **services;
 
 	unsigned long *read_blocked_mask;
