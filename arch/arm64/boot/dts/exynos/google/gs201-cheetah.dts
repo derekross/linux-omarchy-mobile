@@ -72,6 +72,22 @@
 		constant-charge-current-max-microamp = <1466730>;
 	};
 
+	/*
+	 * Goodix optical under-display fingerprint sensor. Trusty owns its SPI
+	 * bus; Linux only switches its supply, reset and interrupt lines.
+	 * Disabled until the fingerprint bring-up gates: it needs Trusty, and
+	 * its supply needs the sub-PMIC (pmic-2) enabled.
+	 */
+	fingerprint {
+		compatible = "goodix,g7-udfps";
+		interrupt-parent = <&gpa9>;
+		interrupts = <2 IRQ_TYPE_EDGE_RISING>;
+		reset-gpios = <&gpp1 1 GPIO_ACTIVE_LOW>;
+		pinctrl-0 = <&fp_irq &fp_reset>;
+		pinctrl-names = "default";
+		status = "disabled";
+	};
+
 	gpio-keys {
 		compatible = "gpio-keys";
 		pinctrl-0 = <&key_voldown>, <&key_volup>, <&key_power>;
@@ -762,6 +778,13 @@
 };
 
 &pinctrl_gpio_alive {
+	fp_irq: fp-irq-pins {
+		samsung,pins = "gpa9-2";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
 	if_pmic_fg_int: if-pmic-fg-int-pins {
 		samsung,pins = "gpa9-3";
 		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
@@ -1022,6 +1045,14 @@
 		cp2ap-ps-hold-gpios = <&gpa8 2 GPIO_ACTIVE_HIGH>;
 		cp2ap-wakeup-gpios = <&gpa8 3 GPIO_ACTIVE_HIGH>;
 		cp2ap-phone-active-gpios = <&gpa8 4 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&pinctrl_peric0 {
+	fp_reset: fp-reset-pins {
+		samsung,pins = "gpp1-1";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
 	};
 };
 
