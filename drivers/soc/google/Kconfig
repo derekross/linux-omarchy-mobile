@@ -50,6 +50,16 @@ config GS201_AOC_RAILS
 	  feed the AoC's digital microphones and sensors, until there is an
 	  S2MPG12/13 regulator driver. For bring-up only.
 
+config GS201_CAM_POWER
+	tristate "gs201 camera module power sequencing and ID reads (bring-up)"
+	depends on I2C && DEBUG_FS && OF
+	help
+	  Binds to a camera module's I2C device and, from debugfs, powers it
+	  up and down in the order and with the delays the device tree
+	  gives, and reads single identification registers from a list in
+	  the device tree. It never writes to the device. For bring-up only,
+	  until there are sensor drivers.
+
 config GS201_AOC_MBOX
 	tristate "gs201 AoC mailboxes"
 	depends on MAILBOX

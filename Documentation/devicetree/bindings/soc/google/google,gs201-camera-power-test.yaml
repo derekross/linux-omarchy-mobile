@@ -1,0 +1,118 @@
+# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/soc/google/google,gs201-camera-power-test.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Google gs201 camera module power test (bring-up)
+
+maintainers:
+  - Derek Ross <derekross@gmail.com>
+
+description:
+  Bring-up only, until there are sensor drivers. Describes one I2C device of
+  a camera module (sensor or module EEPROM) with its supplies in power-up
+  order, master clock, reset line and the identification registers that may
+  be read from it.
+
+properties:
+  compatible:
+    const: google,gs201-camera-power-test
+
+  reg:
+    maxItems: 1
+
+  clocks:
+    maxItems: 1
+    description: Sensor master clock.
+
+  pinctrl-0: true
+  pinctrl-1: true
+
+  pinctrl-names:
+    items:
+      - const: on
+      - const: off
+
+  reset-gpios:
+    maxItems: 1
+    description: Asserted holds the sensor in reset.
+
+  google,supply-names:
+    $ref: /schemas/types.yaml#/definitions/string-array
+    minItems: 1
+    maxItems: 8
+    description: Supplies in power-up order, each named <name>-supply.
+
+  google,supply-on-delays-us:
+    minItems: 1
+    maxItems: 8
+    description: Wait after enabling each supply.
+
+  google,supply-off-delays-us:
+    minItems: 1
+    maxItems: 8
+    description: Wait after disabling each supply.
+
+  google,mclk-delay-us:
+    description: Wait after the master clock starts.
+
+  google,reset-delay-us:
+    description: Wait after reset is released.
+
+  google,reset-before-mclk:
+    type: boolean
+    description: Release reset before the master clock starts.
+
+  google,readable-registers:
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    minItems: 1
+    maxItems: 16
+    description: 16-bit register addresses that may be read.
+
+  google,reg-value-bytes:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Width of a register value.
+    enum: [1, 2]
+    default: 1
+
+patternProperties:
+  "-supply$": true
+
+required:
+  - compatible
+  - reg
+  - google,supply-names
+  - google,supply-on-delays-us
+  - google,supply-off-delays-us
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/gpio/gpio.h>
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        camera@1a {
+            compatible = "google,gs201-camera-power-test";
+            reg = <0x1a>;
+            clocks = <&mclk>;
+            pinctrl-names = "on", "off";
+            pinctrl-0 = <&mclk_on>;
+            pinctrl-1 = <&mclk_off>;
+            reset-gpios = <&gpp6 3 GPIO_ACTIVE_LOW>;
+            google,supply-names = "pp3200", "pp1300", "dovdd", "dvdd", "avdd";
+            pp3200-supply = <&pp3200_bb_cam>;
+            pp1300-supply = <&pp1300_cam>;
+            dovdd-supply = <&ldo12s>;
+            dvdd-supply = <&cam_ldo6>;
+            avdd-supply = <&cam_ldo2>;
+            google,supply-on-delays-us = <0 0 0 0 1000>;
+            google,supply-off-delays-us = <0 0 1000 0 0>;
+            google,mclk-delay-us = <1000>;
+            google,reset-delay-us = <10000>;
+            google,readable-registers = <0x0016 0x0017>;
+        };
+    };
