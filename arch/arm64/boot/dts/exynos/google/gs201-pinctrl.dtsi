@@ -351,6 +351,20 @@
 		#interrupt-cells = <2>;
 	};
 
+	spi7_bus: spi7-bus-pins {
+		samsung,pins = "gpp14-0", "gpp14-1";
+		samsung,pin-function = <GS101_PIN_FUNC_3>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_5_MA>;
+	};
+
+	spi7_miso: spi7-miso-pins {
+		samsung,pins = "gpp14-2";
+		samsung,pin-function = <GS101_PIN_FUNC_3>;
+		samsung,pin-pud = <GS101_PIN_PULL_DOWN>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
 	/* Camera I2C (main module); stock pulls the lines up while it transfers */
 	hsi2c1_bus: hsi2c1-bus-pins {
 		samsung,pins = "gpp2-0", "gpp2-1";
