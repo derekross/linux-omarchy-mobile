@@ -25,7 +25,7 @@
 #include <linux/irq.h>
 #include <linux/gpio.h>
 #include <linux/proc_fs.h>
-#include <linux/of_gpio.h>
+#include <linux/gpio/consumer.h>
 #include <linux/delay.h>
 #include <linux/mfd/syscon.h>
 #include <linux/of_reserved_mem.h>
@@ -246,7 +246,7 @@ static int attach_devices(struct io_device *iod, struct device *dev)
 
 	if (!get_current_link(iod)) {
 		mif_err("%s->link == NULL\n", iod->name);
-		BUG();
+		return -ENODEV;
 	}
 
 	iod->ws = cpif_wake_lock_register(dev, iod->name);
@@ -725,7 +725,7 @@ static int cpif_cdev_alloc_region(struct modem_data *pdata, struct modem_shared 
 		return ret;
 	}
 
-	msd->cdev_class = class_create(THIS_MODULE, "cpif");
+	msd->cdev_class = class_create("cpif");
 	if (IS_ERR(msd->cdev_class)) {
 		mif_err("class_create() failed:%ld\n", PTR_ERR(msd->cdev_class));
 		ret = -ENOMEM;
@@ -923,7 +923,6 @@ free_mc:
 fail:
 	mif_err("%s: xxx\n", pdev->name);
 
-	panic("CP interface driver probe failed\n");
 	return err;
 }
 

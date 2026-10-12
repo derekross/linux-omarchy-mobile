@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Google's modem interface driver (CPIF) for the Samsung S5300 on gs201,
+# ported. The symbol names are Google's, because the sources test them.
+
+menuconfig EXYNOS_MODEM_IF
+	tristate "Samsung S5300 modem interface (Google's CPIF, bring-up)"
+	depends on PCIE_GS201_CP && NET && INET && OF
+	help
+	  Google's modem interface driver, ported: boots the Samsung S5300
+	  modem of Pixel 7 phones over PCIe, then carries its IPC, RFS and
+	  packet channels in shared memory as character and network devices
+	  (/dev/umts_boot0, /dev/umts_ipc0, /dev/umts_rfs0, rmnet*).
+
+	  For bring-up: the packet processor, DIT, the PCIe IOMMU and S2MPU,
+	  BTL, the throughput monitor and the thermal zones are not built.
+
+if EXYNOS_MODEM_IF
+
+config SEC_MODEM_S5100
+	bool "S5100-family modem over PCIe (S5300)"
+	default y
+	select LINK_DEVICE_PCIE
+	help
+	  The modem control (power, reset, boot, crash dump) for Samsung's
+	  S5100 family, which includes the S5300 of gs201 phones.
+
+config LINK_DEVICE_PCIE
+	bool
+
+config CPIF_AP_SUSPEND_DURING_VOICE_CALL
+	bool
+	default y
+	help
+	  The modem control code stock builds (pantah_defconfig): the AP may
+	  suspend while a call's audio runs over the AoC, as notified by the
+	  voice call events. Without it the S5100 control code does not build.
+
+config SHM_IPC
+	tristate "Shared-memory regions for the modem"
+	default EXYNOS_MODEM_IF
+	help
+	  Maps the modem's reserved-memory regions (IPC, MSI, packet
+	  buffers) for the modem interface driver, from a
+	  "samsung,exynos-cp-shmem" device tree node.
+
+endif

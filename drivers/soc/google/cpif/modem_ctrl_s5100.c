@@ -14,11 +14,10 @@
 #include <linux/fs.h>
 #include <linux/file.h>
 #include <linux/of.h>
-#include <linux/of_gpio.h>
+#include <linux/gpio/consumer.h>
 #include <linux/clk.h>
 #include <linux/pci.h>
 #include <linux/regulator/consumer.h>
-#include <soc/google/acpm_mfd.h>
 #include <soc/google/modem_notifier.h>
 #include <linux/reboot.h>
 #include <linux/suspend.h>
@@ -38,6 +37,7 @@
 #include "link_device.h"
 #include "link_device_memory.h"
 #include "s51xx_pcie.h"
+#include "modem_variation.h"
 
 #if IS_ENABLED(CONFIG_EXYNOS_BUSMONITOR)
 #include <linux/exynos-busmon.h>
@@ -394,7 +394,7 @@ static irqreturn_t cp_active_handler(int irq, void *data)
 				cp_state_str(mc->phone_state), cp_active);
 
 	if (timer_pending(&mld->crash_ack_timer))
-		del_timer(&mld->crash_ack_timer);
+		timer_delete(&mld->crash_ack_timer);
 
 	mif_stop_logging();
 
@@ -1202,7 +1202,7 @@ static int silent_reset_cp(struct modem_ctl *mc)
 
 	/* 2cp dump WA */
 	if (timer_pending(&mld->crash_ack_timer))
-		del_timer(&mld->crash_ack_timer);
+		timer_delete(&mld->crash_ack_timer);
 	atomic_set(&mld->forced_cp_crash, 0);
 
 	mif_info("Set link mode to LINK_MODE_BOOT.\n");
@@ -1345,7 +1345,7 @@ static int start_normal_boot(struct modem_ctl *mc)
 
 	/* 2cp dump WA */
 	if (timer_pending(&mld->crash_ack_timer))
-		del_timer(&mld->crash_ack_timer);
+		timer_delete(&mld->crash_ack_timer);
 	atomic_set(&mld->forced_cp_crash, 0);
 
 	mif_info("Set link mode to LINK_MODE_BOOT.\n");
@@ -1563,7 +1563,7 @@ static int s5100_force_crash_exit_ext_reason(const char *buf)
 	struct link_device *ld = get_current_link(g_mc->bootd);
 
 	if (strlen(buf) > 0)
-		strncpy(ld->crash_reason.string, buf, CP_CRASH_INFO_SIZE);
+		strscpy(ld->crash_reason.string, buf, CP_CRASH_INFO_SIZE);
 
 	return s5100_force_crash_exit_ext(CRASH_REASON_MIF_FORCED);
 }
@@ -1576,7 +1576,7 @@ static int s5100_force_crash_notifier(struct notifier_block *nb,
 	return s5100_force_crash_exit_ext_reason(buf);
 }
 
-int s5100_send_panic_noti_ext(void)
+static int s5100_send_panic_noti_ext(void)
 {
 	struct modem_data *modem;
 
@@ -2074,19 +2074,19 @@ static int s5100_get_pdata(struct modem_ctl *mc, struct modem_data *pdata)
 	mc->cp_gpio[CP_GPIO_CP2AP_CP_ACTIVE].label = "CP2AP_CP_ACTIVE";
 
 	/* node name */
-	mc->cp_gpio[CP_GPIO_AP2CP_CP_PWR].node_name = "gpio_ap2cp_cp_pwr_on";
-	mc->cp_gpio[CP_GPIO_AP2CP_NRESET].node_name = "gpio_ap2cp_nreset_n";
-	mc->cp_gpio[CP_GPIO_AP2CP_WAKEUP].node_name = "gpio_ap2cp_wake_up";
-	mc->cp_gpio[CP_GPIO_AP2CP_DUMP_NOTI].node_name = "gpio_ap2cp_dump_noti";
-	mc->cp_gpio[CP_GPIO_AP2CP_AP_ACTIVE].node_name = "gpio_ap2cp_pda_active";
+	mc->cp_gpio[CP_GPIO_AP2CP_CP_PWR].node_name = "ap2cp-cp-pwr-on";
+	mc->cp_gpio[CP_GPIO_AP2CP_NRESET].node_name = "ap2cp-nreset";
+	mc->cp_gpio[CP_GPIO_AP2CP_WAKEUP].node_name = "ap2cp-wakeup";
+	mc->cp_gpio[CP_GPIO_AP2CP_DUMP_NOTI].node_name = "ap2cp-dump-noti";
+	mc->cp_gpio[CP_GPIO_AP2CP_AP_ACTIVE].node_name = "ap2cp-pda-active";
 #if !IS_ENABLED(CONFIG_CP_WRESET_WA)
-	mc->cp_gpio[CP_GPIO_AP2CP_CP_WRST_N].node_name = "gpio_ap2cp_cp_wrst_n";
-	mc->cp_gpio[CP_GPIO_CP2AP_CP_WRST_N].node_name = "gpio_cp2ap_cp_wrst_n";
-	mc->cp_gpio[CP_GPIO_AP2CP_PM_WRST_N].node_name = "gpio_ap2cp_pm_wrst_n";
+	mc->cp_gpio[CP_GPIO_AP2CP_CP_WRST_N].node_name = "ap2cp-cp-wrst";
+	mc->cp_gpio[CP_GPIO_CP2AP_CP_WRST_N].node_name = "cp2ap-cp-wrst";
+	mc->cp_gpio[CP_GPIO_AP2CP_PM_WRST_N].node_name = "ap2cp-pm-wrst";
 #endif
-	mc->cp_gpio[CP_GPIO_CP2AP_PS_HOLD].node_name = "gpio_cp2ap_cp_ps_hold";
-	mc->cp_gpio[CP_GPIO_CP2AP_WAKEUP].node_name = "gpio_cp2ap_wake_up";
-	mc->cp_gpio[CP_GPIO_CP2AP_CP_ACTIVE].node_name = "gpio_cp2ap_phone_active";
+	mc->cp_gpio[CP_GPIO_CP2AP_PS_HOLD].node_name = "cp2ap-ps-hold";
+	mc->cp_gpio[CP_GPIO_CP2AP_WAKEUP].node_name = "cp2ap-wakeup";
+	mc->cp_gpio[CP_GPIO_CP2AP_CP_ACTIVE].node_name = "cp2ap-phone-active";
 
 	/* irq */
 	mc->cp_gpio[CP_GPIO_CP2AP_WAKEUP].irq_type = CP_GPIO_IRQ_CP2AP_WAKEUP;
@@ -2096,25 +2096,35 @@ static int s5100_get_pdata(struct modem_ctl *mc, struct modem_data *pdata)
 		mc->cp_gpio[CP_GPIO_CP2AP_CP_WRST_N].irq_type = CP_GPIO_IRQ_CP2AP_CP_WRST_N;
 #endif
 
-	/* gpio */
+	/*
+	 * gpio: "<node_name>-gpios" in this node, raw levels as Google's
+	 * legacy GPIO numbers gave; outputs start low, as on stock.
+	 */
 	for (i = 0; i < CP_GPIO_MAX; i++) {
-		mc->cp_gpio[i].num =
-			of_get_named_gpio(np, mc->cp_gpio[i].node_name, 0);
+		struct gpio_desc *desc;
 
-		if (!gpio_is_valid(mc->cp_gpio[i].num))
+		if (!mc->cp_gpio[i].node_name)
+			continue;
+		desc = devm_gpiod_get_optional(&pdev->dev, mc->cp_gpio[i].node_name,
+					       GPIOD_ASIS);
+		if (IS_ERR(desc))
+			return dev_err_probe(&pdev->dev, PTR_ERR(desc), "%s\n",
+					     mc->cp_gpio[i].label);
+		if (!desc)
 			continue;
 
+		mc->cp_gpio[i].desc = desc;
 		mc->cp_gpio[i].valid = true;
+		gpiod_set_consumer_name(desc, mc->cp_gpio[i].label);
 
-		gpio_request(mc->cp_gpio[i].num, mc->cp_gpio[i].label);
 		if (!strncmp(mc->cp_gpio[i].label, "AP2CP", 5))
-			gpio_direction_output(mc->cp_gpio[i].num, 0);
+			gpiod_direction_output_raw(desc, 0);
 		else
-			gpio_direction_input(mc->cp_gpio[i].num);
+			gpiod_direction_input(desc);
 
 		if (mc->cp_gpio[i].irq_type != CP_GPIO_IRQ_NONE) {
 			mc->cp_gpio_irq[mc->cp_gpio[i].irq_type].num =
-				gpio_to_irq(mc->cp_gpio[i].num);
+				gpiod_to_irq(desc);
 
 			if (i == CP_GPIO_CP2AP_CP_ACTIVE) {
 				mc->cp_gpio_irq[mc->cp_gpio[i].irq_type].not_alive =

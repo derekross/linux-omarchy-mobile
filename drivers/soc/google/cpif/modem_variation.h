@@ -21,13 +21,13 @@
 
 
 #define DECLARE_MODEM_INIT_DUMMY(type)					\
-	int type ## _init_modemctl_device(				\
+	static int type ## _init_modemctl_device(				\
 				struct modem_ctl *mc,			\
 				struct modem_data *pdata)		\
 	{ return 0; }
 
 #define DECLARE_MODEM_UNINIT_DUMMY(type)				\
-	void type ## _uninit_modemctl_device(				\
+	static void type ## _uninit_modemctl_device(				\
 				struct modem_ctl *mc,			\
 				struct modem_data *pdata)		\
 	{ return; }
@@ -39,7 +39,7 @@
 				u32 link_type)
 
 #define DECLARE_LINK_INIT_DUMMY()					\
-	struct link_device *dummy_create_link_device(			\
+	static struct link_device *dummy_create_link_device(			\
 				struct platform_device *pdev,		\
 				u32 link_type)				\
 	{ return NULL; }

@@ -23,15 +23,14 @@
 #endif
 #include <linux/shm_ipc.h>
 #include "mcu_ipc.h"
-#include <soc/google/cal-if.h>
 #include <soc/google/modem_notifier.h>
-#include <linux/soc/samsung/exynos-smc.h>
 #include <trace/events/napi.h>
 #include "modem_prj.h"
 #include "modem_utils.h"
 #include "link_device.h"
 #include "modem_dump.h"
 #include "modem_ctrl.h"
+#include "modem_variation.h"
 #if IS_ENABLED(CONFIG_LINK_DEVICE_PCIE)
 #include "s51xx_pcie.h"
 #endif
@@ -153,7 +152,7 @@ static void shmem_handle_cp_crash(struct mem_link_device *mld,
 
 static void handle_no_cp_crash_ack(struct timer_list *t)
 {
-	struct mem_link_device *mld = from_timer(mld, t, crash_ack_timer);
+	struct mem_link_device *mld = timer_container_of(mld, t, crash_ack_timer);
 	struct link_device *ld = &mld->link_dev;
 	struct modem_ctl *mc = ld->mc;
 
@@ -230,7 +229,7 @@ static void link_trigger_cp_crash(struct mem_link_device *mld, u32 crash_type,
 	}
 
 	if (!reason_done && reason && reason[0] != '\0') {
-		strlcpy(ld->crash_reason.string, reason, CP_CRASH_INFO_SIZE);
+		strscpy(ld->crash_reason.string, reason, CP_CRASH_INFO_SIZE);
 		reason_done = true;
 	}
 
@@ -678,7 +677,7 @@ static void cmd_crash_exit_handler(struct mem_link_device *mld)
 	spin_unlock_irqrestore(&mld->state_lock, flags);
 
 	if (timer_pending(&mld->crash_ack_timer))
-		del_timer(&mld->crash_ack_timer);
+		timer_delete(&mld->crash_ack_timer);
 
 	if (atomic_read(&mld->forced_cp_crash))
 		mif_err("%s<-%s: CP_CRASH_ACK\n", ld->name, mc->name);
@@ -2194,7 +2193,7 @@ static int link_read_gnss_image(struct link_device *ld,
 	return 0;
 }
 
-int shm_get_security_param2(u32 cp_num, unsigned long mode, u32 bl_size,
+static int shm_get_security_param2(u32 cp_num, unsigned long mode, u32 bl_size,
 		unsigned long *param)
 {
 	int ret = 0;
@@ -2218,7 +2217,7 @@ int shm_get_security_param2(u32 cp_num, unsigned long mode, u32 bl_size,
 	return ret;
 }
 
-int shm_get_security_param3(u32 cp_num, unsigned long mode, u32 main_size,
+static int shm_get_security_param3(u32 cp_num, unsigned long mode, u32 main_size,
 		unsigned long *param)
 {
 	int ret = 0;
@@ -2289,7 +2288,7 @@ static int shmem_security_request(struct link_device *ld, struct io_device *iod,
 	mutex_lock(&mld->vmap_lock);
 	if (mld->boot_base != NULL) {
 		/* boot_base is in no use at this point */
-		vunmap(mld->boot_base);
+		memunmap((void *)mld->boot_base);
 		mld->boot_base = NULL;
 	}
 	mutex_unlock(&mld->vmap_lock);
@@ -2546,7 +2545,7 @@ static void sync_net_dev(struct link_device *ld)
 	struct mem_link_device *mld = to_mem_link_device(ld);
 
 	napi_synchronize(&mld->mld_napi);
-	mif_info("%s\n", netdev_name(&mld->dummy_net));
+	mif_info("%s\n", netdev_name(mld->dummy_net));
 }
 
 static int link_start_normal_boot(struct link_device *ld, struct io_device *iod)
@@ -2625,7 +2624,7 @@ static void shmem_close_tx(struct link_device *ld)
 	spin_unlock_irqrestore(&mld->state_lock, flags);
 
 	if (timer_pending(&mld->crash_ack_timer))
-		del_timer(&mld->crash_ack_timer);
+		timer_delete(&mld->crash_ack_timer);
 
 	stop_net_ifaces(ld, 0);
 	purge_txq(mld);
@@ -2787,7 +2786,7 @@ static int shmem_ioctl(struct link_device *ld, struct io_device *iod,
 			return -EINVAL;
 		}
 
-		strncpy(str, base + SHMEM_BOOTLOG_OFFSET, size);
+		strscpy(str, base + SHMEM_BOOTLOG_OFFSET, size);
 		mif_info("CP boot log[%d] : %s\n", size, str);
 		break;
 	}
@@ -3282,7 +3281,7 @@ static ssize_t rx_napi_list_show(struct device *dev,
 	ssize_t count = 0;
 
 	modem = (struct modem_data *)dev->platform_data;
-	netdev = &modem->mld->dummy_net;
+	netdev = modem->mld->dummy_net;
 
 	count += scnprintf(&buf[count], PAGE_SIZE - count, "[%s's napi_list]\n",
 		netdev_name(netdev));
@@ -3342,7 +3341,7 @@ static ssize_t rx_poll_count_show(struct device *dev,
 	mld = modem->mld;
 
 	return sysfs_emit(buf, "%s: %d\n",
-			netdev_name(&mld->dummy_net), mld->rx_poll_count);
+			netdev_name(mld->dummy_net), mld->rx_poll_count);
 }
 
 static ssize_t rx_poll_count_store(struct device *dev,
@@ -3868,13 +3867,10 @@ static int init_shmem_maps(u32 link_type, struct modem_data *modem,
 	}
 
 	if (ld->sbd_ipc) {
-		hrtimer_init(&mld->sbd_tx_timer,
-				CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-		mld->sbd_tx_timer.function = sbd_tx_timer_func;
-
-		hrtimer_init(&mld->sbd_print_timer,
-				CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-		mld->sbd_print_timer.function = sbd_print;
+		hrtimer_setup(&mld->sbd_tx_timer, sbd_tx_timer_func,
+			      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+		hrtimer_setup(&mld->sbd_print_timer, sbd_print,
+			      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 
 		err = create_sbd_link_device(ld,
 				&mld->sbd_link_dev, mld->base, mld->size);
@@ -4165,8 +4161,12 @@ struct link_device *create_link_device(struct platform_device *pdev, u32 link_ty
 	if (err)
 		goto error;
 
-	init_dummy_netdev(&mld->dummy_net);
-	netif_napi_add(&mld->dummy_net, &mld->mld_napi, mld_rx_int_poll);
+	mld->dummy_net = alloc_netdev_dummy(0);
+	if (!mld->dummy_net) {
+		err = -ENOMEM;
+		goto error;
+	}
+	netif_napi_add(mld->dummy_net, &mld->mld_napi, mld_rx_int_poll);
 	napi_enable(&mld->mld_napi);
 
 	INIT_LIST_HEAD(&ld->list);
@@ -4200,8 +4200,7 @@ struct link_device *create_link_device(struct platform_device *pdev, u32 link_ty
 	msb_queue_head_init(&mld->msb_rxq);
 	msb_queue_head_init(&mld->msb_log);
 
-	hrtimer_init(&mld->tx_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	mld->tx_timer.function = tx_timer_func;
+	hrtimer_setup(&mld->tx_timer, tx_timer_func, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 
 	INIT_WORK(&mld->page_reclaim_work, bootdump_oom_handler_work);
 
@@ -4327,8 +4326,8 @@ struct link_device *create_link_device(struct platform_device *pdev, u32 link_ty
 		mif_err("pktproc_create_ul() error %d\n", err);
 		goto error;
 	}
-	hrtimer_init(&mld->pktproc_tx_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	mld->pktproc_tx_timer.function = pktproc_tx_timer_func;
+	hrtimer_setup(&mld->pktproc_tx_timer, pktproc_tx_timer_func, CLOCK_MONOTONIC,
+		      HRTIMER_MODE_REL);
 #endif
 
 #if IS_ENABLED(CONFIG_CPIF_TP_MONITOR)
@@ -4360,6 +4359,8 @@ struct link_device *create_link_device(struct platform_device *pdev, u32 link_ty
 	return ld;
 
 error:
+	if (mld->dummy_net)
+		free_netdev(mld->dummy_net);
 	kfree(mld);
 	mif_err("xxx\n");
 	return NULL;

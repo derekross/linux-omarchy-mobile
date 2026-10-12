@@ -312,7 +312,7 @@ struct mem_link_device {
 	struct mutex vmap_lock;
 	enum link_state state;
 
-	struct net_device dummy_net;
+	struct net_device *dummy_net;
 	struct napi_struct mld_napi;
 	unsigned int rx_int_enable;
 	unsigned int rx_int_count;

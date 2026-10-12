@@ -6,6 +6,7 @@
 
 #include "modem_prj.h"
 #include "modem_utils.h"
+#include "modem_ctrl.h"
 
 void modem_ctrl_set_kerneltime(struct modem_ctl *mc)
 {
@@ -86,7 +87,6 @@ int modem_ctrl_check_offset_data(struct modem_ctl *mc)
 
 data_error:
 	mif_err("offset data is damaged\n");
-	panic("CPIF shmem offset data is damaged\n");
 	return -EFAULT;
 }
 
