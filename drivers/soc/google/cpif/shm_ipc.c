@@ -33,15 +33,31 @@ static int _rmem_count;
 static struct cp_reserved_mem _cp_rmem[MAX_CP_RMEM];
 
 #if defined(MODULE)
+/*
+ * The regions: this node's memory-region in Google's device tree; on gs201
+ * boards here, that of the modem node under the PCIe link, where the board
+ * describes the modem (see cp_lines_node() in modem_ctrl_s5100.c).
+ */
+static struct device_node *cp_rmem_node(struct device_node *np)
+{
+	struct device_node *modem;
+
+	if (of_property_present(np, "memory-region"))
+		return of_node_get(np);
+	modem = of_find_compatible_node(NULL, NULL, "samsung,s5300-modem");
+	return modem ?: of_node_get(np);
+}
+
 static int cp_rmem_setup_latecall(struct platform_device *pdev)
 {
+	struct device_node *owner = cp_rmem_node(pdev->dev.of_node);
 	struct device_node *np;
 	struct reserved_mem *rmem;
 	u32 rmem_index = 0;
 	int i;
 
 	for (i = 0; i < MAX_CP_RMEM; i++) {
-		np = of_parse_phandle(pdev->dev.of_node, "memory-region", i);
+		np = of_parse_phandle(owner, "memory-region", i);
 		if (!np)
 			break;
 
@@ -69,6 +85,7 @@ static int cp_rmem_setup_latecall(struct platform_device *pdev)
 				_cp_rmem[i].p_base, _cp_rmem[i].size);
 	}
 
+	of_node_put(owner);
 	return 0;
 }
 #else

@@ -2052,10 +2052,28 @@ static void s5100_get_ops(struct modem_ctl *mc)
 	mc->ops.resume = resume_cp;
 }
 
+/*
+ * The modem's lines: in Google's device tree they are in this node; on
+ * gs201 boards here they are in the modem node under the PCIe link
+ * ("samsung,s5300-modem"), which the link driver uses while CPIF is not
+ * running and which an overlay disables for it when CPIF runs. That node
+ * is used whatever its status; this node's own lines win.
+ */
+static struct device_node *cp_lines_node(struct device_node *np)
+{
+	struct device_node *modem;
+
+	if (of_property_present(np, "ap2cp-wakeup-gpios"))
+		return of_node_get(np);
+	modem = of_find_compatible_node(NULL, NULL, "samsung,s5300-modem");
+	return modem ?: of_node_get(np);
+}
+
 static int s5100_get_pdata(struct modem_ctl *mc, struct modem_data *pdata)
 {
 	struct platform_device *pdev = to_platform_device(mc->dev);
 	struct device_node *np = pdev->dev.of_node;
+	struct device_node *lines;
 	unsigned int i;
 
 	/* label */
@@ -2097,21 +2115,26 @@ static int s5100_get_pdata(struct modem_ctl *mc, struct modem_data *pdata)
 #endif
 
 	/*
-	 * gpio: "<node_name>-gpios" in this node, raw levels as Google's
-	 * legacy GPIO numbers gave; outputs start low, as on stock.
+	 * gpio: "<node_name>-gpios", raw levels as Google's legacy GPIO
+	 * numbers gave; outputs start low, as on stock. From the modem node
+	 * the board describes (cp_lines_node()), or from this node.
 	 */
+	lines = cp_lines_node(np);
 	for (i = 0; i < CP_GPIO_MAX; i++) {
 		struct gpio_desc *desc;
 
 		if (!mc->cp_gpio[i].node_name)
 			continue;
-		desc = devm_gpiod_get_optional(&pdev->dev, mc->cp_gpio[i].node_name,
-					       GPIOD_ASIS);
-		if (IS_ERR(desc))
+		desc = devm_fwnode_gpiod_get(&pdev->dev, of_fwnode_handle(lines),
+					     mc->cp_gpio[i].node_name, GPIOD_ASIS,
+					     mc->cp_gpio[i].label);
+		if (PTR_ERR(desc) == -ENOENT)
+			continue;
+		if (IS_ERR(desc)) {
+			of_node_put(lines);
 			return dev_err_probe(&pdev->dev, PTR_ERR(desc), "%s\n",
 					     mc->cp_gpio[i].label);
-		if (!desc)
-			continue;
+		}
 
 		mc->cp_gpio[i].desc = desc;
 		mc->cp_gpio[i].valid = true;
@@ -2132,6 +2155,8 @@ static int s5100_get_pdata(struct modem_ctl *mc, struct modem_data *pdata)
 			}
 		}
 	}
+
+	of_node_put(lines);
 
 	/* validate */
 	for (i = 0; i < CP_GPIO_MAX; i++) {
