@@ -213,7 +213,7 @@ static int cp_shmem_check_mem_map_on_cp(struct device *dev)
 	long long base_diff = 0;
 
 	mif_dt_read_u32(dev->of_node, "cp_num", cp_num);
-	base = phys_to_virt(cp_shmem_get_base(cp_num, SHMEM_CP));
+	base = cp_shmem_get_region(cp_num, SHMEM_CP);
 	if (!base) {
 		mif_err("base is null\n");
 		return -ENOMEM;
@@ -350,31 +350,22 @@ int cp_shmem_get_mem_map_on_cp_flag(u32 cp_num)
 }
 EXPORT_SYMBOL(cp_shmem_get_mem_map_on_cp_flag);
 
+/*
+ * The modem's regions are reserved no-map on this kernel (they are not in
+ * the linear map, unlike stock's), so both kinds are memremap()ed: cached
+ * regions write-back (the link is I/O coherent), the others write-combine
+ * as stock's vmap() with pgprot_writecombine().
+ */
 void __iomem *cp_shmem_get_nc_region(unsigned long base, u32 size)
 {
-	unsigned int num_pages = (unsigned int)DIV_ROUND_UP(size, PAGE_SIZE);
-	pgprot_t prot = pgprot_writecombine(PAGE_KERNEL);
-	struct page **pages;
 	void *v_addr;
-	unsigned int i;
 
 	if (!base)
 		return NULL;
 
-	pages = kvcalloc(num_pages, sizeof(struct page *), GFP_KERNEL);
-	if (!pages)
-		return NULL;
-
-	for (i = 0; i < num_pages; i++) {
-		pages[i] = phys_to_page(base);
-		base += PAGE_SIZE;
-	}
-
-	v_addr = vmap(pages, num_pages, VM_MAP, prot);
+	v_addr = memremap(base, size, MEMREMAP_WC);
 	if (!v_addr)
-		mif_err("Failed to vmap pages\n");
-
-	kvfree(pages);
+		mif_err("Failed to map 0x%08lx size 0x%08x\n", base, size);
 
 	return (void __iomem *)v_addr;
 }
@@ -382,44 +373,39 @@ EXPORT_SYMBOL(cp_shmem_get_nc_region);
 
 void __iomem *cp_shmem_get_region(u32 cp, u32 idx)
 {
-	if (_cp_shmem[cp][idx].v_base)
-		return _cp_shmem[cp][idx].v_base;
+	struct cp_shared_mem *shm = &_cp_shmem[cp][idx];
 
-	if (_cp_shmem[cp][idx].cached)
-		_cp_shmem[cp][idx].v_base = phys_to_virt(_cp_shmem[cp][idx].p_base);
+	if (shm->v_base)
+		return shm->v_base;
+	if (!shm->p_base)
+		return NULL;
+
+	if (shm->cached)
+		shm->v_base = (void __iomem *)memremap(shm->p_base, shm->size,
+						       MEMREMAP_WB);
 	else
-		_cp_shmem[cp][idx].v_base = cp_shmem_get_nc_region(_cp_shmem[cp][idx].p_base,
-				_cp_shmem[cp][idx].size);
+		shm->v_base = cp_shmem_get_nc_region(shm->p_base, shm->size);
 
-	return _cp_shmem[cp][idx].v_base;
+	return shm->v_base;
 }
 EXPORT_SYMBOL(cp_shmem_get_region);
 
 void cp_shmem_release_region(u32 cp, u32 idx)
 {
-	if (_cp_shmem[cp][idx].v_base)
-		vunmap(_cp_shmem[cp][idx].v_base);
+	if (_cp_shmem[cp][idx].v_base) {
+		memunmap((void *)_cp_shmem[cp][idx].v_base);
+		_cp_shmem[cp][idx].v_base = NULL;
+	}
 }
 EXPORT_SYMBOL(cp_shmem_release_region);
 
+/*
+ * Stock gives unused reserved pages back to the page allocator. Here the
+ * regions are no-map and stay reserved: nothing is released.
+ */
 void cp_shmem_release_rmem(u32 cp, u32 idx, u32 headroom)
 {
-	int i;
-	unsigned long base, offset = 0;
-	u32 size;
-	struct page *page;
-
-	base = cp_shmem_get_base(cp, idx);
-	size = cp_shmem_get_size(cp, idx);
-	mif_info("Release rmem base:0x%08lx size:0x%08x headroom:0x%08x\n", base, size, headroom);
-
-	for (i = 0; i < (size >> PAGE_SHIFT); i++) {
-		if (offset >= headroom) {
-			page = phys_to_page(base + offset);
-			free_reserved_page(page);
-		}
-		offset += PAGE_SIZE;
-	}
+	mif_info("rmem %u stays reserved (headroom 0x%08x)\n", idx, headroom);
 }
 EXPORT_SYMBOL(cp_shmem_release_rmem);
 
@@ -492,13 +478,12 @@ static int cp_shmem_probe(struct platform_device *pdev)
 	return 0;
 
 fail:
-	panic("CP shmem probe failed\n");
+	mif_err("CP shmem probe failed: %d\n", ret);
 	return ret;
 }
 
-static int cp_shmem_remove(struct platform_device *pdev)
+static void cp_shmem_remove(struct platform_device *pdev)
 {
-	return 0;
 }
 
 static const struct of_device_id cp_shmem_dt_match[] = {

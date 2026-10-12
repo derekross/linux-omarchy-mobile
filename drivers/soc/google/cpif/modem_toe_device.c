@@ -19,7 +19,7 @@ void toe_set_iod_clat_netdev(struct io_device *iod, void *args)
 {
 	struct clat_info *clat = (struct clat_info *) args;
 	struct net_device *ndev = NULL;
-	struct link_device *ld = get_current_link(iod);
+	struct link_device __maybe_unused *ld = get_current_link(iod);
 	unsigned long flags;
 
 	if (strncmp(iod->name, clat->ipv6_iface, IFNAMSIZ) != 0)

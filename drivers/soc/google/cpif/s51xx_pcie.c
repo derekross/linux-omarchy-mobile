@@ -38,7 +38,7 @@
 #include "modem_ctrl.h"
 #include "s51xx_pcie.h"
 
-void s51xx_pcie_chk_ep_conf(struct pci_dev *pdev)
+static void s51xx_pcie_chk_ep_conf(struct pci_dev *pdev)
 {
 	int i;
 	u32 val1, val2, val3, val4;
@@ -510,9 +510,12 @@ static void s51xx_pcie_remove(struct pci_dev *pdev)
 	pci_release_regions(pdev);
 }
 
-/* For Test */
+/*
+ * The S5300 only (144d:a5a5): stock matches any Samsung function, which
+ * here includes the link's own root port (144d:ecec).
+ */
 static struct pci_device_id s51xx_pci_id_tbl[] = {
-	{ PCI_VENDOR_ID_SAMSUNG, PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID, },   // SC Basic
+	{ PCI_DEVICE(PCI_VENDOR_ID_SAMSUNG, 0xa5a5) },
 	{ }
 };
 

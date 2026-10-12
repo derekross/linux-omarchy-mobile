@@ -194,8 +194,8 @@ int create_legacy_link_device(struct mem_link_device *mld)
 	dev->rxq.tail = (void __iomem *)(mld->base + modem->legacy_raw_head_tail_offset + 12);
 	if (modem->legacy_raw_rx_buffer_cached)
 		dev->rxq.buff =
-			phys_to_virt(cp_shmem_get_base(bl->ld->mdm_data->cp_num, SHMEM_IPC) +
-			modem->legacy_raw_buffer_offset + modem->legacy_raw_txq_size);
+			cp_shmem_get_region(bl->ld->mdm_data->cp_num, SHMEM_IPC) +
+			modem->legacy_raw_buffer_offset + modem->legacy_raw_txq_size;
 	else
 		dev->rxq.buff = (void __iomem *)(mld->base + modem->legacy_raw_buffer_offset +
 			modem->legacy_raw_txq_size);

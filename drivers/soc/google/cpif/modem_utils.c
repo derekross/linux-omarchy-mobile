@@ -32,7 +32,6 @@
 #include <linux/bitops.h>
 #include "exynos-modem-ctrl.h"
 
-#include <soc/google/acpm_ipc_ctrl.h>
 #include "modem_prj.h"
 #include "modem_utils.h"
 #include "cpif_version.h"
@@ -264,7 +263,7 @@ __be32 ipv4str_to_be32(const char *ipv4str, size_t count)
 	char *next = ipstr;
 	int i;
 
-	strlcpy(ipstr, ipv4str, ARRAY_SIZE(ipstr));
+	strscpy(ipstr, ipv4str, ARRAY_SIZE(ipstr));
 
 	for (i = 0; i < 4; i++) {
 		char *p;
@@ -513,7 +512,7 @@ void mif_init_irq(struct modem_irq *irq, unsigned int num, const char *name,
 {
 	spin_lock_init(&irq->lock);
 	irq->num = num;
-	strncpy(irq->name, name, (MAX_NAME_LEN - 1));
+	strscpy(irq->name, name, (MAX_NAME_LEN - 1));
 	irq->flags = flags;
 	mif_info("name:%s num:%d flags:%#08lX\n", name, num, flags);
 }
@@ -614,15 +613,15 @@ bool mif_gpio_set_value(struct cpif_gpio *gpio, int value, unsigned int delay_ms
 	int dup = 0;
 
 	if (!gpio->valid) {
-		mif_err("SET GPIO %d is not valid\n", gpio->num);
+		mif_err("SET GPIO %s is not valid\n", gpio->label);
 		return false;
 	}
 
-	if (gpio_get_value(gpio->num) == value)
+	if (gpiod_get_raw_value(gpio->desc) == value)
 		dup = 1;
 
 	/* set gpio even if it is set already */
-	gpio_set_value(gpio->num, value);
+	gpiod_set_raw_value(gpio->desc, value);
 
 	if (!strcmp(gpio->label, "AP2CP_PM_WRST_N") || !strcmp(gpio->label, "AP2CP_CP_WRST_N"))
 		mif_info("SET GPIO %s = %d (wait %dms, dup %d)\n", gpio->label, value, delay_ms, dup);
@@ -639,11 +638,11 @@ int mif_gpio_get_value(struct cpif_gpio *gpio, bool log_print)
 	int value;
 
 	if (!gpio->valid) {
-		mif_err("GET GPIO %d is not valid\n", gpio->num);
+		mif_err("GET GPIO %s is not valid\n", gpio->label);
 		return -EINVAL;
 	}
 
-	value = gpio_get_value(gpio->num);
+	value = gpiod_get_raw_value(gpio->desc);
 
 	if (log_print)
 		mif_debug("GET GPIO %s = %d\n", gpio->label, value);

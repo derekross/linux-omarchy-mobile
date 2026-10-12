@@ -84,6 +84,8 @@ config GS201_AOC_ALSA
 	  the speaker amplifiers on TDM 0. The card enforces the speaker
 	  limits in device/cheetah/AUDIO-PLAN.md.
 
+source "drivers/soc/google/cpif/Kconfig"
+
 endmenu
 
 endif

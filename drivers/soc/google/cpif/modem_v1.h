@@ -303,7 +303,7 @@ struct modem_irq {
 
 struct cpif_gpio {
 	bool valid;
-	int num;
+	struct gpio_desc *desc;
 	enum cp_gpio_irq_type irq_type;
 	const char *label;
 	const char *node_name;

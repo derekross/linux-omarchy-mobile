@@ -13,6 +13,7 @@
 #include "modem_prj.h"
 #include "modem_utils.h"
 #include "link_device_memory.h"
+#include "modem_dump.h"
 
 static int save_log_dump(struct io_device *iod, struct link_device *ld, u8 __iomem *base,
 		size_t size)
@@ -90,7 +91,7 @@ int cp_get_log_dump(struct io_device *iod, struct link_device *ld, unsigned long
 	switch (log_dump.idx) {
 	case LOG_IDX_SHMEM:
 		if (modem->legacy_raw_rx_buffer_cached) {
-			base = phys_to_virt(cp_shmem_get_base(cp_num, SHMEM_IPC));
+			base = cp_shmem_get_region(cp_num, SHMEM_IPC);
 			size = cp_shmem_get_size(cp_num, SHMEM_IPC);
 		} else {
 			base = mld->base;
@@ -121,7 +122,7 @@ int cp_get_log_dump(struct io_device *iod, struct link_device *ld, unsigned long
 #endif
 
 	case LOG_IDX_DATABUF_DL:
-		base = phys_to_virt(cp_shmem_get_base(cp_num, SHMEM_PKTPROC));
+		base = cp_shmem_get_region(cp_num, SHMEM_PKTPROC);
 #if IS_ENABLED(CONFIG_LINK_DEVICE_PCIE_IOMMU)
 		size = mld->pktproc.buff_rgn_offset;
 #else
@@ -131,18 +132,18 @@ int cp_get_log_dump(struct io_device *iod, struct link_device *ld, unsigned long
 
 #if IS_ENABLED(CONFIG_CP_PKTPROC_UL)
 	case LOG_IDX_DATABUF_UL:
-		base = phys_to_virt(cp_shmem_get_base(cp_num, SHMEM_PKTPROC_UL));
+		base = cp_shmem_get_region(cp_num, SHMEM_PKTPROC_UL);
 		size = cp_shmem_get_size(cp_num, SHMEM_PKTPROC_UL);
 		break;
 #endif
 
 	case LOG_IDX_L2B:
-		base = phys_to_virt(cp_shmem_get_base(cp_num, SHMEM_L2B));
+		base = cp_shmem_get_region(cp_num, SHMEM_L2B);
 		size = cp_shmem_get_size(cp_num, SHMEM_L2B);
 		break;
 
 	case LOG_IDX_DDM:
-		base = phys_to_virt(cp_shmem_get_base(cp_num, SHMEM_DDM));
+		base = cp_shmem_get_region(cp_num, SHMEM_DDM);
 		size = cp_shmem_get_size(cp_num, SHMEM_DDM);
 		break;
 

@@ -42,7 +42,7 @@ extern void modem_voice_call_notify_event(enum modem_voice_call_event evt, void 
 #else
 
 static inline int modem_force_crash_exit_ext(const char *buf) { return 0; }
-static inline int void register_modem_force_crash_handler(struct notifier_block *nb) {}
+static inline int register_modem_force_crash_handler(struct notifier_block *nb) { return 0; }
 static inline void unregister_modem_force_crash_handler(struct notifier_block *nb) {}
 
 static inline int register_modem_event_notifier(struct notifier_block *nb)
