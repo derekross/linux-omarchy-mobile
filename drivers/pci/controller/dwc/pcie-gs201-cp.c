@@ -80,7 +80,7 @@
 
 static bool allow_hw;
 module_param(allow_hw, bool, 0444);
-MODULE_PARM_DESC(allow_hw, "Allow the debugfs bring-up steps to touch the hardware (default: off)");
+MODULE_PARM_DESC(allow_hw, "Allow the debugfs steps and the modem driver to bring the link up (default: off)");
 
 static bool watch_lines;
 module_param(watch_lines, bool, 0444);
@@ -899,8 +899,10 @@ static void cp_pme_turn_off(struct gs201_pcie_cp *cp)
  * bus the first time (the modem driver's PCI probe runs from here); later
  * calls re-arm MSI and restore the modem's configuration as saved after
  * the first scan. Clears the faults. Does nothing if the link is up.
+ * Refused unless the module was loaded with allow_hw=1, as the debugfs steps.
  *
- * Return: 0, or a negative error with the link down again.
+ * Return: 0, -EPERM without allow_hw, or a negative error with the link
+ * down again.
  */
 int gs201_pcie_cp_poweron(unsigned int speed)
 {
@@ -910,6 +912,11 @@ int gs201_pcie_cp_poweron(unsigned int speed)
 
 	if (!cp)
 		return -ENODEV;
+	if (!allow_hw) {
+		dev_info_once(cp->dev, "modem driver poweron refused (allow_hw=0)\n");
+		ret = -EPERM;
+		goto out;
+	}
 	if (speed < 1 || speed > 3) {
 		ret = -EINVAL;
 		goto out;
