@@ -29,7 +29,8 @@
  *              release, LTSSM, wait for L0 (Gen1 unless "link_up 3")
  *   atu        the secure-ATU SMC (config and memory windows)
  *   id         read the endpoint's vendor/device ID through the config window
- *   link_down  PERST#, LTSSM off, PHY power-down and isolation
+ *   link_down  PERST#, LTSSM off, controller soft power reset, PHY
+ *              power-down, then the PHY isolated again in the PMU
  *
  * The "status" file only reads GPIO levels and the PMU isolation bit, plus
  * controller registers once the PHY is out of isolation (an ELBI access
@@ -88,6 +89,9 @@ MODULE_PARM_DESC(allow_hw, "Allow the debugfs bring-up steps to touch the hardwa
 #define CP_ELBI_L1_REQ_NAK_MASTER	BIT(4)
 #define CP_ELBI_MSTR_PEND_SEL_NAK	0x474
 #define CP_ELBI_DBI_L1_EXIT_DISABLE	0x1078
+
+/* PMU PHY control (PHY_CTRL_PCIE_GEN4_0): bit 0 set = isolation bypassed */
+#define CP_PMU_PHY_BYPASS		BIT(0)
 
 /* DBI */
 #define CP_DBI_AUX_CLK_FREQ		0xb40
@@ -267,23 +271,61 @@ static void cp_setup_dbi(struct gs201_pcie_cp *cp, unsigned int speed)
 	dw_pcie_dbi_ro_wr_dis(pci);
 }
 
+/*
+ * Isolate the PHY again once it is powered down. The PHY driver's exit
+ * leaves isolation off, because the Wi-Fi link's controller is accessed
+ * after it (Google never isolates that PHY again either). The modem link
+ * is different: it is down most of the time, and Google's driver isolates
+ * every link that is down when the system suspends
+ * (exynos_pcie_rc_suspend_noirq()). The write goes through the same
+ * SMC-backed PMU regmap as the release in phy_init(). No controller
+ * register is accessed after this until the next link_up.
+ */
+static void cp_phy_isolate(struct gs201_pcie_cp *cp)
+{
+	unsigned int val = 0;
+	int ret;
+
+	ret = regmap_update_bits(cp->pmu, cp->pmu_offset, CP_PMU_PHY_BYPASS, 0);
+	if (!ret)
+		ret = regmap_read(cp->pmu, cp->pmu_offset, &val);
+	if (ret)
+		dev_err(cp->dev, "PHY isolation: PMU %#x: %d\n", cp->pmu_offset, ret);
+	else
+		dev_info(cp->dev, "PHY isolated (PMU %#x = %#x)\n", cp->pmu_offset, val);
+}
+
+/*
+ * exynos_pcie_rc_poweroff(): PERST#, LTSSM off, a soft power reset of the
+ * controller, PHY power-down; then isolation, as on suspend.
+ */
 static void cp_link_down(struct gs201_pcie_cp *cp)
 {
+	bool was_inited = cp->phy_inited;
+	u32 val;
+
 	if (cp->phy_inited) {
 		gpiod_direction_output(cp->perst, 1);
 		cp_elbi_write(cp, CP_ELBI_LTSSM_EN, 0);
 		cp_elbi_write(cp, CP_ELBI_IRQ0_EN, 0);
 		cp_elbi_write(cp, CP_ELBI_IRQ1_EN, 0);
 		cp_elbi_write(cp, CP_ELBI_IRQ2_EN, 0);
+		val = cp_elbi_read(cp, CP_ELBI_SOFT_RESET);
+		cp_elbi_write(cp, CP_ELBI_SOFT_RESET, val & ~CP_ELBI_SOFT_PWR_RESET);
+		udelay(20);
+		cp_elbi_write(cp, CP_ELBI_SOFT_RESET, val | CP_ELBI_SOFT_PWR_RESET);
 	}
 	if (cp->phy_on) {
 		phy_power_off(cp->phy);
 		cp->phy_on = false;
 	}
 	if (cp->phy_inited) {
-		phy_exit(cp->phy);	/* isolation back on */
+		phy_exit(cp->phy);	/* clocks only: isolation stays off */
 		cp->phy_inited = false;
 	}
+	/* Only undo what link_up did: an untouched PHY is still isolated. */
+	if (was_inited)
+		cp_phy_isolate(cp);
 	cp->link_up = false;
 	cp->atu_done = false;
 }
