@@ -28,6 +28,9 @@ properties:
           parameters
       - description: the AoC power control unit (A32 reset control and
           revision), in the AoC block
+      - description: the AoC A32 to AP mailbox
+      - description: the AoC F1 to AP mailbox
+      - description: the AoC P6 to AP mailbox
 
   reg-names:
     minItems: 3
@@ -36,6 +39,9 @@ properties:
       - const: s2mpu
       - const: chipid
       - const: pcu
+      - const: mbox-a32
+      - const: mbox-f1
+      - const: mbox-p6
 
   interrupts:
     maxItems: 1
