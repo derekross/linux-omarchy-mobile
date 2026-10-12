@@ -1039,10 +1039,13 @@
 
 /*
  * Ultrawide camera module on PERIC0 USI3 (Google's I2C bus 3): sensor at
- * 0x1a (16-bit addresses, 8-bit values), module EEPROM at 0x50 (not
- * described), AF actuator at 0x0f. Stock power-up: PP3200_BB, PP1300,
- * LDO12S, LDO6, LDO2, 1 ms, MCLK on (CIS_CLK0 on gpp3-0), 1 ms, reset
- * released, 10 ms.
+ * 0x1a (16-bit addresses, 8-bit values), module EEPROM at 0x50, AF actuator
+ * at 0x0f. Bring-up only (CAMERA-PLAN.md CAM2/CAM3): gs201-cam-power powers
+ * the sensor in stock's order (PP3200_BB, PP1300, LDO12S, LDO6, LDO2, 1 ms,
+ * MCLK on, 1 ms, reset released, 10 ms) and reads its identification
+ * registers; the EEPROM needs LDO12S only and is only checked for an
+ * answer. MCLK is CIS_CLK0 on gpp3-0 at whatever rate the bootloader set
+ * (stock asks for 24 MHz). Disabled until camera-pwr-test.
  */
 &usi3 {
 	samsung,mode = <USI_MODE_I2C>;
@@ -1051,6 +1054,39 @@
 &hsi2c_3 {
 	clock-frequency = <950000>;
 
+	camera@1a {
+		compatible = "google,gs201-camera-power-test";
+		reg = <0x1a>;
+		clocks = <&cmu_top CLK_DOUT_CMU_CIS_CLK0>;
+		pinctrl-names = "on", "off";
+		pinctrl-0 = <&cam_uw_mclk_on>;
+		pinctrl-1 = <&cam_uw_mclk_off>;
+		reset-gpios = <&gpp6 3 GPIO_ACTIVE_LOW>;
+		google,supply-names = "pp3200", "pp1300", "dovdd", "dvdd", "avdd";
+		pp3200-supply = <&pp3200_bb_cam>;
+		pp1300-supply = <&pp1300_cam>;
+		dovdd-supply = <&ldo12s>;
+		dvdd-supply = <&cam_ldo6>;
+		avdd-supply = <&cam_ldo2>;
+		google,supply-on-delays-us = <0 0 0 0 1000>;
+		google,supply-off-delays-us = <0 0 1000 0 0>;
+		google,mclk-delay-us = <1000>;
+		google,reset-delay-us = <10000>;
+		/* Sony model ID, then the CCS identification block */
+		google,readable-registers = <0x0016 0x0017 0x0000 0x0001 0x0002
+					     0x0003 0x0004 0x0005>;
+		status = "disabled";
+	};
+
+	eeprom@50 {
+		compatible = "google,gs201-camera-power-test";
+		reg = <0x50>;
+		google,supply-names = "dovdd";
+		dovdd-supply = <&ldo12s>;
+		google,supply-on-delays-us = <1000>;
+		google,supply-off-delays-us = <1000>;
+		status = "disabled";
+	};
 };
 
 &pinctrl_peric0 {
@@ -1058,6 +1094,13 @@
 		samsung,pins = "gpp3-0";
 		samsung,pin-function = <GS101_PIN_FUNC_2>;
 		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
+	cam_uw_mclk_off: cam-uw-mclk-off-pins {
+		samsung,pins = "gpp3-0";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_DOWN>;
 		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
 	};
 };
