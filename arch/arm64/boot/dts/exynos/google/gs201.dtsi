@@ -304,6 +304,30 @@
 		log_slcdump: log-slcdump { status = "disabled"; };
 	};
 
+	/*
+	 * Trusty, the secure OS that runs from the bootloader's tzsw image.
+	 * Disabled until the fingerprint bring-up gates (it talks to the
+	 * secure world at probe).
+	 */
+	trusty: trusty {
+		compatible = "android,trusty-smc-v1";
+		status = "disabled";
+
+		irq {
+			compatible = "android,trusty-irq-v1";
+			/* Trusty IPIs 8-15 are GIC SGIs 8-15 */
+			ipi-range = <8 15 8>;
+		};
+
+		log {
+			compatible = "android,trusty-log-v1";
+		};
+
+		virtio {
+			compatible = "android,trusty-virtio-v1";
+		};
+	};
+
 	soc: soc@0 {
 		compatible = "simple-bus";
 		#address-cells = <1>;
