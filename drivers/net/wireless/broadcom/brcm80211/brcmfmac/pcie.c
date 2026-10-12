@@ -261,6 +261,12 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 #define BRCMF_SHARED_DMA_SCRATCH_ADDR_OFFSET	56
 #define BRCMF_SHARED_DMA_RINGUPD_LEN_OFFSET	64
 #define BRCMF_SHARED_DMA_RINGUPD_ADDR_OFFSET	68
+/* shared area revision >= 6: host capabilities, read by the firmware */
+#define BRCMF_SHARED_HOST_CAP_OFFSET		84
+
+#define BRCMF_HOSTCAP_H2D_ENABLE_HOSTRDY	0x00000400
+#define BRCMF_HOSTCAP_DS_NO_OOB_DW		0x00001000
+#define BRCMF_HOSTCAP_UR_FW_NO_TRAP		0x00800000
 
 #define BRCMF_RING_H2D_RING_COUNT_OFFSET	0
 #define BRCMF_RING_D2H_RING_COUNT_OFFSET	1
@@ -1632,6 +1638,29 @@ brcmf_pcie_release_scratchbuffers(struct brcmf_pciedev_info *devinfo)
 	}
 }
 
+/*
+ * Tell the firmware what the host does, as Broadcom's driver does for shared
+ * area revision 6 and later (bcmdhd dhd_msgbuf.c dhd_set_host_cap()): the
+ * IPC revision in use, that a host-ready doorbell will come, that there is
+ * no device-wake (no deep sleep), and not to trap on an unsupported
+ * request.
+ */
+static void brcmf_pcie_set_host_cap(struct brcmf_pciedev_info *devinfo)
+{
+	u32 cap = devinfo->shared.version;
+
+	if (devinfo->shared.version < 6)
+		return;
+
+	if (devinfo->shared.flags & BRCMF_PCIE_SHARED_HOSTRDY_DB1)
+		cap |= BRCMF_HOSTCAP_H2D_ENABLE_HOSTRDY;
+	cap |= BRCMF_HOSTCAP_DS_NO_OOB_DW | BRCMF_HOSTCAP_UR_FW_NO_TRAP;
+
+	brcmf_pcie_write_tcm32(devinfo, devinfo->shared.tcm_base_address +
+			       BRCMF_SHARED_HOST_CAP_OFFSET, cap);
+	brcmf_dbg(PCIE, "host capabilities 0x%08x\n", cap);
+}
+
 static int brcmf_pcie_init_scratchbuffers(struct brcmf_pciedev_info *devinfo)
 {
 	struct brcmf_bus *bus = dev_get_drvdata(&devinfo->pdev->dev);
@@ -1654,6 +1683,11 @@ static int brcmf_pcie_init_scratchbuffers(struct brcmf_pciedev_info *devinfo)
 	addr = devinfo->shared.tcm_base_address +
 	       BRCMF_SHARED_DMA_SCRATCH_LEN_OFFSET;
 	brcmf_pcie_write_tcm32(devinfo, addr, BRCMF_DMA_D2H_SCRATCH_BUF_LEN);
+
+	if (devinfo->pdev->device == BRCM_PCIE_4389_DEVICE_ID) {
+		brcmf_pcie_set_host_cap(devinfo);
+		return 0;
+	}
 
 	devinfo->shared.ringupd =
 		dma_alloc_coherent(&devinfo->pdev->dev,
