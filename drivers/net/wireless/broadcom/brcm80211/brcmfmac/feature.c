@@ -45,6 +45,7 @@ static const struct brcmf_feat_fwcap brcmf_fwcap_map[] = {
 	{ BRCMF_FEAT_SAE, "sae " },
 	{ BRCMF_FEAT_FWAUTH, "idauth" },
 	{ BRCMF_FEAT_SAE_EXT, "sae_ext" },
+	{ BRCMF_FEAT_HOST_SFHLLC, "host_sfhllc" },
 };
 
 #ifdef DEBUG
@@ -357,6 +358,10 @@ void brcmf_feat_attach(struct brcmf_pub *drvr)
 	brcmf_feat_firmware_overrides(drvr);
 
 	brcmf_fwvid_feat_attach(ifp);
+
+	/* Host-built 802.3 + LLC/SNAP TX headers: only the BCM4389 for now */
+	if (drvr->bus_if->chip != BRCM_CC_4389_CHIP_ID)
+		drvr->feat_flags &= ~BIT(BRCMF_FEAT_HOST_SFHLLC);
 
 	if (drvr->settings->feature_disable) {
 		brcmf_dbg(INFO, "Features: 0x%02x, disable: 0x%02x\n",
