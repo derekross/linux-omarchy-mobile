@@ -1156,9 +1156,16 @@ static void brcmf_pcie_intr_enable(struct brcmf_pciedev_info *devinfo)
 
 static void brcmf_pcie_hostready(struct brcmf_pciedev_info *devinfo)
 {
-	if (devinfo->shared.flags & BRCMF_PCIE_SHARED_HOSTRDY_DB1)
+	if (devinfo->shared.flags & BRCMF_PCIE_SHARED_HOSTRDY_DB1) {
+		brcmf_dbg(PCIE, "host ready on 0x%x\n",
+			  devinfo->reginfo->h2d_mailbox_1);
+		/* bcmdhd dhd_bus_hostready() writes this value */
 		brcmf_pcie_write_reg32(devinfo,
-				       devinfo->reginfo->h2d_mailbox_1, 1);
+				       devinfo->reginfo->h2d_mailbox_1,
+				       devinfo->pdev->device ==
+				       BRCM_PCIE_4389_DEVICE_ID ?
+				       0x12345678 : 1);
+	}
 }
 
 static irqreturn_t brcmf_pcie_quick_check_isr(int irq, void *arg)
@@ -1731,7 +1738,12 @@ static int brcmf_pcie_preinit(struct device *dev)
 	brcmf_dbg(PCIE, "Enter\n");
 
 	brcmf_pcie_intr_enable(buspub->devinfo);
-	brcmf_pcie_hostready(buspub->devinfo);
+	/* The BCM4389 was told host ready right after its rings were set
+	 * up; its firmware traps on a second one (_hnd_die from
+	 * pciedev_handle_hostready_intr), so ring it only once.
+	 */
+	if (buspub->devinfo->pdev->device != BRCM_PCIE_4389_DEVICE_ID)
+		brcmf_pcie_hostready(buspub->devinfo);
 
 	return 0;
 }
@@ -2505,6 +2517,13 @@ static void brcmf_pcie_setup(struct device *dev, int ret,
 	ret = brcmf_pcie_request_irq(devinfo);
 	if (ret)
 		goto fail;
+
+	/* Broadcom's driver rings host ready as soon as the common rings
+	 * are set up, before it posts any buffer (bcmdhd dhd_prot_init(),
+	 * hostrdy_after_init), and the BCM4389 was told so in host_cap.
+	 */
+	if (devinfo->pdev->device == BRCM_PCIE_4389_DEVICE_ID)
+		brcmf_pcie_hostready(devinfo);
 
 	/* hook the commonrings in the bus structure. */
 	for (i = 0; i < BRCMF_NROF_COMMON_MSGRINGS; i++)
