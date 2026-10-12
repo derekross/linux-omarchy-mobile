@@ -104,10 +104,15 @@ properties:
   modem:
     type: object
     additionalProperties: false
-    description: The modem's power, reset and handshake lines (raw levels).
+    description:
+      The modem's power, reset and handshake lines (raw levels), for
+      driving the modem without its own driver. When the modem driver
+      describes the lines in its own node instead, this node is absent or
+      disabled, so that each line has one owner.
     properties:
       compatible:
         const: samsung,s5300-modem
+      status: true
       ap2cp-pda-active-gpios:
         maxItems: 1
       ap2cp-cp-pwr-on-gpios:
