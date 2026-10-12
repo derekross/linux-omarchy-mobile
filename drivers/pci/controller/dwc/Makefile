@@ -9,6 +9,7 @@ obj-$(CONFIG_PCIE_ANDES_QILAI) += pcie-andes-qilai.o
 obj-$(CONFIG_PCIE_ESWIN) += pcie-eswin.o
 obj-$(CONFIG_PCI_DRA7XX) += pci-dra7xx.o
 obj-$(CONFIG_PCI_EXYNOS) += pci-exynos.o
+obj-$(CONFIG_PCIE_GS201_CP) += pcie-gs201-cp.o
 obj-$(CONFIG_PCIE_GS201) += pcie-gs201.o
 obj-$(CONFIG_PCIE_GS201_SYSMMU) += pcie-gs201-sysmmu.o
 obj-$(CONFIG_PCIE_FU740) += pcie-fu740.o
