@@ -918,6 +918,12 @@
 			status = "disabled";
 		};
 
+		gsa: gsa@17c90000 {
+			compatible = "google,gs201-gsa";
+			interrupts = <GIC_SPI 363 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+
 		/*
 		 * Multi-core timer. Gives the kernel a broadcast clock event
 		 * device that keeps running while cores are powered down in C2.
