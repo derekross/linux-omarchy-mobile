@@ -775,17 +775,9 @@ static int aocc_probe(struct aoc_service_dev *dev)
 	if (!prvdata)
 		return -ENOMEM;
 
-	aocc_max_pending_msgs = dt_property(dev->dev.parent->of_node, "channel-max-pending-msgs");
-	if (aocc_max_pending_msgs == DT_PROPERTY_NOT_FOUND) {
-		dev_err(&dev->dev, "AOC DT missing property channel-max-pending-msgs");
-		return -EINVAL;
-	}
-	aocc_block_channel_threshold = dt_property(dev->dev.parent->of_node,
-						"block-channel-threshold");
-	if (aocc_block_channel_threshold == DT_PROPERTY_NOT_FOUND) {
-		dev_err(&dev->dev, "AOC DT missing property block_channel_threshold");
-		return -EINVAL;
-	}
+	/* gs201's values (stock device tree: 0x80 and 0x40) */
+	aocc_max_pending_msgs = 0x80;
+	aocc_block_channel_threshold = 0x40;
 
 	if (strcmp(dev_name(&dev->dev), "usf_sh_mem_doorbell") != 0) {
 		ret = create_character_device(dev);

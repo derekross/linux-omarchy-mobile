@@ -460,42 +460,23 @@ static void aoc_pass_fw_information(void *base, const struct aoc_fw_data *fwd,
 	}
 }
 
+/* The board id and revision passed to the firmware (google,board-id/-rev) */
 static u32 aoc_board_config_parse(struct device_node *node, u32 *board_id, u32 *board_rev)
 {
-	const char *board_cfg;
-	int err = 0;
+	int err;
 
-	/* Read board config from device tree */
-	err = of_property_read_string(node, "aoc-board-cfg", &board_cfg);
+	err = of_property_read_u32(node, "google,board-id", board_id);
+	if (!err)
+		err = of_property_read_u32(node, "google,board-rev", board_rev);
 	if (err < 0) {
-		pr_err("Unable to retrieve AoC board configuration, check DT");
+		pr_err("Unable to retrieve AoC board id/revision, check DT");
 		pr_info("Assuming R4/O6 board configuration");
 		*board_id  = AOC_FWDATA_BOARDID_DFL;
 		*board_rev = AOC_FWDATA_BOARDREV_DFL;
 		return err;
 	}
 
-	/* Read board id from device tree */
-	err = of_property_read_u32(node, "aoc-board-id", board_id);
-	if (err < 0) {
-		pr_err("Unable to retrieve AoC board id, check DT");
-		pr_info("Assuming R4/O6 board configuration");
-		*board_id  = AOC_FWDATA_BOARDID_DFL;
-		*board_rev = AOC_FWDATA_BOARDREV_DFL;
-		return err;
-	}
-
-	/* Read board revision from device tree */
-	err = of_property_read_u32(node, "aoc-board-rev", board_rev);
-	if (err < 0) {
-		pr_err("Unable to retrieve AoC board revision, check DT");
-		pr_info("Assuming R4/O6 board configuration");
-		*board_id  = AOC_FWDATA_BOARDID_DFL;
-		*board_rev = AOC_FWDATA_BOARDREV_DFL;
-		return err;
-	}
-
-	pr_info("AoC Platform: %s", board_cfg);
+	pr_info("AoC board id %#x rev %#x", *board_id, *board_rev);
 
 	return err;
 }
