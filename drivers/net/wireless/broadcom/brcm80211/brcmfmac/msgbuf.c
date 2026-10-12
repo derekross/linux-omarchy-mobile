@@ -354,11 +354,12 @@ brcmf_msgbuf_alloc_pktid(struct device *dev,
 
 	*idx = pktids->last_allocated_idx;
 
-	count = 0;
+	/* Packet ID 0 means "no packet" to the firmware: never hand it out. */
+	count = 1;
 	do {
 		(*idx)++;
 		if (*idx == pktids->array_size)
-			*idx = 0;
+			*idx = 1;
 		if (array[*idx].allocated.counter == 0)
 			if (atomic_cmpxchg(&array[*idx].allocated, 0, 1) == 0)
 				break;
@@ -388,7 +389,7 @@ brcmf_msgbuf_get_pktid(struct device *dev, struct brcmf_msgbuf_pktids *pktids,
 	struct brcmf_msgbuf_pktid *pktid;
 	struct sk_buff *skb;
 
-	if (idx >= pktids->array_size) {
+	if (idx == 0 || idx >= pktids->array_size) {
 		brcmf_err("Invalid packet id %d (max %d)\n", idx,
 			  pktids->array_size);
 		return NULL;
