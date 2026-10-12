@@ -23,6 +23,12 @@ properties:
   reset-gpios:
     description: Output GPIO pin used for resetting the controller
 
+  clocks:
+    maxItems: 1
+    description:
+      Reference clock, if the controller is not fed by its own crystal. It
+      is enabled while the controller is powered up.
+
   ese-present:
     type: boolean
     description: |
