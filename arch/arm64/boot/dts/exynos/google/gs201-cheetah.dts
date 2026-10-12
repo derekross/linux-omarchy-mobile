@@ -83,6 +83,7 @@
 		interrupt-parent = <&gpa9>;
 		interrupts = <2 IRQ_TYPE_EDGE_RISING>;
 		reset-gpios = <&gpp1 1 GPIO_ACTIVE_LOW>;
+		vdd-supply = <&ldo15s>;
 		pinctrl-0 = <&fp_irq &fp_reset>;
 		pinctrl-names = "default";
 		status = "disabled";
