@@ -23,6 +23,7 @@ properties:
               - google,gs101-peric1-sysreg
               - google,gs201-apm-sysreg
               - google,gs201-csis-sysreg
+              - google,gs201-hsi1-sysreg
               - google,gs201-hsi2-sysreg
               - google,gs201-peric0-sysreg
               - google,gs201-peric1-sysreg
