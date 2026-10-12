@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+if ARCH_EXYNOS || COMPILE_TEST
+
+menu "Google SoC drivers"
+
+config GOOGLE_GSA
+	tristate "Google GSA mailbox"
+	depends on DEBUG_FS
+	help
+	  The GSA is the security core of Google Tensor SoCs. It authenticates
+	  and loads the firmware of other cores, such as the AoC (the audio
+	  and sensor DSP), and is reached through a mailbox of command and
+	  response registers.
+
+	  This driver sends read-only status queries to it through debugfs,
+	  for bring-up. Say M here only for that.
+
+endmenu
+
+endif
