@@ -45,9 +45,15 @@ static int cp_rmem_setup_latecall(struct platform_device *pdev)
 		if (!np)
 			break;
 
-		mif_dt_read_u32(np, "rmem_index", rmem_index);
+		/*
+		 * Stock gives each reserved-memory node an "rmem_index";
+		 * without one, the position in memory-region is the index.
+		 */
+		rmem_index = i;
+		mif_dt_read_u32_noerr(np, "rmem_index", rmem_index);
 
 		rmem = of_reserved_mem_lookup(np);
+		of_node_put(np);
 		if (!rmem) {
 			mif_err("of_reserved_mem_lookup() failed\n");
 			break;
