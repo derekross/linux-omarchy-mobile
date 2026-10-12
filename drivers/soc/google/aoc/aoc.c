@@ -40,6 +40,8 @@
 #include <linux/mutex.h>
 #include <linux/soc/google/gs201-aoc-sysmmu.h>
 #include <linux/soc/google/gsa.h>
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
 
 #include "aoc_firmware.h"
 #include "aoc_ramdump_regions.h"
@@ -953,6 +955,44 @@ exit:
 }
 
 static DEVICE_ATTR_RO(services);
+
+/*
+ * The services attribute stops at a page, which this firmware's 82 services
+ * overflow. debugfs aoc/services has the same listing, complete.
+ */
+static int aoc_services_dbg_show(struct seq_file *m, void *unused)
+{
+	struct aoc_prvdata *prvdata = m->private;
+	int services, i;
+
+	atomic_inc(&prvdata->aoc_process_active);
+	if (aoc_state != AOC_STATE_ONLINE) {
+		seq_puts(m, "offline\n");
+		goto exit;
+	}
+
+	services = aoc_num_services();
+	seq_printf(m, "Services : %d\n", services);
+	for (i = 0; i < services; i++) {
+		aoc_service *s = service_at_index(prvdata, i);
+		struct aoc_ipc_service_header *hdr = (struct aoc_ipc_service_header *)s;
+
+		seq_printf(m, "%d : \"%s\" mbox %d\n", i, aoc_service_name(s),
+			   aoc_service_irq_index(s));
+		if (hdr->regions[0].slots > 0)
+			seq_printf(m, " Up Size:%ux%uB Tx:%u Rx:%u\n",
+				   hdr->regions[0].slots, hdr->regions[0].size,
+				   hdr->regions[0].tx, hdr->regions[0].rx);
+		if (hdr->regions[1].slots > 0)
+			seq_printf(m, " Down Size:%ux%uB Tx:%u Rx:%u\n",
+				   hdr->regions[1].slots, hdr->regions[1].size,
+				   hdr->regions[1].tx, hdr->regions[1].rx);
+	}
+exit:
+	atomic_dec(&prvdata->aoc_process_active);
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(aoc_services_dbg);
 
 int start_firmware_load(struct device *dev)
 {
@@ -2712,6 +2752,10 @@ static int aoc_platform_probe(struct platform_device *pdev)
 
 	ret = sysfs_create_groups(&dev->kobj, aoc_groups);
 
+	prvdata->debugfs = debugfs_create_dir("aoc", NULL);
+	debugfs_create_file("services", 0444, prvdata->debugfs, prvdata,
+			    &aoc_services_dbg_fops);
+
 	pr_debug("platform_probe matched\n");
 
 	return 0;
@@ -2748,6 +2792,7 @@ static void aoc_platform_remove(struct platform_device *pdev)
 		}
 	}
 	sysfs_remove_groups(&pdev->dev.kobj, aoc_groups);
+	debugfs_remove_recursive(prvdata->debugfs);
 
 	aoc_cleanup_resources(pdev);
 	deinit_chardev(prvdata);
