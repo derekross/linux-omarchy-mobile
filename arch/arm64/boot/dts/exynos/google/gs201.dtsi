@@ -920,6 +920,8 @@
 
 		gsa: gsa@17c90000 {
 			compatible = "google,gs201-gsa";
+			reg = <0x17c90000 0x1000>, <0x17c60000 0x10000>;
+			reg-names = "mbox", "s2mpu";
 			interrupts = <GIC_SPI 363 IRQ_TYPE_LEVEL_HIGH>;
 			status = "disabled";
 		};
