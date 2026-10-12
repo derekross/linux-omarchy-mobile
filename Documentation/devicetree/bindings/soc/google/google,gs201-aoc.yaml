@@ -19,18 +19,30 @@ properties:
     const: google,gs201-aoc
 
   reg:
+    minItems: 3
     items:
       - description: the AoC power request register (aoc_req) and its
           acknowledge at +0x40
       - description: the AoC's stage-2 MPU
       - description: the chip id block, read for the firmware's boot
           parameters
+      - description: the AoC power control unit (A32 reset control and
+          revision), in the AoC block
 
   reg-names:
+    minItems: 3
     items:
       - const: aoc_req
       - const: s2mpu
       - const: chipid
+      - const: pcu
+
+  interrupts:
+    maxItems: 1
+
+  interrupt-names:
+    items:
+      - const: watchdog
 
   memory-region:
     maxItems: 1
@@ -66,10 +78,14 @@ additionalProperties: false
 
 examples:
   - |
+    #include <dt-bindings/interrupt-controller/arm-gic.h>
     aoc@181d0000 {
         compatible = "google,gs201-aoc";
-        reg = <0x181d0000 0x1000>, <0x1a0b0000 0x1000>, <0x10000000 0x100>;
-        reg-names = "aoc_req", "s2mpu", "chipid";
+        reg = <0x181d0000 0x1000>, <0x1a0b0000 0x1000>, <0x10000000 0x100>,
+              <0x19a00000 0x10000>;
+        reg-names = "aoc_req", "s2mpu", "chipid", "pcu";
+        interrupts = <GIC_SPI 116 IRQ_TYPE_LEVEL_HIGH>;
+        interrupt-names = "watchdog";
         memory-region = <&aoc_carveout>;
         google,gsa = <&gsa>;
         google,sysmmu = <&aoc_sysmmu>;
