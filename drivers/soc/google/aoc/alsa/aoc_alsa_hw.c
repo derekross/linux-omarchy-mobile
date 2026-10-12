@@ -3096,8 +3096,10 @@ int aoc_audio_write(struct aoc_alsa_stream *alsa_stream, struct iov_iter *src,
 
 	avail = aoc_ring_bytes_available_to_write(dev->service, AOC_DOWN);
 	if (unlikely(avail < count)) {
-		pr_err("ERR: inconsistent write/read pointers, avail = %d, towrite = %u\n",
-		       avail, count);
+		pr_err("ERR: inconsistent write/read pointers, avail = %d, towrite = %u (%s down ring: written %zu, read %zu)\n",
+		       avail, count, dev_name(&dev->dev),
+		       aoc_ring_bytes_written(dev->service, AOC_DOWN),
+		       aoc_ring_bytes_read(dev->service, AOC_DOWN));
 		err = -EFAULT;
 		goto out;
 	}
