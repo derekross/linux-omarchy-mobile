@@ -156,6 +156,18 @@ static void brcmf_feat_wlc_version_overrides(struct brcmf_pub *drv)
 
 	brcmf_dbg(INFO, "WLC version: %d.%d\n", major, minor);
 
+	/*
+	 * Versioned "join" parameters (wl_extjoin_params_v1_t), by the
+	 * same WLC version test as Broadcom's driver (bcmdhd
+	 * wl_cfg80211.c, MIN_JOINEXT_V1_*): 14.2 or 14.4, 16.1 and later
+	 * on 16, or 17 and later. Only the BCM4389 for now; its 20.101.90
+	 * firmware reports 14.4 and rejects the unversioned layout.
+	 */
+	if (drv->bus_if->chip == BRCM_CC_4389_CHIP_ID &&
+	    ((major == 14 && (minor == 2 || minor == 4)) ||
+	     (major == 16 && minor >= 1) || major >= 17))
+		feat_flags |= BIT(BRCMF_FEAT_JOIN_V1);
+
 	for (i = 0; i < ARRAY_SIZE(brcmf_feat_wlcfeat_map); i++) {
 		e = &brcmf_feat_wlcfeat_map[i];
 		if (major > e->min_ver_major ||
