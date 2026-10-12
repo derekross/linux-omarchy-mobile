@@ -22,5 +22,7 @@ void aoc_sysmmu_dump(struct aoc_sysmmu *mmu, const char *when);
 int aoc_sysmmu_enable(struct aoc_sysmmu *mmu,
 		      const struct aoc_sysmmu_window *win, unsigned int n);
 void aoc_sysmmu_disable(struct aoc_sysmmu *mmu);
+bool aoc_sysmmu_lost(struct aoc_sysmmu *mmu);
+void aoc_sysmmu_reprogram(struct aoc_sysmmu *mmu);
 
 #endif /* __LINUX_SOC_GOOGLE_GS201_AOC_SYSMMU_H */
