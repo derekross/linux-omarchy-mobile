@@ -78,6 +78,7 @@
 /* Commands (gsa_mbox.h, enum gsa_mbox_cmd) */
 #define GSA_MB_CMD_LOAD_AOC_FW_IMG	90
 #define GSA_MB_CMD_AOC_CMD		91
+#define GSA_MB_CMD_UNLOAD_AOC_FW_IMG	92
 #define GSA_MB_CMD_SJTAG_GET_STATUS	100
 #define GSA_MB_CMD_WAKELOCK_ACQUIRE	150
 #define GSA_MB_CMD_WAKELOCK_RELEASE	151
@@ -115,6 +116,7 @@ MODULE_PARM_DESC(s2mpu_probe, "Expose s2mpu_ctrl0 (read under a GSA wakelock) in
 #define HWMGR_AOC_PORT			"com.android.trusty.gsa.hwmgr.aoc"
 #define HWMGR_CMD_RESP			BIT(31)
 #define HWMGR_CMD_STATE_CMD		1
+#define HWMGR_CMD_UNLOAD_IMG		2
 
 #define TZ_CON_TIMEOUT_MS		5000
 #define TZ_MSG_TIMEOUT_MS		10000
@@ -567,8 +569,30 @@ static int gsa_tz_aoc_cmd(struct gsa *gsa, u32 cmd)
 	}
 	return rsp.state;
 }
+
+static int gsa_tz_aoc_unload(struct gsa *gsa)
+{
+	u32 req = HWMGR_CMD_UNLOAD_IMG;
+	struct {
+		u32 hdr_cmd;
+		u32 err;
+	} rsp = { };
+	int ret;
+
+	ret = gsa_tz_xchg(&gsa->tz, &req, sizeof(req), &rsp, sizeof(rsp));
+	if (ret < 0)
+		return ret;
+	if (ret != sizeof(rsp) || rsp.hdr_cmd != (req | HWMGR_CMD_RESP) || rsp.err)
+		return -EIO;
+	return 0;
+}
 #else
 static int gsa_tz_aoc_cmd(struct gsa *gsa, u32 cmd)
+{
+	return -EOPNOTSUPP;
+}
+
+static int gsa_tz_aoc_unload(struct gsa *gsa)
 {
 	return -EOPNOTSUPP;
 }
@@ -596,6 +620,35 @@ int gsa_send_aoc_cmd(struct device *dev, u32 cmd)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(gsa_send_aoc_cmd);
+
+/**
+ * gsa_unload_aoc_fw_image() - unlock and unload the AoC image
+ * @dev: the GSA device, from gsa_get_device()
+ *
+ * The AoC must be shut down first (GSA_AOC_SHUTDOWN). Afterwards the GSA no
+ * longer protects the carve-out and the AoC state is "inactive".
+ *
+ * Return: 0 on success, negative error otherwise.
+ */
+int gsa_unload_aoc_fw_image(struct device *dev)
+{
+	struct gsa *gsa = dev_get_drvdata(dev);
+	u32 err;
+	int ret;
+
+	if (aoc_cmd_mbox) {
+		ret = gsa_cmd(gsa, GSA_MB_CMD_UNLOAD_AOC_FW_IMG, NULL, 0, NULL, 0,
+			      &err);
+		if (ret > 0)
+			ret = 0;
+	} else {
+		ret = gsa_tz_aoc_unload(gsa);
+	}
+	dev_info(dev, "AoC unload (%s): %d\n", aoc_cmd_mbox ? "mailbox" : "Trusty",
+		 ret);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(gsa_unload_aoc_fw_image);
 
 /**
  * gsa_get_device() - find the GSA a client's "google,gsa" property names
