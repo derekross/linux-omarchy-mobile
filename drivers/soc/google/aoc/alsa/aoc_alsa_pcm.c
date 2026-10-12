@@ -375,6 +375,29 @@ static int snd_aoc_pcm_open(struct snd_soc_component *component,
 
 	idx = substream->pcm->device;
 	pr_debug("pcm device open (%d)\n", idx);
+
+	/*
+	 * The AoC entry point (playback) and the capture use case are taken
+	 * from the PCM device number below, which is right only when the
+	 * card's DAI links are in the stock order, where the PCM number of a
+	 * front end follows from its link id: EPn playback (id n - 1) is PCM
+	 * n - 1, EPn capture (AOC_TX | n - 1) is PCM 8 + n - 1. Anything else
+	 * would configure some other entry point on the AoC, so refuse. (The
+	 * raw, ultrasonic and immersive links sit further down the stock list
+	 * with ids of their own; they are not checked.)
+	 */
+	if (!(rtd->dai_link->id & (AOC_BE | AOC_NOHOST)) &&
+	    AOC_ID_TO_INDEX(rtd->dai_link->id) < UC_AUDIO_RECORD) {
+		int expect = AOC_ID_TO_INDEX(rtd->dai_link->id) +
+			     ((rtd->dai_link->id & AOC_TX) ? UC_AUDIO_RECORD : 0);
+
+		if (expect != idx) {
+			pr_err("%s is PCM %d, expected PCM %d: the card's DAI links are not in the stock order\n",
+			       rtd->dai_link->name, idx, expect);
+			mutex_unlock(&chip->audio_mutex);
+			return -EINVAL;
+		}
+	}
 	pr_debug("chip open (%llu)\n", chip->opened);
 
 	alsa_stream = kzalloc(sizeof(struct aoc_alsa_stream), GFP_KERNEL);
