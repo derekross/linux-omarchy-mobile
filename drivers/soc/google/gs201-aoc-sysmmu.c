@@ -105,6 +105,10 @@ static unsigned int vids = BIT(0);
 module_param(vids, uint, 0444);
 MODULE_PARM_DESC(vids, "Bitmask of VIDs to translate (default: VID 0, which the AoC uses)");
 
+static bool dump_faults;
+module_param(dump_faults, bool, 0644);
+MODULE_PARM_DESC(dump_faults, "Include VID 0's fault registers in register dumps (not yet read on this block)");
+
 static bool empty;
 module_param(empty, bool, 0444);
 MODULE_PARM_DESC(empty, "Negative test: install an empty table, so every AoC access faults");
@@ -149,9 +153,10 @@ void aoc_sysmmu_dump(struct aoc_sysmmu *mmu, const char *when)
 			 when, v, readl(mmu->base + REG_CTRL_VM(v)),
 			 readl(mmu->base + REG_CFG_VM(v)),
 			 (u64)readl(mmu->base + REG_FLPT_BASE_VM(v)) << PT_BASE_SHIFT);
-	dev_info(mmu->dev, "%s: VID 0 fault va %#x info %#x\n", when,
-		 readl(mmu->base + REG_FAULT_VA_VM(0)),
-		 readl(mmu->base + REG_FAULT_INFO_VM(0)));
+	if (dump_faults)
+		dev_info(mmu->dev, "%s: VID 0 fault va %#x info %#x\n", when,
+			 readl(mmu->base + REG_FAULT_VA_VM(0)),
+			 readl(mmu->base + REG_FAULT_INFO_VM(0)));
 }
 EXPORT_SYMBOL_GPL(aoc_sysmmu_dump);
 

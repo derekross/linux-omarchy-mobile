@@ -28,9 +28,12 @@
  *            4 shutdown, 5 release reset, 6 reset)
  *   ramdump  the firmware's ramdump header (boot breadcrumbs) and the
  *            start of the IPC area
+ *   pcu      the A32 reset control and revision, only with diag_pcu=1 (the
+ *            read aborted on cheetah with the AoC in reset)
  *
- * Around start and release reset the kernel log gets the S2MPU, the A32
- * reset control, the System MMU and the breadcrumbs; with "reapply" (the
+ * Around start and release reset the kernel log gets the S2MPU, the System
+ * MMU and the IPC area (the PCU and the breadcrumbs with diag_pcu and
+ * diag_ramdump); with "reapply" (the
  * default) an S2MPU or System MMU setting that a block reset cleared is
  * put back first. The AoC watchdog interrupt, if described, is logged.
  *   unload   write 1: GSA_AOC_SHUTDOWN if running, then unload (the GSA
@@ -127,6 +130,19 @@ enum {
 #define RAMDUMP_HEADER_OFFSET		0x2000000
 #define RAMDUMP_BREADCRUMBS		0x318	/* after 17 section headers */
 #define RAMDUMP_DUMP_SIZE		0x360
+
+/*
+ * Optional diagnostic reads, each off by default until it has been seen to
+ * work on the phone. The PCU read aborted (synchronous external abort) on
+ * the first try, with BLK_AOC on and the AoC in reset.
+ */
+static bool diag_pcu;
+module_param(diag_pcu, bool, 0644);
+MODULE_PARM_DESC(diag_pcu, "Read the AoC PCU (A32 reset control, revision); aborted on cheetah with the AoC in reset");
+
+static bool diag_ramdump;
+module_param(diag_ramdump, bool, 0644);
+MODULE_PARM_DESC(diag_ramdump, "Read the ramdump header (carve-out + 32 MiB) in the start diagnostics");
 
 static bool reapply = true;
 module_param(reapply, bool, 0644);
@@ -260,36 +276,63 @@ static void aoc_chip_info(struct aoc_boot *ab, u32 *product, u32 *type,
 	*rev = (((r10 >> 20) & 0xf) << 4) | ((r10 >> 16) & 0xf);
 }
 
+/* The ramdump header: magic, valid flag, the first eight boot breadcrumbs */
+static void aoc_diag_ramdump(struct aoc_boot *ab, const char *when)
+{
+	void __iomem *rd = (void __iomem *)(ab->dram + RAMDUMP_HEADER_OFFSET);
+	void __iomem *bc = rd + RAMDUMP_BREADCRUMBS;
+	char magic[8];
+
+	memcpy_fromio(magic, rd, sizeof(magic));
+	magic[7] = 0;
+	dev_info(ab->dev, "%s: ramdump magic %s valid %#x crumbs %08x %08x %08x %08x %08x %08x %08x %08x\n",
+		 when, magic, readl(rd + 8), readl(bc), readl(bc + 4),
+		 readl(bc + 8), readl(bc + 12), readl(bc + 16), readl(bc + 20),
+		 readl(bc + 24), readl(bc + 28));
+}
+
+/* The PCU: A32 reset control and revision. Only with diag_pcu. */
+static void aoc_diag_pcu(struct aoc_boot *ab, const char *when)
+{
+	if (!ab->pcu || !diag_pcu || !aoc_blk_on(ab))
+		return;
+	dev_info(ab->dev, "%s: about to read the PCU\n", when);
+	dev_info(ab->dev, "%s: pcu reset %#x\n", when,
+		 readl(ab->pcu + AOC_PCU_RESET_CONTROL));
+	dev_info(ab->dev, "%s: pcu rev %#x\n", when,
+		 readl(ab->pcu + AOC_PCU_REVISION));
+}
+
 /*
- * Log what tells a running AoC from a stuck one: power, S2MPU, A32 reset
- * control, System MMU (with VID 0's fault registers), the ramdump header's
- * magic and boot breadcrumbs, and the first words of the IPC area.
- * Reads in BLK_AOC only while the acknowledge is set.
+ * Log what tells a running AoC from a stuck one. Groups that read fine on
+ * the phone (S2MPU CTRL0, System MMU registers, the IPC area) always; the
+ * PCU and the ramdump header only when their parameter is set. Each group
+ * logs on its own line, so an abort points at its group.
  */
 static void aoc_diag(struct aoc_boot *ab, const char *when)
 {
-	void *rd = ab->dram + RAMDUMP_HEADER_OFFSET;
-	u32 *bc = rd + RAMDUMP_BREADCRUMBS;
-	u32 *ipc = ab->dram + ab->ipc_offset;
+	void __iomem *ipc = (void __iomem *)(ab->dram + ab->ipc_offset);
 
 	if (!aoc_blk_on(ab)) {
 		dev_info(ab->dev, "%s: BLK_AOC off (aoc_req %#x ack %#x)\n", when,
 			 readl(ab->req), readl(ab->req + AOC_REQ_ACK));
 	} else {
-		dev_info(ab->dev, "%s: aoc s2mpu CTRL0 %#x, pcu reset %#x rev %#x\n",
-			 when, readl(ab->s2mpu + AOC_S2MPU_CTRL0),
-			 ab->pcu ? readl(ab->pcu + AOC_PCU_RESET_CONTROL) : 0,
-			 ab->pcu ? readl(ab->pcu + AOC_PCU_REVISION) : 0);
+		dev_info(ab->dev, "%s: aoc s2mpu CTRL0 %#x\n", when,
+			 readl(ab->s2mpu + AOC_S2MPU_CTRL0));
 		aoc_sysmmu_dump(ab->mmu, when);
 	}
 	if (ab->ipc_offset)
 		dev_info(ab->dev, "%s: ipc %08x %08x %08x %08x %08x %08x\n", when,
-			 readl(ipc), readl(ipc + 1), readl(ipc + 2), readl(ipc + 3),
-			 readl(ipc + 4), readl(ipc + 5));
-	dev_info(ab->dev, "%s: ramdump magic %.7s valid %#x crumbs %08x %08x %08x %08x %08x %08x %08x %08x\n",
-		 when, (char *)rd, readl(rd + 8), readl(bc), readl(bc + 1),
-		 readl(bc + 2), readl(bc + 3), readl(bc + 4), readl(bc + 5),
-		 readl(bc + 6), readl(bc + 7));
+			 readl(ipc), readl(ipc + 4), readl(ipc + 8), readl(ipc + 12),
+			 readl(ipc + 16), readl(ipc + 20));
+}
+
+/* The optional groups; called without the lock held */
+static void aoc_diag_extra(struct aoc_boot *ab, const char *when)
+{
+	aoc_diag_pcu(ab, when);
+	if (diag_ramdump)
+		aoc_diag_ramdump(ab, when);
 }
 
 static irqreturn_t aoc_wdt_irq(int irq, void *data)
@@ -360,22 +403,38 @@ static const struct file_operations aoc_power_fops = {
 	.write = aoc_power_write,
 };
 
+/*
+ * Read-only views take no lock: if a read aborts, the reading task dies,
+ * and a held lock would wedge load and start for the rest of the boot.
+ */
 static int aoc_blk_show(struct seq_file *s, void *unused)
 {
 	struct aoc_boot *ab = s->private;
 
-	mutex_lock(&ab->lock);
 	if (!aoc_blk_on(ab)) {
 		seq_puts(s, "BLK_AOC is off (no acknowledge): not read\n");
-	} else {
-		aoc_diag(ab, "blk");
-		seq_printf(s, "see the kernel log\naoc s2mpu CTRL0 %#x\n",
-			   readl(ab->s2mpu + AOC_S2MPU_CTRL0));
+		return 0;
 	}
-	mutex_unlock(&ab->lock);
+	seq_printf(s, "aoc s2mpu CTRL0 %#x\n", readl(ab->s2mpu + AOC_S2MPU_CTRL0));
+	aoc_sysmmu_dump(ab->mmu, "blk");
+	seq_puts(s, "System MMU: see the kernel log\n");
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(aoc_blk);
+
+static int aoc_pcu_show(struct seq_file *s, void *unused)
+{
+	struct aoc_boot *ab = s->private;
+
+	if (!ab->pcu || !diag_pcu || !aoc_blk_on(ab)) {
+		seq_puts(s, "not read (needs the pcu range, diag_pcu=1 and BLK_AOC on)\n");
+		return 0;
+	}
+	aoc_diag_pcu(ab, "pcu");
+	seq_puts(s, "see the kernel log\n");
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(aoc_pcu);
 
 /* Validate the image and pick the windows. Returns the image config. */
 static int aoc_parse(struct aoc_boot *ab, const struct firmware *fw)
@@ -631,21 +690,22 @@ static int aoc_control_show(struct seq_file *s, void *unused)
 {
 	struct aoc_boot *ab = s->private;
 
-	mutex_lock(&ab->lock);
-	if (ab->loaded)
+	if (READ_ONCE(ab->loaded))
 		aoc_list(ab, s);
 	else
 		seq_puts(s, "not loaded\n");
-	mutex_unlock(&ab->lock);
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(aoc_control);
 
 static int aoc_cmd(struct aoc_boot *ab, u32 cmd)
 {
+	bool boot = cmd == GSA_AOC_START || cmd == GSA_AOC_RELEASE_RESET;
 	u32 magic;
 	int ret;
 
+	if (boot)
+		aoc_diag_extra(ab, "before");
 	mutex_lock(&ab->lock);
 	if (!ab->loaded) {
 		ret = -ENOENT;
@@ -655,7 +715,7 @@ static int aoc_cmd(struct aoc_boot *ab, u32 cmd)
 	ret = aoc_power(ab, true);
 	if (ret)
 		goto out;
-	if (cmd == GSA_AOC_START || cmd == GSA_AOC_RELEASE_RESET) {
+	if (boot) {
 		aoc_diag(ab, "before");
 		aoc_check_setup(ab);
 		if (ab->wdt_irq > 0 && !ab->wdt_on) {
@@ -666,7 +726,7 @@ static int aoc_cmd(struct aoc_boot *ab, u32 cmd)
 	ret = gsa_send_aoc_cmd(ab->gsa, cmd);
 	dev_info(ab->dev, "AoC command %u: GSA state %d (%s)\n", cmd, ret,
 		 aoc_state_name(ret));
-	if (ret < 0 || (cmd != GSA_AOC_START && cmd != GSA_AOC_RELEASE_RESET))
+	if (ret < 0 || !boot)
 		goto out;
 	aoc_diag(ab, "after");
 
@@ -682,6 +742,8 @@ static int aoc_cmd(struct aoc_boot *ab, u32 cmd)
 	}
 out:
 	mutex_unlock(&ab->lock);
+	if (boot)
+		aoc_diag_extra(ab, "after");
 	return ret;
 }
 
@@ -885,6 +947,7 @@ static int aoc_boot_probe(struct platform_device *pdev)
 	debugfs_create_file("unload", 0200, ab->debugfs, ab, &aoc_unload_fops);
 	debugfs_create_file("cmd", 0200, ab->debugfs, ab, &aoc_rawcmd_fops);
 	debugfs_create_file("ramdump", 0400, ab->debugfs, ab, &aoc_ramdump_fops);
+	debugfs_create_file("pcu", 0400, ab->debugfs, ab, &aoc_pcu_fops);
 
 	dev_info(dev, "ready: carve-out %pa + %#zx, nothing touched\n",
 		 &ab->dram_base, ab->dram_size);
