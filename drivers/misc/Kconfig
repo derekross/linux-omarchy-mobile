@@ -586,4 +586,5 @@ source "drivers/misc/keba/Kconfig"
 source "drivers/misc/amd-sbi/Kconfig"
 source "drivers/misc/rp1/Kconfig"
 source "drivers/misc/issei/Kconfig"
+source "drivers/misc/bcm4775x/Kconfig"
 endmenu

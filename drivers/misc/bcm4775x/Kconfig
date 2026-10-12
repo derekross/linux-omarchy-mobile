@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0
+config BCM4775X_GNSS
+	tristate "Broadcom BCM4775x GNSS receiver on SPI (lhd interface)"
+	depends on SPI && GPIOLIB && REGULATOR
+	help
+	  The Broadcom BCM4775x GNSS receiver on SPI, as used in Google's
+	  Pixel 7 phones. It exposes the chip's SSI link as /dev/ttyBCM and
+	  the /dev/bbd_* nodes for Broadcom's own location daemons (lhd,
+	  gpsd), which load the chip's patch and produce the positions.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called bcm4775x-gnss.
