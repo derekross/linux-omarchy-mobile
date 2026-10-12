@@ -162,6 +162,19 @@ struct sbconfig {
 #define	SRCI_SRBSZ_SHIFT	0
 #define SR_BSZ_BASE		14
 
+/* SYSMEM coreinfo as laid out on the BCM4389: RAM bank count in bits 4:0,
+ * ROM bank count in bits 9:5, and the ROM banks come first in the bank
+ * index space. Core revision 12 moved both counts up.
+ */
+#define SYSMEM_SRCI_SRNB_MASK		0x0000001f
+#define SYSMEM_SRCI_SRNB_SHIFT		0
+#define SYSMEM_SRCI_ROMNB_MASK		0x000003e0
+#define SYSMEM_SRCI_ROMNB_SHIFT		5
+#define SYSMEM_SRCI_NEW_SRNB_MASK	0x00ff0000
+#define SYSMEM_SRCI_NEW_SRNB_SHIFT	16
+#define SYSMEM_SRCI_NEW_ROMNB_MASK	0xff000000
+#define SYSMEM_SRCI_NEW_ROMNB_SHIFT	24
+
 struct sbsocramregs {
 	u32 coreinfo;
 	u32 bwalloc;
@@ -660,18 +673,44 @@ static u32 brcmf_chip_sysmem_ramsize(struct brcmf_core_priv *sysmem)
 	u32 coreinfo;
 	u32 idx;
 	u32 nb;
+	u32 nrb;
 	u32 banksize;
 
 	if (!brcmf_chip_iscoreup(&sysmem->pub))
 		brcmf_chip_resetcore(&sysmem->pub, 0, 0, 0);
 
 	coreinfo = brcmf_chip_core_read32(sysmem, SYSMEMREGOFFS(coreinfo));
-	nb = (coreinfo & SRCI_SRNB_MASK) >> SRCI_SRNB_SHIFT;
+
+	switch (sysmem->chip->pub.chip) {
+	case BRCM_CC_4389_CHIP_ID:
+		/* Count the RAM banks only, and skip the ROM banks in
+		 * front of them.
+		 */
+		if (sysmem->pub.rev >= 12) {
+			nb = (coreinfo & SYSMEM_SRCI_NEW_SRNB_MASK) >>
+			     SYSMEM_SRCI_NEW_SRNB_SHIFT;
+			nrb = (coreinfo & SYSMEM_SRCI_NEW_ROMNB_MASK) >>
+			      SYSMEM_SRCI_NEW_ROMNB_SHIFT;
+		} else {
+			nb = (coreinfo & SYSMEM_SRCI_SRNB_MASK) >>
+			     SYSMEM_SRCI_SRNB_SHIFT;
+			nrb = (coreinfo & SYSMEM_SRCI_ROMNB_MASK) >>
+			      SYSMEM_SRCI_ROMNB_SHIFT;
+		}
+		break;
+	default:
+		nb = (coreinfo & SRCI_SRNB_MASK) >> SRCI_SRNB_SHIFT;
+		nrb = 0;
+		break;
+	}
 
 	for (idx = 0; idx < nb; idx++) {
-		brcmf_chip_socram_banksize(sysmem, idx, &banksize);
+		brcmf_chip_socram_banksize(sysmem, nrb + idx, &banksize);
 		memsize += banksize;
 	}
+
+	brcmf_dbg(INFO, "SYSMEM rev %u coreinfo 0x%08x: %u ROM, %u RAM banks\n",
+		  sysmem->pub.rev, coreinfo, nrb, nb);
 
 	return memsize;
 }
