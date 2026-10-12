@@ -18,7 +18,12 @@
 
 static int st_nci_init(struct nci_dev *ndev)
 {
+	struct st_nci_info *info = nci_get_drvdata(ndev);
 	struct nci_mode_set_cmd cmd;
+
+	/* Plain NCI controllers start in NCI mode: CORE_RESET comes first. */
+	if (info->ndlc->raw)
+		return 0;
 
 	cmd.cmd_type = ST_NCI_SET_NFC_MODE;
 	cmd.mode = 1;

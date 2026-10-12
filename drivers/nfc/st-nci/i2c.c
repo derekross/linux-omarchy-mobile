@@ -15,6 +15,7 @@
 #include <linux/delay.h>
 #include <linux/nfc.h>
 #include <linux/of.h>
+#include <linux/property.h>
 
 #include "st-nci.h"
 
@@ -26,6 +27,11 @@
 
 #define ST_NCI_I2C_MIN_SIZE 4   /* PCB(1) + NCI Packet header(3) */
 #define ST_NCI_I2C_MAX_SIZE 250 /* req 4.2.1 */
+
+/* Plain NCI (ST21NFCD/ST54 generation): no PCB byte */
+#define ST_NCI_I2C_RAW_HDR_SIZE		3
+/* Sent by the controller when there is nothing to read */
+#define ST_NCI_I2C_IDLE_CHAR		0x7e
 
 #define ST_NCI_DRIVER_NAME "st_nci"
 #define ST_NCI_I2C_DRIVER_NAME "st_nci_i2c"
@@ -39,6 +45,7 @@ struct st_nci_i2c_phy {
 	struct gpio_desc *gpiod_reset;
 	struct clk *clk;
 	bool clk_on;
+	bool raw;
 
 	struct st_nci_se_status se_status;
 };
@@ -56,12 +63,24 @@ static int st_nci_i2c_enable(void *phy_id)
 		phy->clk_on = true;
 	}
 
+	if (phy->raw) {
+		/* Two pulses take the controller out of quick boot mode. */
+		gpiod_set_value(phy->gpiod_reset, 0);
+		msleep(20);
+		gpiod_set_value(phy->gpiod_reset, 1);
+		usleep_range(10000, 11000);
+	}
 	gpiod_set_value(phy->gpiod_reset, 0);
-	usleep_range(10000, 15000);
+	if (phy->raw)
+		msleep(20);
+	else
+		usleep_range(10000, 15000);
 	gpiod_set_value(phy->gpiod_reset, 1);
 	usleep_range(80000, 85000);
+	dev_dbg(&phy->i2c_dev->dev, "reset released%s\n",
+		phy->raw ? " (double pulse)" : "");
 
-	if (phy->ndlc->powered == 0 && phy->irq_active == 0) {
+	if (!phy->irq_active) {
 		enable_irq(phy->i2c_dev->irq);
 		phy->irq_active = true;
 	}
@@ -96,8 +115,11 @@ static int st_nci_i2c_write(void *phy_id, struct sk_buff *skb)
 	if (phy->ndlc->hard_fault != 0)
 		return phy->ndlc->hard_fault;
 
+	print_hex_dump_debug("st_nci_i2c tx: ", DUMP_PREFIX_NONE, 16, 1,
+			     skb->data, skb->len, false);
 	r = i2c_master_send(client, skb->data, skb->len);
 	if (r < 0) {  /* Retry, chip was in standby */
+		dev_dbg(&client->dev, "write: %d, retrying\n", r);
 		usleep_range(1000, 4000);
 		r = i2c_master_send(client, skb->data, skb->len);
 	}
@@ -108,8 +130,65 @@ static int st_nci_i2c_write(void *phy_id, struct sk_buff *skb)
 		else
 			r = 0;
 	}
+	if (r)
+		dev_dbg(&client->dev, "write of %u bytes failed: %d\n",
+			skb->len, r);
 
 	return r;
+}
+
+/*
+ * Reads a plain NCI packet: a 3-byte header whose last byte is the payload
+ * length, then the payload. Leading idle characters mean the controller
+ * was not ready yet; the bytes they displaced are read again.
+ */
+static int st_nci_i2c_read_raw(struct st_nci_i2c_phy *phy,
+			       struct sk_buff **skb)
+{
+	struct i2c_client *client = phy->i2c_dev;
+	u8 hdr[ST_NCI_I2C_RAW_HDR_SIZE];
+	int r, idle;
+	u8 len;
+
+	r = i2c_master_recv(client, hdr, sizeof(hdr));
+	if (r != sizeof(hdr)) {
+		dev_dbg(&client->dev, "read header: %d\n", r);
+		return -EREMOTEIO;
+	}
+
+	for (idle = 0; idle < sizeof(hdr) && hdr[idle] == ST_NCI_I2C_IDLE_CHAR;
+	     idle++)
+		;
+	if (idle == sizeof(hdr)) {
+		dev_dbg(&client->dev, "read: idle\n");
+		return -EBADMSG;
+	}
+	if (idle) {
+		memmove(hdr, hdr + idle, sizeof(hdr) - idle);
+		r = i2c_master_recv(client, hdr + sizeof(hdr) - idle, idle);
+		if (r != idle)
+			return -EREMOTEIO;
+	}
+
+	len = hdr[2];
+	*skb = alloc_skb(sizeof(hdr) + len, GFP_KERNEL);
+	if (!*skb)
+		return -ENOMEM;
+	skb_put_data(*skb, hdr, sizeof(hdr));
+
+	if (len) {
+		r = i2c_master_recv(client, skb_put(*skb, len), len);
+		if (r != len) {
+			dev_dbg(&client->dev, "read payload of %u: %d\n",
+				len, r);
+			kfree_skb(*skb);
+			return -EREMOTEIO;
+		}
+	}
+
+	print_hex_dump_debug("st_nci_i2c rx: ", DUMP_PREFIX_NONE, 16, 1,
+			     (*skb)->data, (*skb)->len, false);
+	return 0;
 }
 
 /*
@@ -192,7 +271,10 @@ static irqreturn_t st_nci_irq_thread_fn(int irq, void *phy_id)
 		return IRQ_HANDLED;
 	}
 
-	r = st_nci_i2c_read(phy, &skb);
+	if (phy->raw)
+		r = st_nci_i2c_read_raw(phy, &skb);
+	else
+		r = st_nci_i2c_read(phy, &skb);
 	if (r == -EREMOTEIO || r == -ENOMEM || r == -EBADMSG)
 		return IRQ_HANDLED;
 
@@ -230,6 +312,7 @@ static int st_nci_i2c_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	phy->i2c_dev = client;
+	phy->raw = (uintptr_t)device_get_match_data(dev);
 
 	i2c_set_clientdata(client, phy);
 
@@ -257,7 +340,7 @@ static int st_nci_i2c_probe(struct i2c_client *client)
 
 	r = ndlc_probe(phy, &i2c_phy_ops, &client->dev,
 			ST_NCI_FRAME_HEADROOM, ST_NCI_FRAME_TAILROOM,
-			&phy->ndlc, &phy->se_status);
+			&phy->ndlc, &phy->se_status, phy->raw);
 	if (r < 0) {
 		nfc_err(&client->dev, "Unable to register ndlc layer\n");
 		return r;
@@ -298,6 +381,8 @@ static const struct of_device_id of_st_nci_i2c_match[] = {
 	{ .compatible = "st,st21nfcb-i2c" },
 	{ .compatible = "st,st21nfcb_i2c" },
 	{ .compatible = "st,st21nfcc-i2c" },
+	/* Plain NCI, without NDLC framing */
+	{ .compatible = "st,st54j-i2c", .data = (void *)true },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, of_st_nci_i2c_match);
