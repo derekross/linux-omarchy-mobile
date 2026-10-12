@@ -297,6 +297,30 @@ static enum hrtimer_restart aoc_pcm_hrtimer_irq_handler(struct hrtimer *timer)
 	return aoc_pcm_irq_process(alsa_stream);
 }
 
+/*
+ * Bring-up: log the AoC ring's byte counters at prepare, start, stop and on
+ * the AoC's period interrupts, to see whether the AoC flushes the ring when
+ * the stream is set up and whether it reads it once started.
+ */
+static bool ring_debug;
+module_param(ring_debug, bool, 0644);
+MODULE_PARM_DESC(ring_debug, "Log the AoC PCM ring counters (bring-up)");
+
+static void aoc_pcm_ring_log(struct aoc_alsa_stream *alsa_stream, const char *what)
+{
+	struct aoc_service_dev *dev = alsa_stream->dev;
+	aoc_direction dir;
+
+	if (!ring_debug || !dev || !alsa_stream->substream)
+		return;
+
+	dir = alsa_stream->substream->stream == SNDRV_PCM_STREAM_PLAYBACK ?
+		AOC_DOWN : AOC_UP;
+	pr_info_ratelimited("aoc pcm %s %s: written %zu read %zu\n", dev_name(&dev->dev),
+			    what, aoc_ring_bytes_written(dev->service, dir),
+			    aoc_ring_bytes_read(dev->service, dir));
+}
+
 void aoc_pcm_isr(struct aoc_service_dev *dev)
 {
 	struct aoc_alsa_stream *alsa_stream;
@@ -315,6 +339,7 @@ void aoc_pcm_isr(struct aoc_service_dev *dev)
 		return;
 	}
 
+	aoc_pcm_ring_log(alsa_stream, "irq");
 	aoc_pcm_irq_process(alsa_stream);
 }
 
@@ -606,6 +631,7 @@ static int snd_aoc_pcm_prepare(struct snd_soc_component *component,
 		 alsa_stream->pcm_float_fmt);
 
 	aoc_audio_setup(alsa_stream);
+	aoc_pcm_ring_log(alsa_stream, "prepared");
 
 	/* in preparation of the stream */
 	/* aoc_audio_set_ctls(alsa_stream->chip); */
@@ -656,6 +682,7 @@ static int snd_aoc_pcm_trigger(struct snd_soc_component *component,
 			aoc_timer_start(alsa_stream);
 
 			err = aoc_audio_start(alsa_stream);
+			aoc_pcm_ring_log(alsa_stream, "started");
 			if (err == 0) {
 				alsa_stream->running = 1;
 				alsa_stream->draining = 1;
@@ -675,6 +702,7 @@ static int snd_aoc_pcm_trigger(struct snd_soc_component *component,
 			pr_debug("DROPPING\n");
 			alsa_stream->draining = 0;
 		}
+		aoc_pcm_ring_log(alsa_stream, "stopping");
 		if (alsa_stream->running) {
 			err = aoc_audio_stop(alsa_stream);
 			if (err != 0)
