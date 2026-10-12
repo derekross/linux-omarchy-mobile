@@ -228,6 +228,9 @@ static void brcmu_d11ac_decchspec(struct brcmu_chan *ch)
 	case BRCMU_CHSPEC_D11AC_BND_2G:
 		ch->band = BRCMU_CHAN_BAND_2G;
 		break;
+	case BRCMU_CHSPEC_D11AC_BND_6G:
+		ch->band = BRCMU_CHAN_BAND_6G;
+		break;
 	default:
 		WARN_ONCE(1, "Invalid chanspec 0x%04x\n", ch->chspec);
 		break;
