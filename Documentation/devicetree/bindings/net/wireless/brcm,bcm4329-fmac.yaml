@@ -125,6 +125,11 @@ properties:
       NVRAM. This would normally be filled in by the bootloader from platform
       configuration data.
 
+  memory-region:
+    maxItems: 1
+    description: A restricted-dma-pool region that all DMA of a PCIe device
+      bounces through, for platforms that limit the device's DMA to it.
+
   clocks:
     items:
       - description: External Low Power Clock input (32.768KHz)
