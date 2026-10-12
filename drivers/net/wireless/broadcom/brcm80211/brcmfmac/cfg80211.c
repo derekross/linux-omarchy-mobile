@@ -7149,6 +7149,11 @@ static int brcmf_construct_chaninfo(struct brcmf_cfg80211_info *cfg,
 			band = wiphy->bands[NL80211_BAND_2GHZ];
 		} else if (ch.band == BRCMU_CHAN_BAND_5G) {
 			band = wiphy->bands[NL80211_BAND_5GHZ];
+		} else if (ch.band == BRCMU_CHAN_BAND_6G) {
+			/* 6 GHz is not supported yet */
+			brcmf_dbg(INFO, "skipping 6 GHz chanspec 0x%x\n",
+				  ch.chspec);
+			continue;
 		} else {
 			bphy_err(drvr, "Invalid channel Spec. 0x%x.\n",
 				 ch.chspec);
