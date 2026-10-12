@@ -852,6 +852,10 @@
  * UFS masters share its VID 0, so it cannot confine the Wi-Fi chip without
  * also confining storage.
  */
+&pcie_1_sysmmu {
+	google,dma-window = <&wifi_dma_pool>;
+};
+
 &pinctrl_far_alive {
 	wlan_host_wake: wlan-host-wake-pins {
 		samsung,pins = "gpa6-1";

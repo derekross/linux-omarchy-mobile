@@ -983,6 +983,17 @@
 			};
 		};
 
+		/* PCIe GEN4A_1 System MMU, used as a DMA window (W4) */
+		pcie_1_sysmmu: sysmmu@145c0000 {
+			compatible = "google,gs201-pcie-sysmmu";
+			reg = <0x145c0000 0x10000>;
+			interrupts = <GIC_SPI 446 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&cmu_hsi2 CLK_GOUT_HSI2_SYSMMU_HSI2_CLK_S1>,
+				 <&cmu_hsi2 CLK_GOUT_HSI2_SYSMMU_HSI2_CLK_S2>;
+			google,vid = <1>;
+			status = "disabled";
+		};
+
 		pcie_1_phy: phy@14550000 {
 			compatible = "google,gs201-pcie-phy";
 			reg = <0x14550000 0x2000>,
