@@ -92,7 +92,7 @@ static struct acd_device_entry *acd_device_entry_for_inode(struct inode *inode)
 	return NULL;
 }
 
-static char *acd_devnode(struct device *dev, umode_t *mode)
+static char *acd_devnode(const struct device *dev, umode_t *mode)
 {
 	if (!mode || !dev)
 		return NULL;
@@ -341,8 +341,8 @@ static int __init acd_init(void)
 
 	acd_major_dev = MKDEV(acd_major, 0);
 
-	acd_class = class_create(THIS_MODULE, ACD_CHARDEV_NAME);
-	if (!acd_class) {
+	acd_class = class_create(ACD_CHARDEV_NAME);
+	if (IS_ERR(acd_class)) {
 		pr_err("Failed to create class\n");
 		goto fail;
 	}
@@ -368,4 +368,5 @@ static void __exit acd_exit(void)
 module_init(acd_init);
 module_exit(acd_exit);
 
+MODULE_DESCRIPTION("Google AoC service character devices");
 MODULE_LICENSE("GPL v2");

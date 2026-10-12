@@ -31,7 +31,8 @@
  *   pcu      the A32 reset control and revision, only with diag_pcu=1 (the
  *            read aborted on cheetah with the AoC in reset)
  *   mbox     the three AoC mailboxes, AP side: doorbells the AoC rang and
- *            the shared registers (also around start with diag_mbox=1)
+ *            the shared registers (also around start with diag_mbox=1);
+ *            found through the node's mboxes
  *
  * Around start and release reset the kernel log gets the S2MPU, the System
  * MMU and the IPC area (the PCU and the breadcrumbs with diag_pcu and
@@ -62,6 +63,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
+#include <linux/of_address.h>
 #include <linux/of_reserved_mem.h>
 #include <linux/platform_device.h>
 #include <linux/random.h>
@@ -942,15 +944,25 @@ static int aoc_boot_probe(struct platform_device *pdev)
 		if (IS_ERR(ab->pcu))
 			return PTR_ERR(ab->pcu);
 	}
+	/*
+	 * The three mailboxes, from the first channel of each in "mboxes"
+	 * (16 per mailbox). Mapped without claiming the range: the mailbox
+	 * driver owns it once the AoC core runs.
+	 */
 	for (i = 0; i < ARRAY_SIZE(ab->mbox); i++) {
-		char name[16];
+		struct of_phandle_args args;
+		struct resource res;
 
-		snprintf(name, sizeof(name), "mbox-%s", aoc_mbox_names[i]);
-		if (!platform_get_resource_byname(pdev, IORESOURCE_MEM, name))
+		if (of_parse_phandle_with_args(dev->of_node, "mboxes",
+					       "#mbox-cells", i * 16, &args))
 			continue;
-		ab->mbox[i] = devm_platform_ioremap_resource_byname(pdev, name);
-		if (IS_ERR(ab->mbox[i]))
-			return PTR_ERR(ab->mbox[i]);
+		ret = of_address_to_resource(args.np, 0, &res);
+		of_node_put(args.np);
+		if (ret)
+			continue;
+		ab->mbox[i] = devm_ioremap(dev, res.start, resource_size(&res));
+		if (!ab->mbox[i])
+			return -ENOMEM;
 	}
 	ab->wdt_irq = platform_get_irq_byname_optional(pdev, "watchdog");
 	if (ab->wdt_irq > 0) {

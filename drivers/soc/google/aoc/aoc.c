@@ -20,7 +20,6 @@
 #include <linux/glob.h>
 #include <linux/init.h>
 #include <linux/io.h>
-#include <linux/iommu.h>
 #include <linux/jiffies.h>
 #include <linux/list.h>
 #include <linux/module.h>
@@ -29,23 +28,18 @@
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
-#include <linux/platform_data/sscoredump.h>
 #include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/uaccess.h>
 #include <linux/uio.h>
+#include <linux/vmalloc.h>
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 #include <linux/mutex.h>
-#include <soc/google/acpm_ipc_ctrl.h>
-#include <soc/google/debug-snapshot.h>
-#include <soc/google/exynos-cpupm.h>
-#include <soc/google/exynos-pmu-if.h>
-
-#include <linux/gsa/gsa_aoc.h>
-#include "ion_physical_heap.h"
+#include <linux/soc/google/gs201-aoc-sysmmu.h>
+#include <linux/soc/google/gsa.h>
 
 #include "aoc_firmware.h"
 #include "aoc_ramdump_regions.h"
@@ -82,8 +76,7 @@ static void sscd_release(struct device *dev);
 
 static struct sscd_info sscd_info;
 static struct sscd_platform_data sscd_pdata;
-static struct platform_device sscd_dev = { .name = "aoc",
-					   .driver_override = SSCD_NAME,
+static struct platform_device sscd_dev = { .name = "aoc-sscd",
 					   .id = -1,
 					   .dev = {
 						   .platform_data = &sscd_pdata,
@@ -91,6 +84,34 @@ static struct platform_device sscd_dev = { .name = "aoc",
 					   } };
 
 static void *aoc_sram_virt_mapping;
+static void __iomem *aoc_chipid_virt;
+
+/* gs-chipid.c, gs201 variant: product, type, revision for the firmware */
+u32 gs_chipid_get_product_id(void)
+{
+	return aoc_chipid_virt ? readl(aoc_chipid_virt) & 0xfffff000 : 0;
+}
+
+u32 gs_chipid_get_type(void)
+{
+	u32 r0, r10;
+
+	if (!aoc_chipid_virt)
+		return 0;
+	r0 = readl(aoc_chipid_virt);
+	r10 = readl(aoc_chipid_virt + 0x10);
+	return (r0 | ((r10 & 0x00f00000) >> 20)) & 0xff;
+}
+
+u32 gs_chipid_get_revision(void)
+{
+	u32 r10;
+
+	if (!aoc_chipid_virt)
+		return 0;
+	r10 = readl(aoc_chipid_virt + 0x10);
+	return (((r10 >> 20) & 0xf) << 4) | ((r10 >> 16) & 0xf);
+}
 static void *aoc_dram_virt_mapping;
 
 static int aoc_irq;
@@ -104,11 +125,12 @@ static bool aoc_autoload_firmware = false;
 module_param(aoc_autoload_firmware, bool, 0644);
 MODULE_PARM_DESC(aoc_autoload_firmware, "Automatically load firmware if true");
 
-static bool aoc_disable_restart = false;
+/* Restart needs the ACPM reset-completion channel, not available yet */
+static bool aoc_disable_restart = true;
 module_param(aoc_disable_restart, bool, 0644);
 MODULE_PARM_DESC(aoc_disable_restart, "Prevent AoC from restarting after crashing.");
 
-static bool aoc_panic_on_req_timeout = true;
+static bool aoc_panic_on_req_timeout;
 module_param(aoc_panic_on_req_timeout, bool, 0644);
 MODULE_PARM_DESC(aoc_panic_on_req_timeout, "Enable kernel panic when aoc_req times out.");
 
@@ -126,12 +148,11 @@ const static struct dev_pm_ops aoc_core_pm_ops = {
 	.resume = aoc_core_resume,
 };
 
-static int aoc_bus_match(struct device *dev, struct device_driver *drv);
+static int aoc_bus_match(struct device *dev, const struct device_driver *drv);
 static int aoc_bus_probe(struct device *dev);
 static void aoc_bus_remove(struct device *dev);
 
-static void aoc_configure_iommu_fault_handler(struct aoc_prvdata *p);
-static void aoc_configure_iommu(struct aoc_prvdata *p, const struct firmware *fw);
+static int aoc_configure_iommu(struct aoc_prvdata *p, const struct firmware *fw);
 
 static struct bus_type aoc_bus_type = {
 	.name = "aoc",
@@ -155,9 +176,15 @@ static void aoc_process_services(struct aoc_prvdata *prvdata, int offset);
 
 static void aoc_watchdog(struct work_struct *work);
 
+/*
+ * The AoC SRAM (BLK_AOC) is not mapped on gs201 here: its registers abort
+ * while the A32 is held in reset, and only the restart and unsigned-image
+ * paths, both unused, need it. Callers handle NULL.
+ */
 void *aoc_sram_translate(u32 offset)
 {
-	BUG_ON(aoc_sram_virt_mapping == NULL);
+	if (!aoc_sram_virt_mapping)
+		return NULL;
 	if (offset > resource_size(aoc_sram_resource))
 		return NULL;
 
@@ -397,7 +424,6 @@ static void aoc_mbox_tx_done(struct mbox_client *cl, void *mssg, int r)
 {
 }
 
-extern int gs_chipid_get_ap_hw_tune_array(const u8 **array);
 
 static inline bool aoc_sram_was_repaired(struct aoc_prvdata *prvdata) { return false; }
 
@@ -652,19 +678,35 @@ static void aoc_fw_callback(const struct firmware *fw, void *ctx)
 		}
 	}
 
-	gsa_enabled = of_property_read_bool(prvdata->dev->of_node, "gsa-enabled");
+	/* Signed images only, authenticated by the GSA */
+	gsa_enabled = true;
 
 	if (gsa_enabled) {
 		int rc;
 
-		aoc_configure_iommu_fault_handler(prvdata);
+		/*
+		 * BLK_AOC must be on before its S2MPU and System MMU are
+		 * touched. Without a hypervisor, nothing opens the AoC's S2MPU;
+		 * the System MMU gets the windows from the image header.
+		 */
+		if (wait_for_aoc_status(prvdata, true)) {
+			dev_err(dev, "no aoc_req acknowledge\n");
+			goto free_fw;
+		}
+		dev_info(dev, "AoC S2MPU CTRL0 %#x, opening\n",
+			 readl(prvdata->s2mpu_virt + AOC_S2MPU_CTRL0));
+		writel(0, prvdata->s2mpu_virt + AOC_S2MPU_CTRL0);
+		rc = aoc_configure_iommu(prvdata, fw);
+		if (rc) {
+			dev_err(dev, "System MMU setup failed: %d\n", rc);
+			goto free_fw;
+		}
 		rc = aoc_fw_authenticate(prvdata, fw);
 		if (rc) {
 			dev_err(dev, "GSA: FW authentication failed: %d\n", rc);
 			goto free_fw;
 		}
 	} else {
-		aoc_configure_iommu(prvdata, fw);
 		write_reset_trampoline(fw);
 	}
 
@@ -1076,12 +1118,12 @@ static struct attribute *aoc_attrs[] = {
 ATTRIBUTE_GROUPS(aoc);
 
 static int aoc_platform_probe(struct platform_device *dev);
-static int aoc_platform_remove(struct platform_device *dev);
+static void aoc_platform_remove(struct platform_device *dev);
 static void aoc_platform_shutdown(struct platform_device *dev);
 
 static const struct of_device_id aoc_match[] = {
 	{
-		.compatible = "google,aoc",
+		.compatible = "google,gs201-aoc",
 	},
 	{},
 };
@@ -1093,15 +1135,14 @@ static struct platform_driver aoc_driver = {
 	.shutdown = aoc_platform_shutdown,
 	.driver = {
 			.name = "aoc",
-			.owner = THIS_MODULE,
 			.pm = &aoc_core_pm_ops,
 			.of_match_table = of_match_ptr(aoc_match),
 		},
 };
 
-static int aoc_bus_match(struct device *dev, struct device_driver *drv)
+static int aoc_bus_match(struct device *dev, const struct device_driver *drv)
 {
-	struct aoc_driver *driver = AOC_DRIVER(drv);
+	const struct aoc_driver *driver = AOC_DRIVER(drv);
 
 	const char *device_name = dev_name(dev);
 	bool driver_matches_by_name = (driver->service_names != NULL);
@@ -1122,7 +1163,8 @@ static int aoc_bus_match(struct device *dev, struct device_driver *drv)
 
 	/* Drivers with a name only match services with that name */
 	if (driver_matches_by_name &&
-	    !driver_matches_service_by_name(drv, (char *)device_name)) {
+	    !driver_matches_service_by_name((struct device_driver *)drv,
+					    (char *)device_name)) {
 		return 0;
 	}
 
@@ -1241,100 +1283,51 @@ static struct aoc_service_dev *create_service_device(struct aoc_prvdata *prvdata
 	return dev;
 }
 
-static int aoc_iommu_fault_handler(struct iommu_fault *fault, void *token)
+/*
+ * The AoC's System MMU: install the windows from the image header (the same
+ * map Google's driver puts in the AoC's IOMMU domain), first-level sections
+ * only (gs201-aoc-sysmmu). BLK_AOC must be on.
+ */
+static int aoc_configure_iommu(struct aoc_prvdata *p, const struct firmware *fw)
 {
-	struct device *dev = token;
-
-	dev_err(dev, "aoc iommu fault: fault->type = %u\n", fault->type);
-	dev_err(dev, "fault->event: reason = %u, flags = %#010x, addr = %#010llx\n",
-		fault->event.reason, fault->event.flags, fault->event.addr);
-	dev_err(dev, "fault->prm: flags = %#010x, addr = %#010llx\n",
-		fault->prm.flags, fault->prm.addr);
-
-	/* Tell the IOMMU driver that the fault is non-fatal. */
-	return -EAGAIN;
-}
-
-static void aoc_configure_iommu_fault_handler(struct aoc_prvdata *p)
-{
-	struct device *dev = p->dev;
-	int rc = iommu_register_device_fault_handler(dev, aoc_iommu_fault_handler, dev);
-
-	if (rc)
-		dev_err(dev, "iommu_register_device_fault_handler failed: rc = %d\n", rc);
-}
-
-static void aoc_configure_iommu(struct aoc_prvdata *p, const struct firmware *fw)
-{
-	int rc;
-	size_t i, j, cnt;
+	struct aoc_sysmmu_window win[16];
 	struct iommu_entry *iommu;
-	struct iommu_domain *domain = p->domain;
-	struct device *dev = p->dev;
+	size_t i, cnt;
 	u16 iommu_offset, iommu_size;
 
-	if (p->iommu_configured && p->iommu_config_persistent) {
-		dev_info(dev, "IOMMU already configured skipping\n");
-		return;
+	if (p->iommu_configured) {
+		aoc_sysmmu_disable(p->mmu);
+		p->iommu_configured = false;
 	}
-
-	aoc_configure_iommu_fault_handler(p);
 
 	iommu_offset = _aoc_fw_iommu_offset(fw);
 	iommu_size = _aoc_fw_iommu_size(fw);
 	if (!_aoc_fw_is_valid_iommu_size(fw)) {
-		dev_warn(dev, "Invalid iommu table (0x%x @ 0x%x)\n", iommu_size, iommu_offset);
-		return;
+		dev_warn(p->dev, "Invalid iommu table (0x%x @ 0x%x)\n", iommu_size, iommu_offset);
+		return -EINVAL;
 	}
 	cnt = iommu_size / sizeof(struct iommu_entry);
+	if (!cnt || cnt > ARRAY_SIZE(win))
+		return -EINVAL;
 	iommu = _aoc_fw_iommu_entry(fw);
 
-	p->iommu_size = iommu_size;
-	p->iommu = devm_kzalloc(dev, iommu_size, GFP_KERNEL);
-	if (!p->iommu)
-		return;
-
-	memcpy(p->iommu, iommu, iommu_size);
-
 	for (i = 0; i < cnt; i++) {
-		rc = iommu_map(domain, IOMMU_VADDR(iommu[i].value),
-						IOMMU_PADDR(iommu[i].value),
-						IOMMU_SIZE(iommu[i].value),
-						IOMMU_READ | IOMMU_WRITE);
-		if (rc < 0) {
-			dev_err(
-				dev,
-				"Failed configuring iommu: [err=%d] [index:%zu, vaddr: 0x%llx, paddr: 0x%llx, size: 0x%llx]\n",
-				rc, i, IOMMU_VADDR(iommu[i].value), IOMMU_PADDR(iommu[i].value),
-				IOMMU_SIZE(iommu[i].value));
-			for (j = 0; j < i; j++) {
-				rc = iommu_unmap(domain, IOMMU_VADDR(iommu[j].value),
-						IOMMU_SIZE(iommu[j].value));
-				if (rc < 0)
-					dev_err(dev, "Failed unmapping iommu: %d\n", rc);
-			}
-			return;
-		}
+		win[i].iova = IOMMU_VADDR(iommu[i].value);
+		win[i].pa = IOMMU_PADDR(iommu[i].value);
+		win[i].size = IOMMU_SIZE(iommu[i].value);
 	}
 
+	if (aoc_sysmmu_enable(p->mmu, win, cnt))
+		return -EIO;
 	p->iommu_configured = true;
+	return 0;
 }
 
 static void aoc_clear_iommu(struct aoc_prvdata *p)
 {
-	int rc;
-	struct iommu_domain *domain = p->domain;
-	size_t i, cnt;
-	struct device *dev = p->dev;
-
-	if (p->iommu != NULL) {
-		cnt = p->iommu_size / sizeof(struct iommu_entry);
-		for (i = 0; i < cnt; i++) {
-			rc = iommu_unmap(domain, IOMMU_VADDR(p->iommu[i].value),
-							IOMMU_SIZE(p->iommu[i].value));
-			if (rc < 0)
-				dev_err(dev, "Failed umapping iommu: %d\n", rc);
-		}
+	if (p->iommu_configured) {
+		aoc_sysmmu_disable(p->mmu);
+		p->iommu_configured = false;
 	}
 }
 
@@ -1721,7 +1714,7 @@ void trigger_aoc_ssr(bool ap_triggered_reset, char *reset_reason) {
 		} else {
 			configure_crash_interrupts(prvdata, false);
 			if (ap_triggered_reset) {
-				strlcpy(prvdata->ap_reset_reason, reset_reason,
+				strscpy(prvdata->ap_reset_reason, reset_reason,
 					AP_RESET_REASON_LENGTH);
 				prvdata->ap_triggered_reset = true;
 			}
@@ -2011,10 +2004,8 @@ static long aoc_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned lon
 	switch (cmd) {
 	case AOC_IOCTL_ION_FD_TO_HANDLE:
 	{
-		ret = aoc_unlocked_ioctl_handle_ion_fd(cmd, arg);
-		if (ret == -EINVAL) {
-			pr_err("invalid argument\n");
-		}
+		/* No physical heaps on this kernel */
+		ret = -ENOTTY;
 	}
 	break;
 
@@ -2153,7 +2144,7 @@ static const struct file_operations aoc_fops = {
 	.owner = THIS_MODULE,
 };
 
-static char *aoc_devnode(struct device *dev, umode_t *mode)
+static char *aoc_devnode(const struct device *dev, umode_t *mode)
 {
 	if (!mode || !dev)
 		return NULL;
@@ -2184,8 +2175,8 @@ static int init_chardev(struct aoc_prvdata *prvdata)
 
 	aoc_major = MAJOR(prvdata->aoc_devt);
 
-	prvdata->_class = class_create(THIS_MODULE, AOC_CHARDEV_NAME);
-	if (!prvdata->_class) {
+	prvdata->_class = class_create(AOC_CHARDEV_NAME);
+	if (IS_ERR(prvdata->_class)) {
 		pr_err("failed to create aoc_class\n");
 		rc = -ENXIO;
 		goto err_class_create;
@@ -2236,42 +2227,29 @@ static void aoc_cleanup_resources(struct platform_device *pdev)
 		aoc_take_offline(prvdata);
 		free_mailbox_channels(prvdata);
 
-		if (prvdata->domain) {
-			aoc_clear_iommu(prvdata);
-			prvdata->domain = NULL;
-		}
+		aoc_clear_iommu(prvdata);
 	}
 
 }
 
 static void release_gsa_device(void *prv)
 {
-	struct device *gsa_device = (struct device *)prv;
-	put_device(gsa_device);
+	gsa_put_device(prv);
 }
 
 static int find_gsa_device(struct aoc_prvdata *prvdata)
 {
-	struct device_node *np;
-	struct platform_device *gsa_pdev;
+	struct device *gsa = gsa_get_device(prvdata->dev);
 
-	np = of_parse_phandle(prvdata->dev->of_node, "gsa-device", 0);
-	if (!np) {
-		dev_err(prvdata->dev,
-			"gsa-device phandle not found in AOC device tree node\n");
-		return -ENODEV;
-	}
-	gsa_pdev = of_find_device_by_node(np);
-	of_node_put(np);
+	if (IS_ERR(gsa))
+		return PTR_ERR(gsa);
+	prvdata->gsa_dev = gsa;
+	return devm_add_action_or_reset(prvdata->dev, release_gsa_device, gsa);
+}
 
-	if (!gsa_pdev) {
-		dev_err(prvdata->dev,
-			"gsa-device phandle doesn't refer to a device\n");
-		return -ENODEV;
-	}
-	prvdata->gsa_dev = &gsa_pdev->dev;
-	return devm_add_action_or_reset(prvdata->dev, release_gsa_device,
-					&gsa_pdev->dev);
+static void release_sysmmu(void *mmu)
+{
+	aoc_sysmmu_put(mmu);
 }
 
 static int aoc_core_suspend(struct device *dev)
@@ -2324,6 +2302,7 @@ exit:
 	return 0;
 }
 
+#if 0 /* no physical dma-buf heaps on this kernel */
 static void aoc_pheap_map(struct samsung_dma_buffer *buffer, void *ctx, bool should_map)
 {
 	struct device *dev = ctx;
@@ -2375,6 +2354,12 @@ static struct dma_heap *aoc_create_dma_buf_heap(struct aoc_prvdata *prvdata, con
 	return heap;
 }
 
+#endif
+
+/*
+ * The heaps (userspace allocators for Android's HALs) are not created; their
+ * bases are still laid out and passed to the firmware.
+ */
 bool aoc_create_dma_buf_heaps(struct aoc_prvdata *prvdata)
 {
 	phys_addr_t base = prvdata->dram_resource.start + resource_size(&prvdata->dram_resource);
@@ -2384,25 +2369,11 @@ bool aoc_create_dma_buf_heaps(struct aoc_prvdata *prvdata)
 		return false;
 
 	base -= SENSOR_DIRECT_HEAP_SIZE;
-	prvdata->sensor_heap = aoc_create_dma_buf_heap(prvdata, "sensor_direct_heap",
-						       base, SENSOR_DIRECT_HEAP_SIZE);
 	prvdata->sensor_heap_base = base;
-	if (IS_ERR(prvdata->sensor_heap))
-		return false;
-
 	base -= PLAYBACK_HEAP_SIZE;
-	prvdata->audio_playback_heap = aoc_create_dma_buf_heap(prvdata, "aaudio_playback_heap",
-							       base, PLAYBACK_HEAP_SIZE);
 	prvdata->audio_playback_heap_base = base;
-	if (IS_ERR(prvdata->audio_playback_heap))
-		return false;
-
 	base -= CAPTURE_HEAP_SIZE;
-	prvdata->audio_capture_heap = aoc_create_dma_buf_heap(prvdata, "aaudio_capture_heap",
-							      base, CAPTURE_HEAP_SIZE);
 	prvdata->audio_capture_heap_base = base;
-	if (IS_ERR(prvdata->audio_capture_heap))
-		return false;
 
 	return true;
 }
@@ -2420,14 +2391,12 @@ bool aoc_set_dma_buf_as_ring(struct aoc_prvdata *prvdata)
 		return false;
 	}
 	phy_ring_base = aoc_service_ring_base_phys_addr(service_dev, AOC_DOWN, &ring_size);
-
-	prvdata->audio_offload_heap = aoc_create_dma_buf_heap(prvdata, "aaudio_offload_heap",
-								phy_ring_base, OFFLOAD_HEAP_SIZE);
 	prvdata->audio_offload_heap_base = phy_ring_base;
 
-	return !IS_ERR(prvdata->audio_offload_heap);
+	return true;
 }
 
+#if 0 /* no physical dma-buf heaps on this kernel */
 /* Returns true if `base` is located within the aoc dram carveout */
 static bool is_aoc_dma_buf(struct aoc_prvdata *prvdata, phys_addr_t base) {
 	phys_addr_t dram_carveout_start;
@@ -2483,54 +2452,33 @@ long aoc_unlocked_ioctl_handle_ion_fd(unsigned int cmd, unsigned long arg)
 	return ret;
 }
 
+#endif
+
+/*
+ * gs201's AoC constants (stock device tree: pcu-base, gpio-base,
+ * pcu-db-set/clr-offset, cp-aperture-start/end-offset, clock-divider);
+ * the mailbox channel count is that of the mboxes property.
+ */
 static int platform_probe_parse_dt(struct device *dev, struct device_node *aoc_node)
 {
 	struct aoc_prvdata *prvdata = platform_get_drvdata(aoc_platform_device);
+	int n;
 
-	prvdata->aoc_pcu_base = dt_property(aoc_node, "pcu-base");
-	if (prvdata->aoc_pcu_base == DT_PROPERTY_NOT_FOUND) {
-		dev_err(dev, "AOC DT missing property pcu-base");
+	prvdata->aoc_pcu_base = 0xa00000;
+	prvdata->aoc_gpio_base = 0xd70000;
+	prvdata->aoc_pcu_db_set_offset = 0xd004;
+	prvdata->aoc_pcu_db_clr_offset = 0xd008;
+	prvdata->aoc_cp_aperture_start_offset = 0x7fdf80;
+	prvdata->aoc_cp_aperture_end_offset = 0x7fffff;
+	prvdata->aoc_clock_divider = 1;
+
+	n = of_count_phandle_with_args(aoc_node, "mboxes", "#mbox-cells");
+	if (n <= 0) {
+		dev_err(dev, "no mboxes\n");
 		return -EINVAL;
 	}
-	prvdata->aoc_gpio_base = dt_property(aoc_node, "gpio-base");
-	if (prvdata->aoc_gpio_base == DT_PROPERTY_NOT_FOUND) {
-		dev_err(dev, "AOC DT missing property gpio-base");
-		return -EINVAL;
-	}
-	prvdata->aoc_pcu_db_set_offset = dt_property(aoc_node, "pcu-db-set-offset");
-	if (prvdata->aoc_pcu_db_set_offset == DT_PROPERTY_NOT_FOUND) {
-		dev_err(dev, "AOC DT missing property pcu-db-set-offset");
-		return -EINVAL;
-	}
-	prvdata->aoc_pcu_db_clr_offset = dt_property(aoc_node, "pcu-db-clr-offset");
-	if (prvdata->aoc_pcu_db_clr_offset == DT_PROPERTY_NOT_FOUND) {
-		dev_err(dev, "AOC DT missing property pcu-db-clr-offset");
-		return -EINVAL;
-	}
-	prvdata->aoc_cp_aperture_start_offset = dt_property(aoc_node,
-								"cp-aperture-start-offset");
-	if (prvdata->aoc_cp_aperture_start_offset == DT_PROPERTY_NOT_FOUND) {
-		dev_err(dev, "AOC DT missing property cp-aperture-start-offset");
-		return -EINVAL;
-	}
-	prvdata->aoc_cp_aperture_end_offset = dt_property(aoc_node,
-								"cp-aperture-end-offset");
-	if (prvdata->aoc_cp_aperture_end_offset == DT_PROPERTY_NOT_FOUND) {
-		dev_err(dev, "AOC DT missing property cp-aperture-end-offset");
-		return -EINVAL;
-	}
-	prvdata->aoc_clock_divider = dt_property(aoc_node, "clock-divider");
-	if (prvdata->aoc_clock_divider == DT_PROPERTY_NOT_FOUND) {
-		dev_err(dev, "AOC DT missing property clock-divider");
-		return -EINVAL;
-	}
-	prvdata->aoc_mbox_channels =  dt_property(aoc_node, "mbox-channels");
-	if (prvdata->aoc_mbox_channels == DT_PROPERTY_NOT_FOUND) {
-		dev_err(dev, "AOC DT missing property mbox-channels");
-		return -EINVAL;
-	}
-	prvdata->iommu_config_persistent = of_property_read_bool(aoc_node,
-									"iommu-config-persistent");
+	prvdata->aoc_mbox_channels = n;
+	prvdata->iommu_config_persistent = false;
 
 	return 0;
 }
@@ -2539,7 +2487,7 @@ static int aoc_platform_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct aoc_prvdata *prvdata = NULL;
-	struct device_node *aoc_node, *mem_node, *iommu_node;
+	struct device_node *aoc_node, *mem_node;
 	struct resource *rsrc;
 	int ret;
 	int rc;
@@ -2605,13 +2553,13 @@ static int aoc_platform_probe(struct platform_device *pdev)
 		goto err_memnode;
 	}
 
-	aoc_sram_resource =
-		platform_get_resource_byname(pdev, IORESOURCE_MEM, "blk_aoc");
+	/* The AoC SRAM is not mapped (see aoc_sram_translate()) */
+	aoc_sram_resource = NULL;
 
 	ret = of_address_to_resource(mem_node, 0, &prvdata->dram_resource);
 	of_node_put(mem_node);
 
-	if (!aoc_sram_resource || ret != 0) {
+	if (ret != 0) {
 		dev_err(dev,
 			"failed to get memory resources for device sram %pR dram %pR\n",
 			aoc_sram_resource, &prvdata->dram_resource);
@@ -2649,21 +2597,31 @@ static int aoc_platform_probe(struct platform_device *pdev)
 	if (ret < 0)
 		goto err_watchdog_irq;
 
-	iommu_node = of_parse_phandle(aoc_node, "iommus", 0);
-	if (!iommu_node) {
-		dev_err(dev, "failed to find iommu device tree node\n");
-		rc = -ENODEV;
+	/* The System MMU's fault interrupts belong to gs201-aoc-sysmmu */
+	prvdata->iommu_nonsecure_irq = 0;
+	prvdata->iommu_secure_irq = 0;
+	prvdata->mmu = aoc_sysmmu_get(dev);
+	if (IS_ERR(prvdata->mmu)) {
+		rc = PTR_ERR(prvdata->mmu);
 		goto err_watchdog_iommu_irq;
 	}
-	ret = configure_iommu_interrupts(dev, iommu_node, prvdata);
-	if (ret < 0)
+	ret = devm_add_action_or_reset(dev, release_sysmmu, prvdata->mmu);
+	if (ret) {
+		rc = ret;
 		goto err_watchdog_iommu_irq;
-	of_node_put(iommu_node);
+	}
 
-	pr_notice("found aoc with interrupt:%d sram:%pR dram:%pR\n", aoc_irq,
-		  aoc_sram_resource, &prvdata->dram_resource);
+	/* In BLK_AOC: only touched once aoc_req is acknowledged */
+	prvdata->s2mpu_virt = devm_platform_ioremap_resource_byname(pdev, "s2mpu");
+	prvdata->chipid_virt = devm_platform_ioremap_resource_byname(pdev, "chipid");
+	if (IS_ERR(prvdata->s2mpu_virt) || IS_ERR(prvdata->chipid_virt)) {
+		rc = -ENOMEM;
+		goto err_watchdog_iommu_irq;
+	}
+	aoc_chipid_virt = prvdata->chipid_virt;
 
-	aoc_sram_virt_mapping = devm_ioremap_resource(dev, aoc_sram_resource);
+	pr_notice("found aoc with interrupt:%d dram:%pR\n", aoc_irq,
+		  &prvdata->dram_resource);
 
 	prvdata->dram_size = resource_size(&prvdata->dram_resource);
 	if (!devm_request_mem_region(dev, prvdata->dram_resource.start, prvdata->dram_size, dev_name(dev))) {
@@ -2690,12 +2648,12 @@ static int aoc_platform_probe(struct platform_device *pdev)
 		}
 	}
 
-	prvdata->sram_virt = aoc_sram_virt_mapping;
-	prvdata->sram_size = resource_size(aoc_sram_resource);
+	prvdata->sram_virt = NULL;
+	prvdata->sram_size = 0;
 
 	prvdata->dram_virt = aoc_dram_virt_mapping;
 
-	if (IS_ERR(aoc_sram_virt_mapping) || IS_ERR(aoc_dram_virt_mapping)) {
+	if (!aoc_dram_virt_mapping) {
 		rc = -ENOMEM;
 		goto err_sram_dram_map;
 	}
@@ -2706,13 +2664,6 @@ static int aoc_platform_probe(struct platform_device *pdev)
 	 * latter is problematic if AoC is in monitor mode and BLK_AOC is off. */
 
 	pm_runtime_set_suspended(dev);
-
-	prvdata->domain = iommu_get_domain_for_dev(dev);
-	if (!prvdata->domain) {
-		pr_err("failed to find iommu domain\n");
-		rc = -EIO;
-		goto err_find_iommu;
-	}
 
 	aoc_configure_ssmt(pdev);
 
@@ -2774,7 +2725,6 @@ static int aoc_platform_probe(struct platform_device *pdev)
 	return 0;
 
 /* err_acmp_reset: */
-err_find_iommu:
 err_sram_dram_map:
 
 err_watchdog_iommu_irq:
@@ -2791,7 +2741,7 @@ err_platform_not_null:
 	return rc;
 }
 
-static int aoc_platform_remove(struct platform_device *pdev)
+static void aoc_platform_remove(struct platform_device *pdev)
 {
 	struct aoc_prvdata *prvdata;
 	int i;
@@ -2811,8 +2761,6 @@ static int aoc_platform_remove(struct platform_device *pdev)
 	deinit_chardev(prvdata);
 	platform_set_drvdata(pdev, NULL);
 	aoc_platform_device = NULL;
-
-	return 0;
 }
 
 static void sscd_release(struct device *dev)
@@ -2842,15 +2790,9 @@ static int __init aoc_init(void)
 		goto err_aoc_driver;
 	}
 
-	if (platform_device_register(&sscd_dev) != 0) {
-		pr_err("failed to register AoC coredump device\n");
-		goto err_aoc_coredump;
-	}
-
+	/* No coredump consumer: the sscd device is not registered */
 	return 0;
 
-err_aoc_coredump:
-	platform_driver_unregister(&aoc_driver);
 err_aoc_driver:
 	bus_unregister(&aoc_bus_type);
 err_aoc_bus:
@@ -2869,5 +2811,6 @@ static void __exit aoc_exit(void)
 module_init(aoc_init);
 module_exit(aoc_exit);
 
+MODULE_DESCRIPTION("Google AoC core driver");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(DMA_BUF);
+

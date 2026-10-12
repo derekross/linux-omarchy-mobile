@@ -50,6 +50,30 @@ config GS201_AOC_RAILS
 	  feed the AoC's digital microphones and sensors, until there is an
 	  S2MPG12/13 regulator driver. For bring-up only.
 
+config GS201_AOC_MBOX
+	tristate "gs201 AoC mailboxes"
+	depends on MAILBOX
+	help
+	  The doorbell and shared-register mailboxes between the AP and the
+	  AoC (Google's whitechapel mailbox driver).
+
+config GS201_AOC
+	tristate "gs201 AoC core (Google's driver)"
+	depends on GOOGLE_GSA && GS201_AOC_SYSMMU && GS201_AOC_MBOX
+	help
+	  Google's AoC core driver, ported: loads and authenticates the AoC
+	  firmware through the GSA, starts it, and exposes its services on the
+	  AoC bus. Firmware loading is triggered from sysfs (firmware), not at
+	  probe.
+
+config GS201_AOC_CHAR
+	tristate "gs201 AoC service character devices"
+	depends on GS201_AOC
+	help
+	  /dev/acd-<service> character devices for AoC services
+	  (aoc_char_dev), and channelized ones for services such as the
+	  sensor framework (aoc_channel_dev).
+
 endmenu
 
 endif

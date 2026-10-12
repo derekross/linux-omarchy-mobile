@@ -11,13 +11,7 @@
 #include <linux/of_irq.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
-#include <soc/google/exynos-cpupm.h>
-#include <soc/google/exynos-pmu-if.h>
-#include <soc/google/acpm_ipc_ctrl.h>
 
-#if IS_ENABLED(CONFIG_EXYNOS_ITMON)
-#include <soc/google/exynos-itmon.h>
-#endif
 
 #define SSMT_BYPASS_VALUE	0x80000000U
 #define SSMT_NS_READ_PID(n)	(0x4000 + 4 * (n))
@@ -28,7 +22,7 @@ extern struct platform_device *aoc_platform_device;
 extern struct resource *aoc_sram_resource;
 extern struct mutex aoc_service_lock;
 
-#if IS_ENABLED(CONFIG_EXYNOS_ITMON)
+#if 0 /* no ITMON driver on this kernel */
 static int aoc_itmon_notifier(struct notifier_block *nb, unsigned long action,
 			      void *nb_data)
 {
@@ -218,7 +212,7 @@ int platform_specific_probe(struct platform_device *pdev, struct aoc_prvdata *pr
 		rc = -EIO;
 	}
 
-#if IS_ENABLED(CONFIG_EXYNOS_ITMON)
+#if 0 /* no ITMON driver on this kernel */
 	prvdata->itmon_nb.notifier_call = aoc_itmon_notifier;
 	itmon_notifier_chain_register(&prvdata->itmon_nb);
 #endif
@@ -351,12 +345,16 @@ void configure_crash_interrupts(struct aoc_prvdata *prvdata, bool enable)
 		enable_irq(prvdata->watchdog_irq);
 		prvdata->first_fw_load = false;
 	} else if (enable) {
-		enable_irq(prvdata->iommu_nonsecure_irq);
-		enable_irq(prvdata->iommu_secure_irq);
+		if (prvdata->iommu_nonsecure_irq > 0)
+			enable_irq(prvdata->iommu_nonsecure_irq);
+		if (prvdata->iommu_secure_irq > 0)
+			enable_irq(prvdata->iommu_secure_irq);
 		enable_irq(prvdata->watchdog_irq);
 	} else {
-		disable_irq_nosync(prvdata->iommu_nonsecure_irq);
-		disable_irq_nosync(prvdata->iommu_secure_irq);
+		if (prvdata->iommu_nonsecure_irq > 0)
+			disable_irq_nosync(prvdata->iommu_nonsecure_irq);
+		if (prvdata->iommu_secure_irq > 0)
+			disable_irq_nosync(prvdata->iommu_secure_irq);
 		/* Need to disable it to let APM handle it once we
 		 * retrigger it in aoc_watchdog_restart.
 		 */
