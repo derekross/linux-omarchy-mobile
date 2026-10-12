@@ -880,6 +880,48 @@ static void brcmf_pcie_set_bar_coherent(struct brcmf_pciedev_info *devinfo)
 				       val | BRCMF_PCIE_SSCTRL_BAR_COHERENT);
 }
 
+/*
+ * Function level reset as Broadcom's driver does it for the BCM4389
+ * (bcmdhd dhd_pcie.c dhd_bus_perform_flr()): set Initiate FLR, wait 70 ms,
+ * clear it again, then wait for the subsystem reset status (config 0x88
+ * bit 13) to clear, and restore the config space.
+ */
+#define BRCMF_PCIE_SSCTRL_SSRESET_STATUS	BIT(13)
+
+static int brcmf_pcie_flr(struct brcmf_pciedev_info *devinfo)
+{
+	struct pci_dev *pdev = devinfo->pdev;
+	u32 cap, val;
+	int i;
+
+	pcie_capability_read_dword(pdev, PCI_EXP_DEVCAP, &cap);
+	if (!(cap & PCI_EXP_DEVCAP_FLR))
+		return -EOPNOTSUPP;
+
+	pci_save_state(pdev);
+	pcie_capability_set_word(pdev, PCI_EXP_DEVCTL, PCI_EXP_DEVCTL_BCR_FLR);
+	msleep(70);
+	pcie_capability_clear_word(pdev, PCI_EXP_DEVCTL,
+				   PCI_EXP_DEVCTL_BCR_FLR);
+
+	for (i = 0; i < 200; i++) {
+		pci_read_config_dword(pdev, BRCMF_PCIE_CFGREG_SUBSYSTEM_CONTROL,
+				      &val);
+		if (!(val & BRCMF_PCIE_SSCTRL_SSRESET_STATUS))
+			break;
+		udelay(40);
+	}
+	pci_restore_state(pdev);
+
+	if (val & BRCMF_PCIE_SSCTRL_SSRESET_STATUS) {
+		pci_err(pdev, "FLR did not complete, config 0x88 = 0x%08x\n",
+			val);
+		return -ETIMEDOUT;
+	}
+	brcmf_dbg(PCIE, "FLR done\n");
+	return 0;
+}
+
 static void brcmf_pcie_reset_device(struct brcmf_pciedev_info *devinfo)
 {
 	struct brcmf_core *core;
@@ -911,11 +953,18 @@ static void brcmf_pcie_reset_device(struct brcmf_pciedev_info *devinfo)
 	pci_write_config_dword(devinfo->pdev, BRCMF_PCIE_REG_LINK_STATUS_CTRL,
 			       val);
 
-	/* Watchdog reset, with all power domains up as it starts */
+	/* Watchdog reset, with all power domains up as it starts. The
+	 * BCM4389 is reset the way Broadcom's driver resets it, with an
+	 * FLR: after a chipcommon watchdog reset its ARM does not boot a
+	 * second firmware download.
+	 */
 	brcmf_pcie_srpwr_request(devinfo);
-	brcmf_pcie_select_core(devinfo, BCMA_CORE_CHIPCOMMON);
-	WRITECC32(devinfo, watchdog, 4);
-	msleep(100);
+	if (devinfo->pdev->device != BRCM_PCIE_4389_DEVICE_ID ||
+	    brcmf_pcie_flr(devinfo)) {
+		brcmf_pcie_select_core(devinfo, BCMA_CORE_CHIPCOMMON);
+		WRITECC32(devinfo, watchdog, 4);
+		msleep(100);
+	}
 
 	/* Restore ASPM */
 	brcmf_pcie_select_core(devinfo, BCMA_CORE_PCIE2);
