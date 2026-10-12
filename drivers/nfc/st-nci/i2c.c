@@ -7,6 +7,7 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/module.h>
+#include <linux/clk.h>
 #include <linux/i2c.h>
 #include <linux/gpio/consumer.h>
 #include <linux/acpi.h>
@@ -36,6 +37,8 @@ struct st_nci_i2c_phy {
 	bool irq_active;
 
 	struct gpio_desc *gpiod_reset;
+	struct clk *clk;
+	bool clk_on;
 
 	struct st_nci_se_status se_status;
 };
@@ -43,6 +46,15 @@ struct st_nci_i2c_phy {
 static int st_nci_i2c_enable(void *phy_id)
 {
 	struct st_nci_i2c_phy *phy = phy_id;
+	int r;
+
+	/* The reference clock must run before the controller leaves reset. */
+	if (!phy->clk_on) {
+		r = clk_prepare_enable(phy->clk);
+		if (r)
+			return r;
+		phy->clk_on = true;
+	}
 
 	gpiod_set_value(phy->gpiod_reset, 0);
 	usleep_range(10000, 15000);
@@ -63,6 +75,11 @@ static void st_nci_i2c_disable(void *phy_id)
 
 	disable_irq_nosync(phy->i2c_dev->irq);
 	phy->irq_active = false;
+
+	if (phy->clk_on) {
+		clk_disable_unprepare(phy->clk);
+		phy->clk_on = false;
+	}
 }
 
 /*
@@ -169,7 +186,9 @@ static irqreturn_t st_nci_irq_thread_fn(int irq, void *phy_id)
 		return IRQ_HANDLED;
 
 	if (!phy->ndlc->powered) {
-		st_nci_i2c_disable(phy);
+		/* Leave the clock alone: ndlc_open() may be about to power up. */
+		disable_irq_nosync(phy->i2c_dev->irq);
+		phy->irq_active = false;
 		return IRQ_HANDLED;
 	}
 
@@ -224,6 +243,12 @@ static int st_nci_i2c_probe(struct i2c_client *client)
 		nfc_err(dev, "Unable to get RESET GPIO\n");
 		return -ENODEV;
 	}
+
+	/* Optional reference clock, needed only while the controller runs. */
+	phy->clk = devm_clk_get_optional(dev, NULL);
+	if (IS_ERR(phy->clk))
+		return dev_err_probe(dev, PTR_ERR(phy->clk),
+				     "Unable to get reference clock\n");
 
 	phy->se_status.is_ese_present =
 				device_property_read_bool(dev, "ese-present");

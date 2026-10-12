@@ -45,8 +45,12 @@ do {                                                             \
 
 int ndlc_open(struct llt_ndlc *ndlc)
 {
+	int r;
+
 	/* toggle reset pin */
-	ndlc->ops->enable(ndlc->phy_id);
+	r = ndlc->ops->enable(ndlc->phy_id);
+	if (r)
+		return r;
 	ndlc->powered = 1;
 	return 0;
 }
