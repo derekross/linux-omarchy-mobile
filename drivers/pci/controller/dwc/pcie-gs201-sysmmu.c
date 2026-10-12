@@ -22,7 +22,10 @@
  *
  * Which VID the PCIe master's traffic carries is not programmed by any
  * kernel code (stock or here); "vids" selects the VIDs to translate, and a
- * fault line names the VID it came from.
+ * fault line names the VID it came from. Measured on cheetah: both the PCIe
+ * master (AxID 0x0) and the UFS host controller (AxID 0x2) arrive on VID 0,
+ * so this SysMMU cannot confine the PCIe device without also confining
+ * storage. VID 0 is refused unless allow_vid0 is set (debug only).
  *
  * Copyright (C) 2020 Samsung Electronics Co., Ltd.
  */
@@ -82,6 +85,10 @@ MODULE_PARM_DESC(stall, "Leave the VID in stall-on-fault mode (default: error re
 static unsigned int vids;
 module_param(vids, uint, 0444);
 MODULE_PARM_DESC(vids, "Bitmask of VIDs to translate (default: the DT's google,vid only); with mode=3, 0xff finds the one the controller uses");
+
+static bool allow_vid0;
+module_param(allow_vid0, bool, 0444);
+MODULE_PARM_DESC(allow_vid0, "Debug only: allow translating VID 0, which also carries UFS (storage) traffic");
 
 static bool shareable = true;
 module_param(shareable, bool, 0444);
@@ -301,6 +308,15 @@ static int gs201_sysmmu_probe(struct platform_device *pdev)
 	if (mmu->vid > 7)
 		return dev_err_probe(dev, -EINVAL, "bad VID %u\n", mmu->vid);
 	mmu->vid_mask = (vids & 0xff) ?: BIT(mmu->vid);
+	/*
+	 * On gs201 the UFS host controller's DMA also arrives on VID 0 (and
+	 * so did the PCIe controller's, measured). Translating VID 0 with
+	 * anything short of a full 1:1 map starves storage and wedges the
+	 * phone, so never do it by default.
+	 */
+	if (mode && (mmu->vid_mask & BIT(0)) && !allow_vid0)
+		return dev_err_probe(dev, -EPERM,
+				     "refusing to translate VID 0 (shared with UFS); allow_vid0=1 to override\n");
 
 	mmu->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(mmu->base))
