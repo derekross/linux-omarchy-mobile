@@ -9,6 +9,7 @@
 #include <linux/pci.h>
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
+#include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
 #include <linux/bcma/bcma.h>
 #include <linux/sched.h>
@@ -2016,6 +2017,20 @@ static int brcmf_pcie_get_resource(struct brcmf_pciedev_info *devinfo)
 	}
 
 	pci_set_master(pdev);
+
+	/* The dongle takes 64-bit host addresses in every ring and buffer
+	 * descriptor. Without this the PCI default 32-bit mask applies, and
+	 * every allocation from a restricted DMA pool placed above 4 GiB
+	 * fails.
+	 */
+	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+	if (err) {
+		err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
+		if (err) {
+			brcmf_err(bus, "no usable DMA mask: %d\n", err);
+			return err;
+		}
+	}
 
 	/* Bar-0 mapped address */
 	bar0_addr = pci_resource_start(pdev, 0);
