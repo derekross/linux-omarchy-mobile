@@ -32,5 +32,6 @@ void gsa_put_device(struct device *gsa);
 int gsa_load_aoc_fw_image(struct device *gsa, dma_addr_t header,
 			  phys_addr_t body);
 int gsa_send_aoc_cmd(struct device *gsa, u32 cmd);
+int gsa_unload_aoc_fw_image(struct device *gsa);
 
 #endif /* __LINUX_SOC_GOOGLE_GSA_H */
