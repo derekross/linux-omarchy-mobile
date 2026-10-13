@@ -1288,8 +1288,11 @@ static irqreturn_t brcmf_pcie_quick_check_isr(int irq, void *arg)
 /* Process the D2H rings; the interrupt thread and the poll both get here. */
 static void brcmf_pcie_rx_process(struct brcmf_pciedev_info *devinfo)
 {
+	struct brcmf_bus *bus = dev_get_drvdata(&devinfo->pdev->dev);
+
 	mutex_lock(&devinfo->rx_lock);
-	if (devinfo->state == BRCMFMAC_PCIE_STATE_UP)
+	if (devinfo->state == BRCMFMAC_PCIE_STATE_UP && bus && bus->drvr &&
+	    bus->drvr->proto)
 		brcmf_proto_msgbuf_rx_trigger(&devinfo->pdev->dev);
 	/*
 	 * The rings' read pointers are written back now, so a D3 ACK that
@@ -2013,7 +2016,19 @@ static int brcmf_pcie_reset(struct device *dev)
 	struct brcmf_fw_request *fwreq;
 	int err;
 
+	/*
+	 * Stop everything that processes the rings before brcmf_detach()
+	 * frees the protocol layer: the interrupt thread, the D2H poll and
+	 * the console timer. As in brcmf_pcie_remove(); STATE_DOWN keeps the
+	 * interrupt thread and the poll from re-arming. brcmf_pcie_setup()
+	 * sets it UP again.
+	 */
+	devinfo->state = BRCMFMAC_PCIE_STATE_DOWN;
+	brcmf_pcie_fwcon_timer(devinfo, false);
 	brcmf_pcie_intr_disable(devinfo);
+	if (devinfo->irq_allocated)
+		synchronize_irq(devinfo->pdev->irq);
+	cancel_delayed_work_sync(&devinfo->poll_work);
 
 	brcmf_pcie_bus_console_read(devinfo, true);
 
@@ -3234,16 +3249,16 @@ static int brcmf_pcie_pm_enter_D3(struct device *dev)
 			  brcmf_pcie_read_reg32(devinfo,
 						devinfo->reginfo->mailboxint));
 		/*
-		 * The device may have taken the inform and stopped, or may
-		 * still act on it: the host-ready doorbell is how Broadcom's
-		 * driver brings a device back from D3, but an inform still
-		 * queued would put it to sleep again. Reload the firmware, as
-		 * Broadcom's driver does after a missed D3 ACK, so a failed
-		 * suspend doesn't leave Wi-Fi dead.
+		 * The device may have taken the inform and stopped. Broadcom's
+		 * driver gives up on it here and has the whole stack
+		 * restarted; a host-ready doorbell is no cure (an inform still
+		 * queued puts it to sleep again, and this firmware traps on an
+		 * unexpected host ready), and brcmfmac's own bus reset doesn't
+		 * bring this chip back. Leave recovery to a reload of the
+		 * stack, which power-cycles the chip.
 		 */
-		brcmf_pcie_hostready(devinfo);
+		brcmf_err(bus, "device unresponsive after D3 inform; reload the driver stack to recover\n");
 		brcmf_bus_change_state(bus, BRCMF_BUS_UP);
-		brcmf_bus_request_reset(dev);
 		return -EIO;
 	}
 
