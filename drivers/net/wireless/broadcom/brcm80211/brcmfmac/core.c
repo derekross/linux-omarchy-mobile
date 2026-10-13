@@ -1468,6 +1468,21 @@ void brcmf_fw_crashed(struct device *dev)
 	brcmf_bus_schedule_reset(bus_if);
 }
 
+/**
+ * brcmf_bus_request_reset() - reload the firmware for a bus driver
+ * @dev: the bus device
+ *
+ * For a device that stopped answering without reporting a crash, so no
+ * memory dump is taken.
+ */
+void brcmf_bus_request_reset(struct device *dev)
+{
+	struct brcmf_bus *bus_if = dev_get_drvdata(dev);
+
+	if (bus_if)
+		brcmf_bus_schedule_reset(bus_if);
+}
+
 void brcmf_detach(struct device *dev)
 {
 	s32 i;
