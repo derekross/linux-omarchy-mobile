@@ -1602,6 +1602,7 @@ static int cp_status_show(struct seq_file *s, void *unused)
 {
 	struct gs201_pcie_cp *cp = s->private;
 	unsigned int i, iso = 0, reg;
+	u16 lnksta;
 
 	mutex_lock(&cp->lock);
 	if (!cp->has_lines)
@@ -1617,9 +1618,13 @@ static int cp_status_show(struct seq_file *s, void *unused)
 	regmap_read(cp->pmu, cp->pmu_offset, &iso);
 	seq_printf(s, "PMU %#x: %#x (bit 0: 0 = PHY isolated)\n",
 		   cp->pmu_offset, iso);
-	seq_printf(s, "state: cp %d, phy %d/%d, link %d, atu %d\n",
-		   cp->cp_powered, cp->phy_inited, cp->phy_on, cp->link_up,
-		   cp->atu_done);
+	/* "cp" is only known for the debugfs steps' own power-on */
+	if (cp->has_lines)
+		seq_printf(s, "state: cp %d, ", cp->cp_powered);
+	else
+		seq_puts(s, "state: cp -, ");
+	seq_printf(s, "phy %d/%d, link %d, atu %d\n", cp->phy_inited,
+		   cp->phy_on, cp->link_up, cp->atu_done);
 	seq_printf(s, "faults: %#x, ctrl irq %s\n", READ_ONCE(cp->faults),
 		   cp->ctrl_irq_on ? "on" : "off");
 	for (i = 0, reg = 0; i < CP_MSI_QUEUES; i++)
@@ -1628,6 +1633,13 @@ static int cp_status_show(struct seq_file *s, void *unused)
 	seq_printf(s, "MSI %s, irqs %s, queue blocks %u, registered %#x\n",
 		   cp->msi_ready ? "ready" : "not set up",
 		   cp->msi_irqs_on ? "on" : "off", cp_msi_queue_count(cp), reg);
+	if (cp->link_up && cp->exp_cap) {
+		lnksta = dw_pcie_readw_dbi(&cp->pci, cp->exp_cap + PCI_EXP_LNKSTA);
+		seq_printf(s, "link Gen%u x%u (target Gen%u)\n",
+			   (unsigned int)FIELD_GET(PCI_EXP_LNKSTA_CLS, lnksta),
+			   (unsigned int)FIELD_GET(PCI_EXP_LNKSTA_NLW, lnksta),
+			   cp->speed);
+	}
 	if (cp->phy_inited)
 		seq_printf(s, "LTSSM %#lx, IRQ0/1/2 %#x %#x %#x\n",
 			   FIELD_GET(CP_ELBI_LTSSM_MASK,
