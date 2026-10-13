@@ -448,6 +448,15 @@ static int cp_cfg_read(struct pci_bus *bus, unsigned int devfn, int where,
 	ret = pci_generic_config_read(bus, devfn, where, size, val);
 	raw_spin_unlock_irqrestore(&cp->cfg_lock, flags);
 
+	/*
+	 * The modem's ROM and boot loader report class 0, whose BARs the PCI
+	 * core never assigns. Report "other" instead; the modem driver
+	 * matches the device ID only.
+	 */
+	if (ret == PCIBIOS_SUCCESSFUL && !pci_is_root_bus(bus) &&
+	    where == PCI_CLASS_REVISION && size == 4 && !(*val >> 8))
+		*val |= PCI_CLASS_OTHERS << 24;
+
 	return ret;
 }
 
