@@ -331,7 +331,8 @@ static u16 vnet_select_queue(struct net_device *dev, struct sk_buff *skb,
 	struct vnet *vnet = netdev_priv(dev);
 #endif
 
-	if (!skb)
+	/* one queue without the uplink packet processor */
+	if (!skb || dev->real_num_tx_queues < 2)
 		return 0;
 
 	if (is_tcp_ack(skb))
