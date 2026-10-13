@@ -3266,6 +3266,13 @@ static int brcmf_pcie_pm_enter_D3(struct device *dev)
 		ktime_us_delta(ktime_get(), start));
 
 	devinfo->state = BRCMFMAC_PCIE_STATE_DOWN;
+	/*
+	 * The interrupt thread that published the ACK may still be running
+	 * and, having seen STATE_UP, unmask the interrupt or kick the poll.
+	 * Let it finish before masking.
+	 */
+	if (devinfo->irq_allocated)
+		synchronize_irq(devinfo->pdev->irq);
 	/* Nothing to poll until resume; the worker would only see DOWN. */
 	cancel_delayed_work_sync(&devinfo->poll_work);
 	/* As Broadcom's driver: no device interrupts until resume. */
