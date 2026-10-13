@@ -1087,6 +1087,15 @@ static int cs35l41_handle_pdata(struct device *dev, struct cs35l41_hw_cfg *hw_cf
 	return 0;
 }
 
+/*
+ * Bring-up knob: speaker protection firmware tuned with Cirrus' earlier
+ * Android driver gets the class H target on DSP1 RX6, where this driver
+ * routes VBSTMON. Read when the DSP is set up at probe.
+ */
+static bool dsp_rx6_classh;
+module_param(dsp_rx6_classh, bool, 0644);
+MODULE_PARM_DESC(dsp_rx6_classh, "Route the class H target, not VBSTMON, to DSP1 RX6");
+
 static int cs35l41_dsp_init(struct cs35l41_private *cs35l41)
 {
 	struct wm_adsp *dsp;
@@ -1130,9 +1139,10 @@ static int cs35l41_dsp_init(struct cs35l41_private *cs35l41)
 		dev_err(cs35l41->dev, "Write DSP1RX5_SRC: %d failed: %d\n", dsp1rx5_src, ret);
 		goto err_dsp;
 	}
-	ret = regmap_write(cs35l41->regmap, CS35L41_DSP1_RX6_SRC, CS35L41_INPUT_SRC_VBSTMON);
+	ret = regmap_write(cs35l41->regmap, CS35L41_DSP1_RX6_SRC,
+			   dsp_rx6_classh ? CS35L41_INPUT_SRC_CLASSH : CS35L41_INPUT_SRC_VBSTMON);
 	if (ret < 0) {
-		dev_err(cs35l41->dev, "Write CS35L41_INPUT_SRC_VBSTMON failed: %d\n", ret);
+		dev_err(cs35l41->dev, "Write DSP1_RX6_SRC failed: %d\n", ret);
 		goto err_dsp;
 	}
 	ret = regmap_write(cs35l41->regmap, CS35L41_DSP1_RX7_SRC,
