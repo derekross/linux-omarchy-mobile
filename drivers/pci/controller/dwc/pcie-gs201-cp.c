@@ -370,6 +370,14 @@ static void cp_setup_root_port(struct gs201_pcie_cp *cp)
 	 * was never sized or assigned.
 	 */
 	dw_pcie_writew_dbi(pci, PCI_CLASS_DEVICE, PCI_CLASS_BRIDGE_PCI);
+
+	/*
+	 * Training always reaches L0 at 2.5 GT/s first; the port moves to
+	 * the target speed only when told to.
+	 */
+	val = dw_pcie_readl_dbi(pci, PCIE_LINK_WIDTH_SPEED_CONTROL);
+	val |= PORT_LOGIC_SPEED_CHANGE;
+	dw_pcie_writel_dbi(pci, PCIE_LINK_WIDTH_SPEED_CONTROL, val);
 }
 
 /* exynos_pcie_setup_rc() for EP_SAMSUNG_MODEM, plus Google's EQ-off write */
