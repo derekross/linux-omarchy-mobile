@@ -608,6 +608,10 @@ exit:
 	spin_unlock_irqrestore(&irq->lock, flags);
 }
 
+static bool trace_lines;
+module_param(trace_lines, bool, 0644);
+MODULE_PARM_DESC(trace_lines, "Log every change of a modem line, with its time (default: off)");
+
 bool mif_gpio_set_value(struct cpif_gpio *gpio, int value, unsigned int delay_ms)
 {
 	int dup = 0;
@@ -623,7 +627,8 @@ bool mif_gpio_set_value(struct cpif_gpio *gpio, int value, unsigned int delay_ms
 	/* set gpio even if it is set already */
 	gpiod_set_raw_value(gpio->desc, value);
 
-	if (!strcmp(gpio->label, "AP2CP_PM_WRST_N") || !strcmp(gpio->label, "AP2CP_CP_WRST_N"))
+	if (trace_lines || !strcmp(gpio->label, "AP2CP_PM_WRST_N") ||
+	    !strcmp(gpio->label, "AP2CP_CP_WRST_N"))
 		mif_info("SET GPIO %s = %d (wait %dms, dup %d)\n", gpio->label, value, delay_ms, dup);
 
 	if (delay_ms > 0 && !dup)
