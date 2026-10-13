@@ -3264,12 +3264,62 @@ static ssize_t info_region_show(struct device *dev,
 	return count;
 }
 
+/*
+ * The legacy buffers' ring pointers and the lines that gate the link, read
+ * without side effects: whether a frame written to a channel reached the
+ * modem (its tail follows our head), and whether a reply is waiting (its
+ * head ahead of our tail), can then be told apart from the interrupts.
+ */
+static ssize_t legacy_queues_show(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct modem_data *modem = (struct modem_data *)dev->platform_data;
+	struct mem_link_device *mld = modem->mld;
+	struct legacy_link_device *bl = &mld->legacy_link_dev;
+	struct link_device *ld = &mld->link_dev;
+	struct modem_ctl __maybe_unused *mc = ld->mc;
+	ssize_t n;
+	int i;
+
+	n = sysfs_emit(buf, "active:%d magic:0x%08X mem_access:%u\n",
+		       atomic_read(&bl->active),
+		       bl->magic ? ioread32(bl->magic) : 0,
+		       bl->mem_access ? ioread32(bl->mem_access) : 0);
+	for (i = 0; i < IPC_MAP_MAX; i++) {
+		struct legacy_ipc_device *q = bl->dev[i];
+
+		if (!q || !q->txq.head || !q->rxq.head)
+			continue;
+		n += sysfs_emit_at(buf, n, "%s: tx head:%u tail:%u size:%u skbs:%u, ",
+				   q->name, get_txq_head(q), get_txq_tail(q),
+				   get_txq_buff_size(q), skb_queue_len(q->skb_txq));
+		n += sysfs_emit_at(buf, n, "rx head:%u tail:%u size:%u skbs:%u\n",
+				   get_rxq_head(q), get_rxq_tail(q),
+				   get_rxq_buff_size(q), skb_queue_len(q->skb_rxq));
+	}
+	n += sysfs_emit_at(buf, n, "tx_flowctrl_mask:0x%lx netif_stopped:%d\n",
+			   ld->tx_flowctrl_mask, atomic_read(&ld->netif_stopped));
+#if IS_ENABLED(CONFIG_LINK_DEVICE_PCIE)
+	if (mc && mc->cp_gpio[CP_GPIO_CP2AP_WAKEUP].valid) {
+		n += sysfs_emit_at(buf, n, "cp2ap_wakeup:%d ap2cp_wakeup:%d ",
+				   mif_gpio_get_value(&mc->cp_gpio[CP_GPIO_CP2AP_WAKEUP], false),
+				   mif_gpio_get_value(&mc->cp_gpio[CP_GPIO_AP2CP_WAKEUP], false));
+		n += sysfs_emit_at(buf, n, "pcie_powered_on:%d reserve_doorbell:%d\n",
+				   mc->pcie_powered_on, mc->reserve_doorbell_int);
+	}
+#endif
+
+	return n;
+}
+
 static DEVICE_ATTR_RW(tx_period_ms);
 static DEVICE_ATTR_RO(info_region);
+static DEVICE_ATTR_RO(legacy_queues);
 
 static struct attribute *link_device_attrs[] = {
 	&dev_attr_tx_period_ms.attr,
 	&dev_attr_info_region.attr,
+	&dev_attr_legacy_queues.attr,
 	NULL,
 };
 
