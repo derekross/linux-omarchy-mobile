@@ -36,6 +36,19 @@ config CPIF_AP_SUSPEND_DURING_VOICE_CALL
 	  suspend while a call's audio runs over the AoC, as notified by the
 	  voice call events. Without it the S5100 control code does not build.
 
+config CH_EXTENSION
+	bool "Extended packet data channels"
+	default y
+	help
+	  The S5300 firmware of gs201 phones carries packet data on the
+	  extended channel range (181 and up, SIPC_CH_EX_ID_PDP_*), which
+	  the device tree's rmnet I/O devices use, and the AP advertises
+	  that range in its capability word at boot. Without it only
+	  channels 10-24 are treated as packet data, and the rmnet
+	  interfaces carry nothing. Stock builds it (pantah_defconfig).
+
+	  If unsure, say Y.
+
 config SHM_IPC
 	tristate "Shared-memory regions for the modem"
 	default EXYNOS_MODEM_IF
