@@ -189,6 +189,8 @@ static const char * const cp_input_names[CP_NUM_INPUTS] = {
 	"cp2ap-cp-wrst", "cp2ap-ps-hold", "cp2ap-wakeup", "cp2ap-phone-active",
 };
 
+#define CP_ROOT_WIN_REGS	7	/* ARRAY_SIZE(cp_root_win_offs) */
+
 struct gs201_pcie_cp {
 	struct device *dev;
 	struct dw_pcie pci;		/* only for the DBI helpers */
@@ -242,6 +244,20 @@ struct gs201_pcie_cp {
 	struct work_struct event_work;
 	struct pci_dev *ep;		/* the modem, once the bus is scanned */
 	struct pci_saved_state *ep_state;	/* its config after the scan */
+	u32 root_win[CP_ROOT_WIN_REGS];	/* root port windows after the scan */
+	bool root_win_saved;
+};
+
+/*
+ * The root port's forwarding windows, as the PCI core assigned them at the
+ * scan: I/O base and limit (the low half; the high half is the secondary
+ * status), memory, prefetchable memory and its upper halves, I/O upper
+ * halves, bridge control (the high half of the interrupt line dword).
+ */
+static const u8 cp_root_win_offs[] = {
+	PCI_IO_BASE, PCI_MEMORY_BASE, PCI_PREF_MEMORY_BASE,
+	PCI_PREF_BASE_UPPER32, PCI_PREF_LIMIT_UPPER32, PCI_IO_BASE_UPPER16,
+	PCI_INTERRUPT_LINE,
 };
 
 /* The one modem link, for the modem driver's calls (gs201_pcie_cp_*()) */
@@ -664,6 +680,42 @@ static int cp_bus_report(struct pci_dev *pdev, void *data)
 	return 0;
 }
 
+/*
+ * The controller's soft power reset at link_down clears the root port's
+ * configuration. link_up writes what dw_pcie_setup_rc() would; the windows
+ * the PCI core assigned at the scan are put back here, before anything
+ * reaches the endpoint's BARs again.
+ */
+static void cp_root_win_save(struct gs201_pcie_cp *cp)
+{
+	unsigned int i;
+
+	BUILD_BUG_ON(ARRAY_SIZE(cp_root_win_offs) != CP_ROOT_WIN_REGS);
+	for (i = 0; i < CP_ROOT_WIN_REGS; i++)
+		cp->root_win[i] = dw_pcie_readl_dbi(&cp->pci, cp_root_win_offs[i]);
+	cp->root_win_saved = true;
+}
+
+static void cp_root_win_restore(struct gs201_pcie_cp *cp)
+{
+	struct dw_pcie *pci = &cp->pci;
+	unsigned int i;
+	u8 off;
+
+	if (!cp->root_win_saved)
+		return;
+	for (i = 0; i < CP_ROOT_WIN_REGS; i++) {
+		off = cp_root_win_offs[i];
+		if (off == PCI_IO_BASE)
+			dw_pcie_writew_dbi(pci, off, cp->root_win[i]);
+		else if (off == PCI_INTERRUPT_LINE)
+			dw_pcie_writew_dbi(pci, PCI_BRIDGE_CONTROL,
+					   cp->root_win[i] >> 16);
+		else
+			dw_pcie_writel_dbi(pci, off, cp->root_win[i]);
+	}
+}
+
 static int cp_bus(struct gs201_pcie_cp *cp)
 {
 	int ret;
@@ -676,7 +728,8 @@ static int cp_bus(struct gs201_pcie_cp *cp)
 		return ret;
 
 	if (cp->bridge->bus) {
-		dev_info(cp->dev, "bus already registered, MSI re-armed\n");
+		cp_root_win_restore(cp);
+		dev_info(cp->dev, "bus already registered, MSI re-armed, root port windows restored\n");
 		return 0;
 	}
 
@@ -684,6 +737,7 @@ static int cp_bus(struct gs201_pcie_cp *cp)
 	if (ret)
 		return ret;
 	pci_walk_bus(cp->bridge->bus, cp_bus_report, cp);
+	cp_root_win_save(cp);
 
 	return 0;
 }
