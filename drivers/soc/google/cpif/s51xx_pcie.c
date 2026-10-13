@@ -554,6 +554,20 @@ int s51xx_pcie_init(struct modem_ctl *mc)
 	ret = pci_register_driver(&mc->pci_driver);
 	if (ret < 0) {
 		mif_err("pci_register_driver() failed, rc:%d\n", ret);
+		return ret;
+	}
+
+	/*
+	 * The endpoint probes from pci_register_driver(). If it did not bind
+	 * (no endpoint, or the probe failed), take the driver away again:
+	 * register_pcie() calls this on every power-on until the endpoint
+	 * has bound, and a second registration of the same driver fails
+	 * with -EBUSY and never probes.
+	 */
+	if (!mc->s51xx_pdev) {
+		mif_err("no s51xx endpoint bound; driver unregistered\n");
+		pci_unregister_driver(&mc->pci_driver);
+		return -ENODEV;
 	}
 
 	return 0;

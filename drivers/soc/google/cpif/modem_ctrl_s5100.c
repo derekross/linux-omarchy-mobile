@@ -837,6 +837,7 @@ static int register_pcie(struct link_device *ld)
 	static int is_registered;
 	struct mem_link_device *mld = to_mem_link_device(ld);
 	u32 cp_num = ld->mdm_data->cp_num;
+	int err;
 
 #if IS_ENABLED(CONFIG_GS_S2MPU)
 	u32 shmem_idx;
@@ -901,10 +902,10 @@ static int register_pcie(struct link_device *ld)
 	if (is_registered == 0) {
 		/* initialize the pci_dev for modem_ctl */
 		mif_info("s51xx_pcie_init start\n");
-		s51xx_pcie_init(mc);
-		if (!mc->s51xx_pdev) {
+		err = s51xx_pcie_init(mc);
+		if (err || !mc->s51xx_pdev) {
 			mif_err("s51xx_pdev is NULL. Check if CP wake up is done.\n");
-			return -EINVAL;
+			return err ?: -ENODEV;
 		}
 
 		/* debug: check MSI 32bit or 64bit - should be set as 32bit before this point*/
@@ -1416,7 +1417,16 @@ static int start_normal_boot(struct modem_ctl *mc)
 	}
 
 	if (mld->attrs & LINK_ATTR_XMIT_BTDLR_PCIE) {
-		register_pcie(ld);
+		/*
+		 * Without the endpoint the ROM is never told where its boot
+		 * image is, and boot_stage stays 0: fail now rather than
+		 * polling it for 200 rounds with the link up.
+		 */
+		ret = register_pcie(ld);
+		if (ret < 0) {
+			mif_err("ERR! no PCIe endpoint for the ROM boot (err %d)\n", ret);
+			goto status_error;
+		}
 		if (mc->s51xx_pdev && mc->pcie_registered)
 			set_cp_rom_boot_img(mld);
 
@@ -1659,7 +1669,11 @@ static int start_dump_boot(struct modem_ctl *mc)
 	mif_disable_irq(&mc->cp_gpio_irq[CP_GPIO_IRQ_CP2AP_WAKEUP]);
 
 	if (mld->attrs & LINK_ATTR_XMIT_BTDLR_PCIE) {
-		register_pcie(ld);
+		err = register_pcie(ld);
+		if (err < 0) {
+			mif_err("ERR! no PCIe endpoint for the ROM boot (err %d)\n", err);
+			goto status_error;
+		}
 		if (mc->s51xx_pdev && mc->pcie_registered)
 			set_cp_rom_boot_img(mld);
 
