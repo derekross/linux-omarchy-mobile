@@ -24,8 +24,10 @@
  * (gs201-pcie-cp/ctl), and only when loaded with allow_hw=1:
  *
  *   cp_on      modem power-on sequence on its control lines
- *   cp_off     modem power-off sequence
- *              (both only while the "modem" child node is available; when
+ *   cp_off     modem power-off sequence, as stock's (ap2cp-pda-active
+ *              stays as it is)
+ *   pda_off    ap2cp-pda-active low, the level the bootloader leaves
+ *              (cp_on, cp_off and pda_off only while the "modem" child node is available; when
  *              it is disabled, the modem driver owns the lines)
  *   link_up    PHY out of isolation, PHY and controller setup, PERST#
  *              release, LTSSM, wait for L0 (Gen1 unless "link_up 3")
@@ -81,6 +83,10 @@
 static bool allow_hw;
 module_param(allow_hw, bool, 0444);
 MODULE_PARM_DESC(allow_hw, "Allow the debugfs steps and the modem driver to bring the link up (default: off)");
+
+static bool trace_lines;
+module_param(trace_lines, bool, 0644);
+MODULE_PARM_DESC(trace_lines, "Log every change of a modem output line, with its time (default: off)");
 
 static bool watch_lines;
 module_param(watch_lines, bool, 0444);
@@ -242,11 +248,19 @@ static void cp_line(struct gs201_pcie_cp *cp, enum cp_line l, int val,
 		    unsigned int delay_ms)
 {
 	gpiod_direction_output_raw(cp->out[l], val);
+	if (trace_lines)
+		dev_info(cp->dev, "%s = %d\n", cp_output_names[l], val);
 	if (delay_ms)
 		msleep(delay_ms);
 }
 
-/* gpio_power_off_cp(), CONFIG_CP_WRESET_WA unset as in pantah_defconfig */
+/*
+ * gpio_power_off_cp(), CONFIG_CP_WRESET_WA unset as in pantah_defconfig.
+ * Exactly stock's lines, order and delays: ap2cp-pda-active is not part of
+ * it (stock drives it low only for AP suspend), so it stays high until
+ * pda_off. M2.5 found every power-off followed by one recovered UFS error;
+ * this sequence used to end with pda-active low as well.
+ */
 static void cp_power_off(struct gs201_pcie_cp *cp)
 {
 	dev_info(cp->dev, "modem power-off sequence\n");
@@ -256,7 +270,6 @@ static void cp_power_off(struct gs201_pcie_cp *cp)
 	cp_line(cp, CP_WRST_N, 0, 0);
 	cp_line(cp, CP_PWR_ON, 0, 30);
 	cp_line(cp, CP_PM_WRST_N, 0, 50);
-	cp_line(cp, CP_PDA_ACTIVE, 0, 0);
 	cp->cp_powered = false;
 }
 
@@ -1203,14 +1216,19 @@ static ssize_t cp_ctl_write(struct file *file, const char __user *ubuf,
 	cmd = strim(buf);
 
 	mutex_lock(&cp->lock);
-	if (!strcmp(cmd, "cp_on") || !strcmp(cmd, "cp_off")) {
+	if (!strcmp(cmd, "cp_on") || !strcmp(cmd, "cp_off") ||
+	    !strcmp(cmd, "pda_off")) {
 		if (!cp->has_lines) {
 			ret = -ENODEV;	/* the modem driver owns the lines */
-		} else if (cmd[4] == 'n') {
+		} else if (!strcmp(cmd, "cp_on")) {
 			cp_power_on(cp);
-		} else {
+		} else if (!strcmp(cmd, "cp_off")) {
 			cp_link_down(cp);
 			cp_power_off(cp);
+		} else if (cp->cp_powered) {
+			ret = -EBUSY;	/* pda_off is for a modem that is off */
+		} else {
+			cp_line(cp, CP_PDA_ACTIVE, 0, 0);
 		}
 	} else if (!strncmp(cmd, "link_up", 7)) {
 		if (cmd[7] == ' ' && kstrtouint(cmd + 8, 0, &speed))
@@ -1509,6 +1527,8 @@ static void gs201_pcie_cp_remove(struct platform_device *pdev)
 	}
 	if (cp->cp_powered)
 		cp_power_off(cp);
+	if (cp->has_lines)
+		cp_line(cp, CP_PDA_ACTIVE, 0, 0);
 	mutex_unlock(&cp->lock);
 	cancel_work_sync(&cp->event_work);
 }
