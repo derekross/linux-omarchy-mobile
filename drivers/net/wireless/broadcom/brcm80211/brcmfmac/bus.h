@@ -323,6 +323,7 @@ void brcmf_dev_reset(struct device *dev);
 void brcmf_dev_coredump(struct device *dev);
 /* Indication that firmware has halted or crashed */
 void brcmf_fw_crashed(struct device *dev);
+void brcmf_bus_request_reset(struct device *dev);
 
 /* Configure the "global" bus state used by upper layers */
 void brcmf_bus_change_state(struct brcmf_bus *bus, enum brcmf_bus_state state);

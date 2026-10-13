@@ -393,6 +393,8 @@ struct brcmf_pciedev_info {
 	bool mb_ctrlmsg;
 	/* A D3 ACK arrived as a control message; publish it after RX. */
 	bool d3_ack_pending;
+	/* How the last D3 ACK arrived, for the log. */
+	const char *d3_ack_via;
 	bool irq_allocated;
 	bool wowl_enabled;
 	u8 dma_idx_sz;
@@ -498,6 +500,12 @@ static const struct brcmf_pcie_reginfo brcmf_reginfo_default = {
 
 /* Core rev >= 64 with the doorbells in the PCIe core's own registers, for
  * firmware that does not offer the DAR doorbells (BRCMF_PCIE_SHARED_DAR).
+ *
+ * From core rev 64 the FN0 bits (0x100, 0x200) are also the D2H4 doorbells.
+ * Broadcom's driver still reads the shared-memory D2H mailbox when either is
+ * set (dhdpcie_bus_process_mailbox_intr()), and firmware may post mailbox
+ * data, the D3 ACK among it, that way even when it otherwise sends it as a
+ * control message.
  */
 static const struct brcmf_pcie_reginfo brcmf_reginfo_64_nodar = {
 	.intmask = BRCMF_PCIE_64_PCIE2REG_INTMASK,
@@ -506,7 +514,7 @@ static const struct brcmf_pcie_reginfo brcmf_reginfo_64_nodar = {
 	.h2d_mailbox_0 = BRCMF_PCIE_PCIE2REG_H2D_MAILBOX_0,
 	.h2d_mailbox_1 = BRCMF_PCIE_PCIE2REG_H2D_MAILBOX_1,
 	.int_d2h_db = BRCMF_PCIE_64_MB_INT_D2H_DB,
-	.int_fn0 = 0,
+	.int_fn0 = BRCMF_PCIE_MB_INT_FN0,
 };
 
 static const struct brcmf_pcie_reginfo brcmf_reginfo_64 = {
@@ -516,7 +524,7 @@ static const struct brcmf_pcie_reginfo brcmf_reginfo_64 = {
 	.h2d_mailbox_0 = BRCMF_PCIE_64_PCIE2REG_H2D_MAILBOX_0,
 	.h2d_mailbox_1 = BRCMF_PCIE_64_PCIE2REG_H2D_MAILBOX_1,
 	.int_d2h_db = BRCMF_PCIE_64_MB_INT_D2H_DB,
-	.int_fn0 = 0,
+	.int_fn0 = BRCMF_PCIE_MB_INT_FN0,
 };
 
 static void brcmf_pcie_setup(struct device *dev, int ret,
@@ -1100,7 +1108,7 @@ brcmf_pcie_send_mb_data(struct brcmf_pciedev_info *devinfo, u32 htod_mb_data)
 
 
 static void brcmf_pcie_process_mb_data(struct brcmf_pciedev_info *devinfo,
-				       u32 dtoh_mb_data)
+				       u32 dtoh_mb_data, bool in_ring)
 {
 	brcmf_dbg(PCIE, "D2H_MB_DATA: 0x%04x\n", dtoh_mb_data);
 	if (dtoh_mb_data & BRCMF_D2H_DEV_DS_ENTER_REQ)  {
@@ -1112,7 +1120,9 @@ static void brcmf_pcie_process_mb_data(struct brcmf_pciedev_info *devinfo,
 		brcmf_dbg(PCIE, "D2H_MB_DATA: DEEP SLEEP EXIT\n");
 	if (dtoh_mb_data & BRCMF_D2H_DEV_D3_ACK) {
 		brcmf_dbg(PCIE, "D2H_MB_DATA: D3 ACK\n");
-		if (devinfo->mb_ctrlmsg) {
+		devinfo->d3_ack_via = in_ring ? "control message" :
+				      "shared-memory mailbox";
+		if (in_ring) {
 			/*
 			 * The message is still being processed: its ring read
 			 * pointer isn't written back yet, and once the waiter
@@ -1132,6 +1142,7 @@ static void brcmf_pcie_process_mb_data(struct brcmf_pciedev_info *devinfo,
 }
 
 
+/* The shared-memory D2H mailbox; the interrupt thread and the D3 wait poll it. */
 static void brcmf_pcie_handle_mb_data(struct brcmf_pciedev_info *devinfo)
 {
 	struct brcmf_pcie_shared_info *shared;
@@ -1140,13 +1151,16 @@ static void brcmf_pcie_handle_mb_data(struct brcmf_pciedev_info *devinfo)
 
 	shared = &devinfo->shared;
 	addr = shared->dtoh_mb_data_addr;
-	dtoh_mb_data = brcmf_pcie_read_tcm32(devinfo, addr);
-
-	if (!dtoh_mb_data)
+	if (!addr)
 		return;
 
-	brcmf_pcie_write_tcm32(devinfo, addr, 0);
-	brcmf_pcie_process_mb_data(devinfo, dtoh_mb_data);
+	mutex_lock(&devinfo->rx_lock);
+	dtoh_mb_data = brcmf_pcie_read_tcm32(devinfo, addr);
+	if (dtoh_mb_data) {
+		brcmf_pcie_write_tcm32(devinfo, addr, 0);
+		brcmf_pcie_process_mb_data(devinfo, dtoh_mb_data, false);
+	}
+	mutex_unlock(&devinfo->rx_lock);
 }
 
 
@@ -1154,7 +1168,7 @@ static void brcmf_pcie_d2h_mb_data(struct device *dev, u32 data)
 {
 	struct brcmf_bus *bus_if = dev_get_drvdata(dev);
 
-	brcmf_pcie_process_mb_data(bus_if->bus_priv.pcie->devinfo, data);
+	brcmf_pcie_process_mb_data(bus_if->bus_priv.pcie->devinfo, data, true);
 }
 
 
@@ -3166,10 +3180,32 @@ brcmf_pcie_remove(struct pci_dev *pdev)
 #ifdef CONFIG_PM
 
 
+/*
+ * Wait for the D3 ACK. It may come as a control message or in the
+ * shared-memory mailbox, with or without an interrupt, so look at both every
+ * 2 ms, as Broadcom's driver does when it asks for no ACK interrupt.
+ */
+static bool brcmf_pcie_wait_d3_ack(struct brcmf_pciedev_info *devinfo)
+{
+	unsigned long deadline = jiffies + BRCMF_PCIE_MBDATA_TIMEOUT;
+
+	do {
+		brcmf_pcie_handle_mb_data(devinfo);
+		brcmf_pcie_rx_process(devinfo);
+		if (wait_event_timeout(devinfo->mbdata_resp_wait,
+				       READ_ONCE(devinfo->mbdata_completed),
+				       msecs_to_jiffies(2)))
+			return true;
+	} while (time_before(jiffies, deadline));
+
+	return READ_ONCE(devinfo->mbdata_completed);
+}
+
 static int brcmf_pcie_pm_enter_D3(struct device *dev)
 {
 	struct brcmf_pciedev_info *devinfo;
 	struct brcmf_bus *bus;
+	ktime_t start;
 	int err;
 
 	brcmf_dbg(PCIE, "Enter\n");
@@ -3181,30 +3217,49 @@ static int brcmf_pcie_pm_enter_D3(struct device *dev)
 	brcmf_bus_change_state(bus, BRCMF_BUS_DOWN);
 
 	WRITE_ONCE(devinfo->mbdata_completed, false);
+	devinfo->d3_ack_via = NULL;
+	start = ktime_get();
 	err = brcmf_pcie_send_mb_data(devinfo, BRCMF_H2D_HOST_D3_INFORM);
 	if (err) {
+		/* Nothing reached the device: just carry on. */
 		brcmf_err(bus, "Failed to send D3 inform: %d\n", err);
-		goto restore;
+		brcmf_bus_change_state(bus, BRCMF_BUS_UP);
+		brcmf_pcie_fwcon_timer(devinfo, true);
+		return err;
 	}
 
-	wait_event_timeout(devinfo->mbdata_resp_wait,
-			   READ_ONCE(devinfo->mbdata_completed),
-			   BRCMF_PCIE_MBDATA_TIMEOUT);
-	if (!READ_ONCE(devinfo->mbdata_completed)) {
-		brcmf_err(bus, "Timeout on response for entering D3 substate\n");
-		err = -EIO;
-		goto restore;
+	if (!brcmf_pcie_wait_d3_ack(devinfo)) {
+		brcmf_err(bus, "Timeout on response for entering D3 substate (%lld ms, mailboxint 0x%08x)\n",
+			  ktime_ms_delta(ktime_get(), start),
+			  brcmf_pcie_read_reg32(devinfo,
+						devinfo->reginfo->mailboxint));
+		/*
+		 * The device may have taken the inform and stopped, or may
+		 * still act on it: the host-ready doorbell is how Broadcom's
+		 * driver brings a device back from D3, but an inform still
+		 * queued would put it to sleep again. Reload the firmware, as
+		 * Broadcom's driver does after a missed D3 ACK, so a failed
+		 * suspend doesn't leave Wi-Fi dead.
+		 */
+		brcmf_pcie_hostready(devinfo);
+		brcmf_bus_change_state(bus, BRCMF_BUS_UP);
+		brcmf_bus_request_reset(dev);
+		return -EIO;
 	}
+
+	dev_dbg(dev, "D3 ACK by %s after %lld us\n", devinfo->d3_ack_via,
+		ktime_us_delta(ktime_get(), start));
 
 	devinfo->state = BRCMFMAC_PCIE_STATE_DOWN;
 	/* Nothing to poll until resume; the worker would only see DOWN. */
 	cancel_delayed_work_sync(&devinfo->poll_work);
+	/* As Broadcom's driver: no device interrupts until resume. */
+	brcmf_pcie_intr_disable(devinfo);
+	brcmf_pcie_write_reg32(devinfo, devinfo->reginfo->mailboxint,
+			       brcmf_pcie_read_reg32(devinfo,
+						     devinfo->reginfo->mailboxint));
 
 	return 0;
-
-restore:
-	brcmf_bus_change_state(bus, BRCMF_BUS_UP);
-	return err;
 }
 
 
@@ -3232,12 +3287,21 @@ static int brcmf_pcie_pm_leave_D3(struct device *dev)
 		    brcmf_pcie_send_mb_data(devinfo, BRCMF_H2D_HOST_D0_INFORM))
 			goto cleanup;
 		brcmf_dbg(PCIE, "Hot resume, continue....\n");
+		dev_dbg(dev, "hot resume\n");
 		devinfo->state = BRCMFMAC_PCIE_STATE_UP;
+		devinfo->d3_ack_pending = false;
 		brcmf_pcie_select_core(devinfo, BCMA_CORE_PCIE2);
 		brcmf_bus_change_state(bus, BRCMF_BUS_UP);
 		brcmf_pcie_intr_enable(devinfo);
 		brcmf_pcie_hostready(devinfo);
 		brcmf_pcie_fwcon_timer(devinfo, true);
+		/*
+		 * Completions the device posted while the interrupt was off
+		 * would otherwise wait for the next interrupt.
+		 */
+		brcmf_pcie_handle_mb_data(devinfo);
+		brcmf_pcie_rx_process(devinfo);
+		brcmf_pcie_kick_poll(devinfo);
 		return 0;
 	}
 
@@ -3247,6 +3311,7 @@ cleanup:
 	pdev = devinfo->pdev;
 	brcmf_pcie_remove(pdev);
 
+	dev_dbg(dev, "device lost its state in sleep, probing again\n");
 	err = brcmf_pcie_probe(pdev, NULL);
 	if (err)
 		__brcmf_err(NULL, __func__, "probe after resume failed, err=%d\n", err);
