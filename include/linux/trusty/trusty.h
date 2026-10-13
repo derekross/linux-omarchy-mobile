@@ -81,6 +81,11 @@ int trusty_transfer_memory(struct device *dev, u64 *id,
 			   pgprot_t pgprot, u64 tag, bool lend);
 int trusty_reclaim_memory(struct device *dev, trusty_shared_mem_id_t id,
 			  struct scatterlist *sglist, unsigned int nents);
+struct sg_table;
+int trusty_transfer_mapped_memory(struct device *dev, u64 *id,
+				  struct sg_table *sgt, pgprot_t pgprot,
+				  u64 tag, bool lend);
+int trusty_reclaim_mapped_memory(struct device *dev, trusty_shared_mem_id_t id);
 
 struct dma_buf;
 void trusty_register_func_for_dma_buf(

@@ -313,11 +313,16 @@ int trusty_share_memory(struct device *dev, u64 *id,
 }
 EXPORT_SYMBOL(trusty_share_memory);
 
-int trusty_transfer_memory(struct device *dev, u64 *id,
-			   struct scatterlist *sglist, unsigned int nents,
-			   pgprot_t pgprot, u64 tag, bool lend)
+/*
+ * Send an FF-A share or lend of @sglist, whose first @nents entries carry DMA
+ * addresses that are physical addresses (the Trusty device and its children
+ * use dma-direct without an offset). Only the DMA fields of @sglist are used.
+ */
+static int __trusty_transfer_memory(struct trusty_state *s, u64 *id,
+				    struct scatterlist *sglist,
+				    unsigned int nents, pgprot_t pgprot,
+				    u64 tag, bool lend)
 {
-	struct trusty_state *s = platform_get_drvdata(to_platform_device(dev));
 	int ret;
 	struct ns_mem_page_info pg_inf;
 	struct scatterlist *sg;
@@ -336,9 +341,6 @@ int trusty_transfer_memory(struct device *dev, u64 *id,
 	u32 cookie_low;
 	u32 cookie_high;
 
-	if (WARN_ON(dev->driver != &trusty_driver.driver))
-		return -EINVAL;
-
 	if (WARN_ON(nents < 1))
 		return -EINVAL;
 
@@ -348,19 +350,14 @@ int trusty_transfer_memory(struct device *dev, u64 *id,
 		return -EOPNOTSUPP;
 	}
 
-	count = dma_map_sg(dev, sglist, nents, DMA_BIDIRECTIONAL);
-	if (count != nents) {
-		dev_err(s->dev, "failed to dma map sg_table\n");
-		return -EINVAL;
-	}
-
+	count = nents;
 	sg = sglist;
 	ret = trusty_encode_page_info(&pg_inf, phys_to_page(sg_dma_address(sg)),
 				      pgprot);
 	if (ret) {
 		dev_err(s->dev, "%s: trusty_encode_page_info failed\n",
 			__func__);
-		goto err_encode_page_info;
+		return ret;
 	}
 
 	if (s->api_version < TRUSTY_API_VERSION_MEM_OBJ) {
@@ -484,13 +481,69 @@ int trusty_transfer_memory(struct device *dev, u64 *id,
 
 	dev_err(s->dev, "%s: failed %d", __func__, ret);
 
-err_encode_page_info:
-	dma_unmap_sg(dev, sglist, nents, DMA_BIDIRECTIONAL);
 done:
 	trace_trusty_share_memory_done(len, nents, lend, ffa_handle, ret);
 	return ret;
 }
+
+int trusty_transfer_memory(struct device *dev, u64 *id,
+			   struct scatterlist *sglist, unsigned int nents,
+			   pgprot_t pgprot, u64 tag, bool lend)
+{
+	struct trusty_state *s = platform_get_drvdata(to_platform_device(dev));
+	int count;
+	int ret;
+
+	if (WARN_ON(dev->driver != &trusty_driver.driver))
+		return -EINVAL;
+
+	if (WARN_ON(nents < 1))
+		return -EINVAL;
+
+	count = dma_map_sg(dev, sglist, nents, DMA_BIDIRECTIONAL);
+	if (count != nents) {
+		dev_err(s->dev, "failed to dma map sg_table\n");
+		return -EINVAL;
+	}
+
+	ret = __trusty_transfer_memory(s, id, sglist, nents, pgprot, tag, lend);
+	if (ret)
+		dma_unmap_sg(dev, sglist, nents, DMA_BIDIRECTIONAL);
+
+	return ret;
+}
 EXPORT_SYMBOL(trusty_transfer_memory);
+
+/**
+ * trusty_transfer_mapped_memory() - share or lend an already mapped buffer
+ * @dev:    the Trusty device
+ * @id:     returns the shared memory ID
+ * @sgt:    a table DMA-mapped for @dev or one of its children, such as the
+ *          table dma_buf_map_attachment() returns for a dma-buf importer
+ * @pgprot: the attributes the buffer is mapped with
+ * @tag:    the FF-A tag
+ * @lend:   lend rather than share
+ *
+ * Unlike trusty_transfer_memory(), this neither maps @sgt nor touches its
+ * struct pages: the importer of a dma-buf gets only DMA addresses (with
+ * CONFIG_DMABUF_DEBUG the pages are hidden from it), and the exporter has
+ * done the cache maintenance. Release with trusty_reclaim_mapped_memory().
+ *
+ * Return: 0 on success, a negative error code otherwise.
+ */
+int trusty_transfer_mapped_memory(struct device *dev, u64 *id,
+				  struct sg_table *sgt, pgprot_t pgprot,
+				  u64 tag, bool lend)
+{
+	struct trusty_state *s = platform_get_drvdata(to_platform_device(dev));
+
+	if (WARN_ON(dev->driver != &trusty_driver.driver))
+		return -EINVAL;
+
+	return __trusty_transfer_memory(s, id, sgt->sgl, sgt->nents, pgprot,
+					tag, lend);
+}
+EXPORT_SYMBOL(trusty_transfer_mapped_memory);
 
 /*
  * trusty_share_memory_compat - trusty_share_memory wrapper for old apis
@@ -514,12 +567,37 @@ int trusty_share_memory_compat(struct device *dev, u64 *id,
 }
 EXPORT_SYMBOL(trusty_share_memory_compat);
 
+static int __trusty_reclaim_memory(struct trusty_state *s, u64 id)
+{
+	struct smc_ret8 smc_ret;
+	int ret = 0;
+
+	trace_trusty_reclaim_memory(id);
+	mutex_lock(&s->share_memory_msg_lock);
+
+	smc_ret = trusty_smc8(SMC_FC_FFA_MEM_RECLAIM, (u32)id, id >> 32, 0, 0,
+			      0, 0, 0);
+	if (smc_ret.r0 != SMC_FC_FFA_SUCCESS) {
+		dev_err(s->dev, "%s: SMC_FC_FFA_MEM_RECLAIM failed 0x%lx 0x%lx 0x%lx",
+			__func__, smc_ret.r0, smc_ret.r1, smc_ret.r2);
+		if (smc_ret.r0 == SMC_FC_FFA_ERROR &&
+		    smc_ret.r2 == FFA_ERROR_DENIED)
+			ret = -EBUSY;
+		else
+			ret = -EIO;
+	}
+
+	mutex_unlock(&s->share_memory_msg_lock);
+
+	trace_trusty_reclaim_memory_done(id, ret);
+	return ret;
+}
+
 int trusty_reclaim_memory(struct device *dev, u64 id,
 			  struct scatterlist *sglist, unsigned int nents)
 {
 	struct trusty_state *s = platform_get_drvdata(to_platform_device(dev));
-	int ret = 0;
-	struct smc_ret8 smc_ret;
+	int ret;
 
 	if (WARN_ON(dev->driver != &trusty_driver.driver))
 		return -EINVAL;
@@ -539,35 +617,40 @@ int trusty_reclaim_memory(struct device *dev, u64 id,
 		return 0;
 	}
 
-	trace_trusty_reclaim_memory(id);
-	mutex_lock(&s->share_memory_msg_lock);
-
-	smc_ret = trusty_smc8(SMC_FC_FFA_MEM_RECLAIM, (u32)id, id >> 32, 0, 0,
-			      0, 0, 0);
-	if (smc_ret.r0 != SMC_FC_FFA_SUCCESS) {
-		dev_err(s->dev, "%s: SMC_FC_FFA_MEM_RECLAIM failed 0x%lx 0x%lx 0x%lx",
-			__func__, smc_ret.r0, smc_ret.r1, smc_ret.r2);
-		if (smc_ret.r0 == SMC_FC_FFA_ERROR &&
-		    smc_ret.r2 == FFA_ERROR_DENIED)
-			ret = -EBUSY;
-		else
-			ret = -EIO;
-	}
-
-	mutex_unlock(&s->share_memory_msg_lock);
-
-	if (ret != 0)
-		goto err_ffa_mem_reclaim;
+	ret = __trusty_reclaim_memory(s, id);
+	if (ret)
+		return ret;
 
 	dma_unmap_sg(dev, sglist, nents, DMA_BIDIRECTIONAL);
 
 	dev_dbg(s->dev, "%s: done\n", __func__);
-
-err_ffa_mem_reclaim:
-	trace_trusty_reclaim_memory_done(id, ret);
-	return ret;
+	return 0;
 }
 EXPORT_SYMBOL(trusty_reclaim_memory);
+
+/**
+ * trusty_reclaim_mapped_memory() - reclaim from trusty_transfer_mapped_memory()
+ * @dev: the Trusty device
+ * @id:  the shared memory ID
+ *
+ * The caller unmaps the buffer once this succeeds.
+ *
+ * Return: 0 on success, -EBUSY while Trusty still uses the buffer, another
+ * negative error code otherwise.
+ */
+int trusty_reclaim_mapped_memory(struct device *dev, u64 id)
+{
+	struct trusty_state *s = platform_get_drvdata(to_platform_device(dev));
+
+	if (WARN_ON(dev->driver != &trusty_driver.driver))
+		return -EINVAL;
+
+	if (s->api_version < TRUSTY_API_VERSION_MEM_OBJ)
+		return 0;
+
+	return __trusty_reclaim_memory(s, id);
+}
+EXPORT_SYMBOL(trusty_reclaim_mapped_memory);
 
 int trusty_call_notifier_register(struct device *dev, struct notifier_block *n)
 {

@@ -690,10 +690,8 @@ static int tipc_shared_handle_drop(struct tipc_shared_handle *shared_handle)
 		WARN_ON(tipc_shared_handle_take(vds,
 						shared_handle->tipc.obj_id));
 
-		ret = trusty_reclaim_memory(dev,
-					    shared_handle->tipc.obj_id,
-					    shared_handle->sgt->sgl,
-					    shared_handle->sgt->orig_nents);
+		ret = trusty_reclaim_mapped_memory(dev,
+						   shared_handle->tipc.obj_id);
 		if (ret) {
 			/*
 			 * We can't safely release this, it may still be in
@@ -1264,10 +1262,15 @@ static int dn_share_fd(struct tipc_dn_chan *dn, int fd,
 		goto cleanup_handle;
 	}
 
-	ret = trusty_transfer_memory(tipc_shared_handle_dev(shared_handle),
-				     &mem_id, shared_handle->sgt->sgl,
-				     shared_handle->sgt->orig_nents, prot, tag,
-				     lend);
+	/*
+	 * The attachment's table is already mapped, for the tipc device that
+	 * shares the Trusty device's dma-direct ops, so its DMA addresses are
+	 * the physical addresses FF-A wants. Mapping it again would need its
+	 * struct pages, which an importer must not use.
+	 */
+	ret = trusty_transfer_mapped_memory(tipc_shared_handle_dev(shared_handle),
+					    &mem_id, shared_handle->sgt, prot,
+					    tag, lend);
 
 	if (ret < 0) {
 		dev_dbg(dev, "Transferring memory failed: %d\n", ret);
