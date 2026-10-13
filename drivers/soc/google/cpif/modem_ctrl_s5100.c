@@ -730,6 +730,33 @@ static void set_pcie_msi_int(struct link_device *ld, bool enabled)
 	mld->msi_irq_enabled = enabled;
 }
 
+/*
+ * The packet processor's rings are in DRAM and survive the link going
+ * down, but the MSI controller is reset with it, so a queue the modem
+ * filled around a link power-down can be left without its interrupt.
+ * Once the link is back, run each exclusive queue's handler once: it only
+ * schedules NAPI, which finds the ring empty if nothing came.
+ */
+static void pktproc_kick_rx_queues(struct mem_link_device *mld)
+{
+#if IS_ENABLED(CONFIG_CP_PKTPROC)
+	struct pktproc_adaptor *ppa = &mld->pktproc;
+	unsigned int i;
+
+	if (!pktproc_check_support(ppa) || !ppa->use_exclusive_irq)
+		return;
+
+	local_bh_disable();	/* NAPI runs at local_bh_enable() */
+	for (i = 0; i < ppa->num_queue; i++) {
+		struct pktproc_queue *q = ppa->q[i];
+
+		if (q && q->irq && pktproc_check_active(ppa, i))
+			q->irq_handler(q->irq, q);
+	}
+	local_bh_enable();
+#endif
+}
+
 static int request_pcie_int(struct link_device *ld, struct platform_device *pdev)
 {
 #define DOORBELL_INT_MASK(x)	((x) | 0x10000)
@@ -1852,6 +1879,7 @@ int s5100_poweron_pcie(struct modem_ctl *mc, bool boot_on)
 	}
 
 	set_pcie_msi_int(ld, true);
+	pktproc_kick_rx_queues(mld);
 
 	if ((mc->s51xx_pdev != NULL) && mc->pcie_registered && (mc->phone_state != STATE_CRASH_EXIT)) {
 		/* DBG */
