@@ -82,6 +82,18 @@ config CP_PKTPROC_UL
 
 	  Not yet tested on hardware here. If unsure, say N.
 
+config MODEM_IF_QOS
+	bool "Uplink priority queue for TCP ACKs (bring-up)"
+	depends on CP_PKTPROC_UL
+	help
+	  Gives the rmnet devices one transmit queue per uplink packet
+	  processor queue and sends TCP ACKs on the first, the modem's
+	  high-priority queue, as stock does (pantah_defconfig:
+	  CONFIG_MODEM_IF_QOS=m). Without it every packet goes to the
+	  normal-priority queue.
+
+	  If unsure, say N.
+
 config SHM_IPC
 	tristate "Shared-memory regions for the modem"
 	default EXYNOS_MODEM_IF
