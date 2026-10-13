@@ -1576,11 +1576,15 @@ int brcmf_proto_msgbuf_rx_trigger(struct device *dev)
 {
 	struct brcmf_bus *bus_if = dev_get_drvdata(dev);
 	struct brcmf_pub *drvr = bus_if->drvr;
-	struct brcmf_msgbuf *msgbuf = (struct brcmf_msgbuf *)drvr->proto->pd;
+	struct brcmf_msgbuf *msgbuf;
 	struct brcmf_commonring *commonring;
 	void *buf;
 	u32 flowid;
 	int qlen;
+
+	if (!drvr || !drvr->proto || !drvr->proto->pd)
+		return -ENODEV;
+	msgbuf = (struct brcmf_msgbuf *)drvr->proto->pd;
 
 	buf = msgbuf->commonrings[BRCMF_D2H_MSGRING_RX_COMPLETE];
 	brcmf_msgbuf_process_rx(msgbuf, buf);
