@@ -218,6 +218,8 @@ struct gs201_pcie_cp {
 	raw_spinlock_t cfg_lock;	/* config accesses against link changes */
 	bool cfg_root_ok;		/* root port (DBI) accessible */
 	bool cfg_ep_ok;			/* endpoint reachable (link up, ATU set) */
+	raw_spinlock_t dbi_lock;	/* DBI accesses against PHY isolation */
+	bool dbi_ok;			/* PHY out of isolation: DBI accessible */
 	u32 num_lanes;
 	u8 exp_cap;			/* root port's PCIe capability */
 	u16 speed;			/* target link speed of the last link_up */
@@ -770,11 +772,59 @@ static void cp_bus_remove(struct gs201_pcie_cp *cp)
  * SMC-backed PMU regmap as the release in phy_init(). No controller
  * register is accessed after this until the next link_up.
  */
+/*
+ * Every DBI access through the DesignWare helpers goes here. DWC's MSI
+ * code masks, unmasks and acknowledges vectors in DBI from interrupt
+ * context and from free_irq()/disable_irq(), whenever a driver calls
+ * them, link up or not. While the PHY is isolated a DBI access hangs the
+ * SoC; reads then return 0 and writes are dropped.
+ */
+static u32 cp_dbi_read(struct dw_pcie *pci, void __iomem *base, u32 reg,
+		       size_t size)
+{
+	struct gs201_pcie_cp *cp = container_of(pci, struct gs201_pcie_cp, pci);
+	unsigned long flags;
+	u32 val = 0;
+
+	raw_spin_lock_irqsave(&cp->dbi_lock, flags);
+	if (cp->dbi_ok)
+		dw_pcie_read(base + reg, size, &val);
+	raw_spin_unlock_irqrestore(&cp->dbi_lock, flags);
+	return val;
+}
+
+static void cp_dbi_write(struct dw_pcie *pci, void __iomem *base, u32 reg,
+			 size_t size, u32 val)
+{
+	struct gs201_pcie_cp *cp = container_of(pci, struct gs201_pcie_cp, pci);
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&cp->dbi_lock, flags);
+	if (cp->dbi_ok)
+		dw_pcie_write(base + reg, size, val);
+	raw_spin_unlock_irqrestore(&cp->dbi_lock, flags);
+}
+
+static const struct dw_pcie_ops cp_dw_ops = {
+	.read_dbi = cp_dbi_read,
+	.write_dbi = cp_dbi_write,
+};
+
+static void cp_dbi_allow(struct gs201_pcie_cp *cp, bool ok)
+{
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&cp->dbi_lock, flags);
+	cp->dbi_ok = ok;
+	raw_spin_unlock_irqrestore(&cp->dbi_lock, flags);
+}
+
 static void cp_phy_isolate(struct gs201_pcie_cp *cp)
 {
 	unsigned int val = 0;
 	int ret;
 
+	cp_dbi_allow(cp, false);
 	ret = regmap_update_bits(cp->pmu, cp->pmu_offset, CP_PMU_PHY_BYPASS, 0);
 	if (!ret)
 		ret = regmap_read(cp->pmu, cp->pmu_offset, &val);
@@ -1042,6 +1092,7 @@ static int cp_link_up(struct gs201_pcie_cp *cp, unsigned int speed)
 		ret = phy_init(cp->phy);	/* PMU isolation off, then PHY power-down */
 		if (ret)
 			return ret;
+		cp_dbi_allow(cp, true);
 		cp->phy_inited = true;
 	}
 
@@ -1769,6 +1820,7 @@ static int gs201_pcie_cp_probe(struct platform_device *pdev)
 	cp->dev = dev;
 	mutex_init(&cp->lock);
 	raw_spin_lock_init(&cp->cfg_lock);
+	raw_spin_lock_init(&cp->dbi_lock);
 	spin_lock_init(&cp->event_lock);
 	INIT_WORK(&cp->event_work, cp_event_work);
 	platform_set_drvdata(pdev, cp);
@@ -1783,6 +1835,7 @@ static int gs201_pcie_cp_probe(struct platform_device *pdev)
 	if (IS_ERR(cp->pci.dbi_base))
 		return PTR_ERR(cp->pci.dbi_base);
 	cp->pci.dev = dev;
+	cp->pci.ops = &cp_dw_ops;
 
 	cp->cfg = devm_platform_ioremap_resource_byname(pdev, "config");
 	if (IS_ERR(cp->cfg))
