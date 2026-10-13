@@ -317,6 +317,43 @@ static void cp_set_iocc(struct gs201_pcie_cp *cp, bool enable)
 				   enable ? CP_SYSREG_SHARABLE_ENABLE : 0);
 }
 
+/*
+ * The root port part of dw_pcie_setup_rc(), which Google's
+ * exynos_pcie_rc_establish_link() runs before exynos_pcie_setup_rc(); the
+ * iATU part is the secure monitor's here. The controller's soft power
+ * reset clears all of it, so it is written on every link up.
+ */
+static void cp_setup_root_port(struct gs201_pcie_cp *cp)
+{
+	struct dw_pcie *pci = &cp->pci;
+	u32 val;
+
+	dw_pcie_writel_dbi(pci, PCI_BASE_ADDRESS_0, 0);
+	dw_pcie_writel_dbi(pci, PCI_BASE_ADDRESS_1, 0);
+
+	val = dw_pcie_readl_dbi(pci, PCI_INTERRUPT_LINE);
+	val &= 0xffff00ff;
+	val |= 0x00000100;		/* INTA */
+	dw_pcie_writel_dbi(pci, PCI_INTERRUPT_LINE, val);
+
+	val = dw_pcie_readl_dbi(pci, PCI_PRIMARY_BUS);
+	val &= 0xff000000;
+	val |= 0x00ff0100;		/* primary 0, secondary 1, subordinate 0xff */
+	dw_pcie_writel_dbi(pci, PCI_PRIMARY_BUS, val);
+
+	val = dw_pcie_readl_dbi(pci, PCI_COMMAND);
+	val &= 0xffff0000;
+	val |= PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER | PCI_COMMAND_SERR;
+	dw_pcie_writel_dbi(pci, PCI_COMMAND, val);
+
+	/*
+	 * The controller resets to class 0 here. The PCI core leaves a
+	 * class-0 device's resources alone, so the root port's memory window
+	 * was never sized or assigned.
+	 */
+	dw_pcie_writew_dbi(pci, PCI_CLASS_DEVICE, PCI_CLASS_BRIDGE_PCI);
+}
+
 /* exynos_pcie_setup_rc() for EP_SAMSUNG_MODEM, plus Google's EQ-off write */
 static void cp_setup_dbi(struct gs201_pcie_cp *cp, unsigned int speed)
 {
@@ -327,6 +364,8 @@ static void cp_setup_dbi(struct gs201_pcie_cp *cp, unsigned int speed)
 	dev_info(cp->dev, "DBI ID %#010x\n", dw_pcie_readl_dbi(pci, PCI_VENDOR_ID));
 
 	dw_pcie_dbi_ro_wr_en(pci);
+
+	cp_setup_root_port(cp);
 
 	/* Root port BAR0 and expansion ROM BAR off (DBI2 shadow, +0x100000) */
 	dw_pcie_writel_dbi(pci, 0x100010, 0);
@@ -1673,6 +1712,16 @@ static int gs201_pcie_cp_probe(struct platform_device *pdev)
 	cp->bridge->child_ops = &cp_child_ops;
 	cp->bridge->sysdata = cp;
 	cp->pci.pp.bridge = cp->bridge;
+	/*
+	 * With a bridge class the port driver binds to the root port. The
+	 * link goes down whenever the modem driver says so: leave error
+	 * reporting, PME, DPC and hotplug to the modem driver, which gets
+	 * link-down and completion-timeout events from this driver.
+	 */
+	cp->bridge->native_aer = 0;
+	cp->bridge->native_pme = 0;
+	cp->bridge->native_dpc = 0;
+	cp->bridge->native_pcie_hotplug = 0;
 
 	if (of_reserved_mem_region_to_resource(np, 0, &cp->msi_page))
 		memset(&cp->msi_page, 0, sizeof(cp->msi_page));
