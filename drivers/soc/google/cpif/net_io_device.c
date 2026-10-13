@@ -27,6 +27,7 @@
 #include "modem_prj.h"
 #include "modem_utils.h"
 #include "modem_dump.h"
+#include "link_device_memory.h"
 #if IS_ENABLED(CONFIG_MODEM_IF_LEGACY_QOS)
 #include "cpif_qos_info.h"
 #endif
@@ -88,6 +89,20 @@ static int vnet_stop(struct net_device *ndev)
 	return 0;
 }
 
+/*
+ * Packets for the uplink packet processor go without a link header. Google
+ * decides that at build time (CONFIG_CP_PKTPROC_UL); here it follows the
+ * device tree, so one kernel also runs the modem on its legacy buffers.
+ */
+static bool vnet_pktproc_ul(struct link_device *ld)
+{
+#if IS_ENABLED(CONFIG_CP_PKTPROC_UL)
+	return pktproc_check_support_ul(&to_mem_link_device(ld)->pktproc_ul);
+#else
+	return false;
+#endif
+}
+
 static netdev_tx_t vnet_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
 	struct vnet *vnet = netdev_priv(ndev);
@@ -98,12 +113,13 @@ static netdev_tx_t vnet_xmit(struct sk_buff *skb, struct net_device *ndev)
 	struct sk_buff *skb_new = skb;
 	char *buff;
 	int ret;
-	u8 __maybe_unused cfg;
-	u16 __maybe_unused cfg_sit;
+	u8 cfg = 0;
+	u16 cfg_sit = 0;
 	unsigned int headroom;
 	unsigned int tailroom;
 	unsigned int tx_bytes;
 	struct timespec64 ts;
+	bool pktproc_ul = vnet_pktproc_ul(ld);
 
 	if (unlikely(!cp_online(mc))) {
 		if (!netif_queue_stopped(ndev))
@@ -115,14 +131,13 @@ static netdev_tx_t vnet_xmit(struct sk_buff *skb, struct net_device *ndev)
 	/* Record the timestamp */
 	ktime_get_ts64(&ts);
 
-#if IS_ENABLED(CONFIG_CP_PKTPROC_UL)
-	/* no need of head and tail */
-	cfg = 0;
-	cfg_sit = 0;
-	headroom = 0;
-	tailroom = 0;
-#else
-	if (iod->link_header) {
+	if (pktproc_ul) {
+		/* no need of head and tail */
+		cfg = 0;
+		cfg_sit = 0;
+		headroom = 0;
+		tailroom = 0;
+	} else if (iod->link_header) {
 		switch (ld->protocol) {
 		case PROTOCOL_SIPC:
 			cfg = sipc5_build_config(iod, ld, count);
@@ -154,7 +169,6 @@ static netdev_tx_t vnet_xmit(struct sk_buff *skb, struct net_device *ndev)
 			goto retry;
 		}
 	}
-#endif
 
 	tx_bytes = headroom + count + tailroom;
 
@@ -172,13 +186,8 @@ static netdev_tx_t vnet_xmit(struct sk_buff *skb, struct net_device *ndev)
 #endif
 
 	/* Build SIPC5 link header*/
-#if IS_ENABLED(CONFIG_CP_PKTPROC_UL)
-	buff = skb_new->data;
-#else
-	buff = skb_push(skb_new, headroom);
-#endif
+	buff = skb_push(skb_new, headroom);	/* none for the packet processor */
 
-#if !IS_ENABLED(CONFIG_CP_PKTPROC_UL)
 	if (cfg || cfg_sit) {
 		switch (ld->protocol) {
 		case PROTOCOL_SIPC:
@@ -192,7 +201,6 @@ static netdev_tx_t vnet_xmit(struct sk_buff *skb, struct net_device *ndev)
 			return -EINVAL;
 		}
 	}
-#endif
 
 	/* IP loop-back */
 	if (iod->msd->loopback_ipaddr) {
@@ -204,11 +212,9 @@ static netdev_tx_t vnet_xmit(struct sk_buff *skb, struct net_device *ndev)
 		}
 	}
 
-#if !IS_ENABLED(CONFIG_CP_PKTPROC_UL)
 	/* Apply padding */
 	if (tailroom)
 		skb_put(skb_new, tailroom);
-#endif
 
 	ret = ld->send(ld, iod, skb_new);
 	if (unlikely(ret < 0)) {
@@ -240,7 +246,6 @@ static netdev_tx_t vnet_xmit(struct sk_buff *skb, struct net_device *ndev)
 	return NETDEV_TX_OK;
 
 retry:
-#if !IS_ENABLED(CONFIG_CP_PKTPROC_UL)
 	if (iod->link_header && skb_new && (skb_new == skb)) {
 		if (headroom)
 			skb_pull(skb_new, headroom);
@@ -248,7 +253,6 @@ retry:
 		if (tailroom)
 			skb_trim(skb_new, count);
 	}
-#endif
 
 	/*
 	 * If @skb has been expanded to $skb_new, only $skb_new must be freed here

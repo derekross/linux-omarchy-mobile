@@ -396,7 +396,9 @@ static void set_ap_capabilities(struct mem_link_device *mld)
 	int part;
 
 #if IS_ENABLED(CONFIG_CP_PKTPROC_UL)
-	cpif_set_bit(mld->ap_capability[0], AP_CAP_0_PKTPROC_UL_BIT);
+	/* Only when the device tree set the uplink processor up */
+	if (pktproc_check_support_ul(&mld->pktproc_ul))
+		cpif_set_bit(mld->ap_capability[0], AP_CAP_0_PKTPROC_UL_BIT);
 #endif
 #if IS_ENABLED(CONFIG_CH_EXTENSION)
 	cpif_set_bit(mld->ap_capability[0], AP_CAP_0_CH_EXTENSION_BIT);
@@ -1428,7 +1430,7 @@ static int xmit_to_cp(struct mem_link_device *mld, struct io_device *iod,
 		return -EIO;
 
 #if IS_ENABLED(CONFIG_CP_PKTPROC_UL)
-	if (ld->is_ps_ch(ch)) {
+	if (ld->is_ps_ch(ch) && pktproc_check_support_ul(&mld->pktproc_ul)) {
 		return xmit_ipc_to_pktproc(mld, skb);
 	} else if (ld->sbd_ipc && iod->sbd_ipc) {
 #else
@@ -2315,7 +2317,11 @@ static int shmem_security_request(struct link_device *ld, struct io_device *iod,
 	mif_info("%s: return_value=%d\n", ld->name, err);
 #endif
 
-#if IS_ENABLED(CONFIG_CP_PKTPROC)
+	/*
+	 * The dedicated BAAW window is the on-SoC modem's (secure boot SMC);
+	 * pktproc_get_info() refuses it on the PCIe link.
+	 */
+#if IS_ENABLED(CONFIG_CP_PKTPROC) && IS_ENABLED(CONFIG_CP_SECURE_BOOT)
 	if ((mode == CP_BOOT_RE_INIT) && mld->pktproc.use_dedicated_baaw) {
 		mif_info("memaddr:0x%lx memsize:0x%08x\n",
 				cp_shmem_get_base(cp_num, SHMEM_PKTPROC),

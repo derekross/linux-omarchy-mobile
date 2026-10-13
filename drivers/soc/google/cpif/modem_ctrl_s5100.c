@@ -1909,7 +1909,8 @@ void s5100_set_pcie_irq_affinity(struct modem_ctl *mc)
 		num_queue = ppa->num_queue;
 
 	for (i = 0; i < num_queue; i++) {
-		if (!ppa->q[i]->irq)
+		/* no queues without the packet processor in the device tree */
+		if (!ppa->q[i] || !ppa->q[i]->irq)
 			break;
 
 		irq_set_affinity_hint(ppa->q[i]->irq, cpumask_of(mld->msi_irq_q_cpu[i]));

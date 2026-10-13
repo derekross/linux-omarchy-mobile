@@ -12,8 +12,9 @@ menuconfig EXYNOS_MODEM_IF
 	  packet channels in shared memory as character and network devices
 	  (/dev/umts_boot0, /dev/umts_ipc0, /dev/umts_rfs0, rmnet*).
 
-	  For bring-up: the packet processor, DIT, the PCIe IOMMU and S2MPU,
-	  BTL, the throughput monitor and the thermal zones are not built.
+	  For bring-up: DIT, the PCIe IOMMU and S2MPU, BTL, the throughput
+	  monitor and the thermal zones are not built, and the packet
+	  processor is optional.
 
 if EXYNOS_MODEM_IF
 
@@ -48,6 +49,38 @@ config CH_EXTENSION
 	  interfaces carry nothing. Stock builds it (pantah_defconfig).
 
 	  If unsure, say Y.
+
+config LINK_DEVICE_PCIE_IOCC
+	def_bool y
+	depends on LINK_DEVICE_PCIE
+	help
+	  The gs201 modem link driver turns IO coherency on for the link at
+	  every link-up, before the modem may DMA, so the packet processor
+	  treats its cacheable regions as coherent, as stock does
+	  (pantah_defconfig: CONFIG_LINK_DEVICE_PCIE_IOCC=y).
+
+config CP_PKTPROC
+	bool "Packet processor, downlink (bring-up)"
+	depends on LINK_DEVICE_PCIE
+	help
+	  The modem's downlink packet processor: descriptor rings in the
+	  PKTPROC shared-memory region that the S5300 fills, read out with
+	  NAPI, one MSI vector per queue when the device tree asks for
+	  exclusive interrupts. Stock gs201 runs four downlink queues. Used
+	  only when the modem node sets pktproc_dl_support; the AP then
+	  advertises it in its capability word at boot.
+
+	  Not yet tested on hardware here. If unsure, say N.
+
+config CP_PKTPROC_UL
+	bool "Packet processor, uplink (bring-up)"
+	depends on CP_PKTPROC
+	help
+	  The modem's uplink packet processor in the PKTPROC_UL region.
+	  Stock gs201 runs two uplink queues, one of them for TCP ACKs
+	  only. Used only when the modem node sets pktproc_ul_support.
+
+	  Not yet tested on hardware here. If unsure, say N.
 
 config SHM_IPC
 	tristate "Shared-memory regions for the modem"

@@ -7,6 +7,8 @@
 #ifndef __LINK_RX_PKTPROC_H__
 #define __LINK_RX_PKTPROC_H__
 
+#include <linux/io.h>
+#include <linux/shm_ipc.h>
 #include "cpif_netrx_mng.h"
 
 /* Debug */
@@ -211,7 +213,7 @@ struct pktproc_queue {
 #endif
 
 	/* NAPI */
-	struct net_device netdev;
+	struct net_device *netdev;
 	struct napi_struct napi;
 	struct napi_struct *napi_ptr;
 
@@ -326,6 +328,33 @@ struct pktproc_adaptor {
 	struct pktproc_perftest perftest;
 	bool pktgen_gro;
 };
+
+/*
+ * The modem's packet regions are reserved no-map on this kernel, outside
+ * the linear map that stock's phys_to_virt() relies on: map the parts the
+ * packet processor uses, write-back where the device tree calls them
+ * cached (the link is I/O coherent), write-combine otherwise.
+ */
+static inline void __iomem *pktproc_map_rgn(unsigned long base, u32 size,
+					    bool cached)
+{
+	if (cached)
+		return (void __iomem __force *)memremap(base, size, MEMREMAP_WB);
+	return cp_shmem_get_nc_region(base, size);
+}
+
+/* Both kinds are memremap()ed (cp_shmem_get_nc_region() included) */
+static inline void pktproc_unmap_rgn(void __iomem *vbase)
+{
+	if (vbase)
+		memunmap((void __force *)vbase);
+}
+
+/* Whether [offset, offset + size) lies inside a region of rgn_size bytes */
+static inline bool pktproc_rgn_ok(u64 offset, u64 size, u64 rgn_size)
+{
+	return size && offset <= rgn_size && size <= rgn_size - offset;
+}
 
 #if IS_ENABLED(CONFIG_CP_PKTPROC)
 extern int pktproc_create(struct platform_device *pdev, struct mem_link_device *mld,

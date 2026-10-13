@@ -752,7 +752,8 @@ int sipc5_init_io_device(struct io_device *iod, struct mem_link_device *mld)
 		txqs = mld->pktproc_ul.num_queue;
 #endif
 #if IS_ENABLED(CONFIG_CP_PKTPROC)
-		rxqs = mld->pktproc.num_queue;
+		/* none without the packet processor in the device tree */
+		rxqs = max(mld->pktproc.num_queue, 1U);
 #endif
 		skb_queue_head_init(&iod->sk_rx_q);
 		INIT_LIST_HEAD(&iod->node_ndev);
