@@ -2,8 +2,8 @@
 /*
  * The exynos_pcie_*() calls CPIF makes into Google's root complex driver,
  * mapped onto the gs201 modem link driver (pcie-gs201-cp). There is one
- * modem link, channel 0. The calls only the left-out parts use (BTL's
- * outbound window, the packet processor's exclusive MSI vectors) fail.
+ * modem link, channel 0. The call only a left-out part uses (BTL's
+ * outbound window) fails.
  */
 
 #include <linux/interrupt.h>
@@ -151,11 +151,13 @@ void exynos_pcie_set_ready_cto_recovery(int ch_num)
 		gs201_pcie_cp_prepare_recovery();
 }
 
-/* The packet processor's exclusive vectors: not ported */
+/* The packet processor's own MSI blocks, one per downlink queue */
 int register_separated_msi_vector(int ch_num, irq_handler_t handler,
 				  void *context, int *irq_num)
 {
-	return -EOPNOTSUPP;
+	return cp_ch_ok(ch_num) ?
+	       gs201_pcie_cp_register_queue(handler, context, irq_num) :
+	       -ENODEV;
 }
 
 /* The target is the link's memory-region; check that both nodes agree. */
