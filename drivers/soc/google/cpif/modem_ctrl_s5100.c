@@ -1036,12 +1036,28 @@ static int power_on_cp(struct modem_ctl *mc)
 	return 0;
 }
 
+/*
+ * Every modem power-off is followed by a recovered UFS error on gs201 here
+ * (MODEM-PLAN.md M2.5), so the modem stays on once it is up: a power-off
+ * request from cbd (IOCTL_POWER_OFF) is refused unless allow_poweroff=1.
+ * Shutdown and crash recovery still power it off, as stock does.
+ */
+static bool allow_poweroff;
+module_param(allow_poweroff, bool, 0644);
+MODULE_PARM_DESC(allow_poweroff, "Let cbd power the modem off (default: off, the modem stays on until shutdown)");
+
 static int power_off_cp(struct modem_ctl *mc)
 {
 	mif_info("%s: +++\n", mc->name);
 
 	if (mc->phone_state == STATE_OFFLINE)
 		goto exit;
+
+	if (!allow_poweroff) {
+		mif_err("%s: power off refused, the modem stays on (allow_poweroff=0)\n",
+			mc->name);
+		goto exit;
+	}
 
 	change_modem_state(mc, STATE_OFFLINE);
 
