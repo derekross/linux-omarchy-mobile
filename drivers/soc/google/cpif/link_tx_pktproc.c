@@ -268,12 +268,16 @@ int pktproc_init_ul(struct pktproc_adaptor_ul *ppa_ul)
 	struct mem_link_device *mld;
 	struct pktproc_info_ul *info;
 
-	mld = container_of(ppa_ul, struct mem_link_device, pktproc_ul);
-
 	if (!ppa_ul) {
 		mif_err("ppa_ul is null\n");
 		return -EPERM;
 	}
+
+	mld = container_of(ppa_ul, struct mem_link_device, pktproc_ul);
+
+	/* Not set up (no pktproc_ul_support): nothing to initialize */
+	if (!pktproc_check_support_ul(ppa_ul))
+		return 0;
 
 	info = (struct pktproc_info_ul *)ppa_ul->info_vbase;
 
@@ -335,14 +339,18 @@ static int pktproc_get_info_ul(struct pktproc_adaptor_ul *ppa_ul,
 {
 	mif_dt_read_u64(np, "pktproc_cp_base", ppa_ul->cp_base);
 	mif_dt_read_u32(np, "pktproc_ul_num_queue", ppa_ul->num_queue);
-	if (ppa_ul->num_queue == 1 && !IS_ENABLED(CONFIG_CP_PKTPROC_UL_SINGLE_QUEUE)) {
-		mif_err("Need to enable UL single queue config for single UL queue\n");
-		panic("Need to enable UL single queue config for single UL queue.\n");
+	if (!ppa_ul->num_queue ||
+	    (ppa_ul->num_queue == 1 && !IS_ENABLED(CONFIG_CP_PKTPROC_UL_SINGLE_QUEUE))) {
+		mif_err("%u UL queues: 2 needed\n", ppa_ul->num_queue);
 		return -EINVAL;
 	}
 	if (ppa_ul->num_queue > PKTPROC_UL_QUEUE_MAX)
 		ppa_ul->num_queue = PKTPROC_UL_QUEUE_MAX;
 	mif_dt_read_u32(np, "pktproc_ul_max_packet_size", ppa_ul->default_max_packet_size);
+	if (!ppa_ul->default_max_packet_size) {
+		mif_err("no max packet size\n");
+		return -EINVAL;
+	}
 	mif_dt_read_u32_noerr(np, "pktproc_ul_hiprio_ack_only", ppa_ul->hiprio_ack_only);
 	mif_dt_read_u32(np, "pktproc_ul_use_hw_iocc", ppa_ul->use_hw_iocc);
 	mif_dt_read_u32(np, "pktproc_ul_info_rgn_cached", ppa_ul->info_rgn_cached);
@@ -384,6 +392,7 @@ int pktproc_create_ul(struct platform_device *pdev, struct mem_link_device *mld,
 	struct pktproc_info_ul *ul_info;
 	u32 buff_size, buff_size_by_q;
 	u32 last_q_desc_offset;
+	unsigned long ul_offset;
 	int i, ret;
 #if IS_ENABLED(CONFIG_EXYNOS_CPIF_IOMMU)
 	u64 temp;
@@ -403,6 +412,8 @@ int pktproc_create_ul(struct platform_device *pdev, struct mem_link_device *mld,
 		mif_info("pktproc_support_ul is 0. Just return\n");
 		return 0;
 	}
+	/* Not advertised to the modem unless everything below succeeds */
+	ppa_ul->support = 0;
 
 	/* Get info */
 	ret = pktproc_get_info_ul(ppa_ul, np);
@@ -431,16 +442,39 @@ int pktproc_create_ul(struct platform_device *pdev, struct mem_link_device *mld,
 	/* Get base addr */
 	mif_info("memaddr:0x%lx memsize:0x%08x\n", memaddr, memsize);
 
-	if (ppa_ul->info_rgn_cached) {
-		ppa_ul->info_vbase = phys_to_virt(memaddr + ppa_ul->info_rgn_offset);
-	} else {
-		ppa_ul->info_vbase = cp_shmem_get_nc_region(memaddr +
-				ppa_ul->info_rgn_offset, ppa_ul->info_rgn_size);
-		if (!ppa_ul->info_vbase) {
-			mif_err("ppa->info_vbase error\n");
-			ret = -ENOMEM;
-			goto create_error;
-		}
+	/*
+	 * The offsets are from the start of the PKTPROC region (memaddr);
+	 * memsize is that of the PKTPROC_UL region, which follows it.
+	 */
+	ul_offset = cp_shmem_get_base(mld->link_dev.mdm_data->cp_num,
+				      SHMEM_PKTPROC_UL);
+	if (!memaddr || ul_offset < memaddr ||
+	    ppa_ul->info_rgn_size < sizeof(struct pktproc_info_ul) ||
+	    ppa_ul->info_rgn_offset < ul_offset - memaddr ||
+	    ppa_ul->desc_rgn_offset < ul_offset - memaddr ||
+	    ppa_ul->buff_rgn_offset < ul_offset - memaddr) {
+		mif_err("UL regions outside the PKTPROC_UL region\n");
+		return -EINVAL;
+	}
+	ul_offset -= memaddr;
+	if (!pktproc_rgn_ok(ppa_ul->info_rgn_offset - ul_offset,
+			    ppa_ul->info_rgn_size, memsize) ||
+	    !pktproc_rgn_ok(ppa_ul->desc_rgn_offset - ul_offset,
+			    ppa_ul->desc_rgn_size, memsize) ||
+	    !pktproc_rgn_ok(ppa_ul->buff_rgn_offset - ul_offset,
+			    ppa_ul->buff_rgn_size, memsize)) {
+		mif_err("UL regions outside the PKTPROC_UL region (0x%08x bytes)\n",
+			memsize);
+		return -EINVAL;
+	}
+
+	ppa_ul->info_vbase = pktproc_map_rgn(memaddr + ppa_ul->info_rgn_offset,
+					     ppa_ul->info_rgn_size,
+					     ppa_ul->info_rgn_cached);
+	if (!ppa_ul->info_vbase) {
+		mif_err("ppa->info_vbase error\n");
+		ret = -ENOMEM;
+		goto create_error;
 	}
 
 #if IS_ENABLED(CONFIG_EXYNOS_CPIF_IOMMU)
@@ -477,16 +511,13 @@ int pktproc_create_ul(struct platform_device *pdev, struct mem_link_device *mld,
 		goto create_error;
 	}
 #endif
-	if (ppa_ul->desc_rgn_cached) {
-		ppa_ul->desc_vbase = phys_to_virt(memaddr + ppa_ul->desc_rgn_offset);
-	} else {
-		ppa_ul->desc_vbase = cp_shmem_get_nc_region(memaddr +
-				ppa_ul->desc_rgn_offset, ppa_ul->desc_rgn_size);
-		if (!ppa_ul->desc_vbase) {
-			mif_err("ppa->desc_vbase error\n");
-			ret = -ENOMEM;
-			goto create_error;
-		}
+	ppa_ul->desc_vbase = pktproc_map_rgn(memaddr + ppa_ul->desc_rgn_offset,
+					     ppa_ul->desc_rgn_size,
+					     ppa_ul->desc_rgn_cached);
+	if (!ppa_ul->desc_vbase) {
+		mif_err("ppa->desc_vbase error\n");
+		ret = -ENOMEM;
+		goto create_error;
 	}
 
 	memset(ppa_ul->info_vbase, 0, ppa_ul->info_rgn_size);
@@ -497,16 +528,12 @@ int pktproc_create_ul(struct platform_device *pdev, struct mem_link_device *mld,
 
 	buff_size = ppa_ul->buff_rgn_size;
 	buff_size_by_q = buff_size / ppa_ul->num_queue;
-	if (ppa_ul->buff_rgn_cached) {
-		ppa_ul->buff_vbase = phys_to_virt(memaddr + ppa_ul->buff_rgn_offset);
-	} else {
-		ppa_ul->buff_vbase = cp_shmem_get_nc_region(memaddr +
-				ppa_ul->buff_rgn_offset, buff_size);
-		if (!ppa_ul->buff_vbase) {
-			mif_err("ppa->buff_vbase error\n");
-			ret = -ENOMEM;
-			goto create_error;
-		}
+	ppa_ul->buff_vbase = pktproc_map_rgn(memaddr + ppa_ul->buff_rgn_offset,
+					     buff_size, ppa_ul->buff_rgn_cached);
+	if (!ppa_ul->buff_vbase) {
+		mif_err("ppa->buff_vbase error\n");
+		ret = -ENOMEM;
+		goto create_error;
 	}
 
 	mif_info("Total buffer size:0x%08x Queue:%d Size by queue:0x%08x\n",
@@ -556,6 +583,11 @@ int pktproc_create_ul(struct platform_device *pdev, struct mem_link_device *mld,
 
 		q->q_buff_size = buff_size_by_q;
 		q->num_desc = buff_size_by_q / q->max_packet_size;
+		if (!q->num_desc) {
+			mif_err("No room for a packet in queue %d\n", i);
+			ret = -EINVAL;
+			goto create_error;
+		}
 		q->q_info->num_desc = q->num_desc;
 		q->desc_ul = ppa_ul->desc_vbase + last_q_desc_offset;
 		q->cp_desc_pbase = ppa_ul->cp_base +
@@ -573,6 +605,7 @@ int pktproc_create_ul(struct platform_device *pdev, struct mem_link_device *mld,
 		if ((last_q_desc_offset + q->desc_size) > ppa_ul->desc_rgn_size) {
 			mif_err("Descriptor overflow. 0x%08x + 0x%08x > 0x%08lx\n",
 				last_q_desc_offset, q->desc_size, ppa_ul->desc_rgn_size);
+			ret = -EINVAL;
 			goto create_error;
 		}
 
@@ -625,18 +658,22 @@ int pktproc_create_ul(struct platform_device *pdev, struct mem_link_device *mld,
 		goto create_error;
 	}
 
+	ppa_ul->support = 1;
 	return 0;
 
 create_error:
-	for (i = 0; i < ppa_ul->num_queue; i++)
+	for (i = 0; i < ppa_ul->num_queue; i++) {
 		kfree(ppa_ul->q[i]);
+		ppa_ul->q[i] = NULL;
+	}
 
-	if (!ppa_ul->info_rgn_cached && ppa_ul->info_vbase)
-		vunmap(ppa_ul->info_vbase);
-	if (!ppa_ul->desc_rgn_cached && ppa_ul->desc_vbase)
-		vunmap(ppa_ul->desc_vbase);
-	if (!ppa_ul->buff_rgn_cached && ppa_ul->buff_vbase)
-		vunmap(ppa_ul->buff_vbase);
+	pktproc_unmap_rgn(ppa_ul->info_vbase);
+	pktproc_unmap_rgn(ppa_ul->desc_vbase);
+	pktproc_unmap_rgn(ppa_ul->buff_vbase);
+	ppa_ul->info_vbase = NULL;
+	ppa_ul->desc_vbase = NULL;
+	ppa_ul->buff_vbase = NULL;
+	ppa_ul->num_queue = 0;
 
 	return ret;
 }

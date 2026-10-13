@@ -179,7 +179,7 @@ static int pktproc_get_pkt_from_ringbuf_mode(struct pktproc_queue *q, struct sk_
 		goto rx_error_on_desc;
 	}
 	src = desc[*q->rear_ptr].cp_data_paddr - q->cp_buff_pbase + q->q_buff_vbase;
-	if ((src < q->q_buff_vbase) || (src > q->q_buff_vbase + q->q_buff_size)) {
+	if ((src < q->q_buff_vbase) || (src + len > q->q_buff_vbase + q->q_buff_size)) {
 		mif_err_limited("Data address is invalid:%pK q_buff_vbase:%pK size:0x%08x\n",
 						src, q->q_buff_vbase, q->q_buff_size);
 		q->stat.err_addr++;
@@ -377,7 +377,8 @@ static int pktproc_fill_data_addr(struct pktproc_queue *q)
 					desc[fore].cp_data_paddr, desc[fore].reserved0,
 					desc[fore].control, desc[fore].status,
 					desc[fore].lro, desc[fore].clat, desc[fore].reserved1);
-			panic("memory poison\n");
+			spin_unlock_irqrestore(&q->lock, flags);
+			return -EFAULT;
 		}
 		*q->fore_ptr = circ_new_ptr(q->num_desc, *q->fore_ptr, 1);
 		fore = circ_new_ptr(q->num_desc, fore, 1);
@@ -580,7 +581,10 @@ static u8 *get_packet_vaddr(struct pktproc_queue *q, struct pktproc_desc_sktbuf 
 		ret = desc->cp_data_paddr - q->cp_buff_pbase +
 				q->q_buff_vbase - ppa->skb_padding_size;
 
-		if ((ret < q->q_buff_vbase) || (ret > q->q_buff_vbase + q->q_buff_size)) {
+		/* the whole packet, not just its start, inside the queue's buffer */
+		if ((ret < q->q_buff_vbase) ||
+		    (ret + ppa->skb_padding_size + desc->length >
+		     q->q_buff_vbase + q->q_buff_size)) {
 			mif_err_limited("Data address is invalid:%pK data:%pK size:0x%08x\n",
 					ret, q->q_buff_vbase, q->q_buff_size);
 			q->stat.err_addr++;
@@ -1727,6 +1731,10 @@ static int pktproc_get_info(struct pktproc_adaptor *ppa, struct device_node *np)
 	case PKTPROC_V2:
 		mif_dt_read_u32(np, "pktproc_dl_desc_mode", ppa->desc_mode);
 		mif_dt_read_u32(np, "pktproc_dl_num_queue", ppa->num_queue);
+		if (!ppa->num_queue) {
+			mif_err("no queues\n");
+			return -EINVAL;
+		}
 		if (ppa->num_queue > PKTPROC_MAX_QUEUE)
 			ppa->num_queue = PKTPROC_MAX_QUEUE;
 #if IS_ENABLED(CONFIG_EXYNOS_CPIF_IOMMU)
@@ -1735,7 +1743,6 @@ static int pktproc_get_info(struct pktproc_adaptor *ppa, struct device_node *np)
 		/* Check if config and dt are consistent  */
 		if(ppa->use_netrx_mng != IS_ENABLED(CONFIG_EXYNOS_CPIF_NETRX_MGR)) {
 			mif_err("netrx mgr config and dt are inconsistent\n");
-			panic("netrx mgr config and dt are inconsistent\n");
 			return -EINVAL;
 		}
 #else
@@ -1771,6 +1778,15 @@ static int pktproc_get_info(struct pktproc_adaptor *ppa, struct device_node *np)
 	mif_dt_read_u32(np, "pktproc_dl_use_dedicated_baaw", ppa->use_dedicated_baaw);
 	mif_info("iocc:%d max_packet_size:%d baaw:%d\n",
 		ppa->use_hw_iocc, ppa->max_packet_size, ppa->use_dedicated_baaw);
+	/* The BAAW window is set up by the secure boot of on-SoC modems only */
+	if (ppa->use_dedicated_baaw) {
+		mif_err("no dedicated BAAW on the PCIe link\n");
+		return -EINVAL;
+	}
+	if (!ppa->max_packet_size) {
+		mif_err("no max packet size\n");
+		return -EINVAL;
+	}
 
 	mif_dt_read_u32(np, "pktproc_dl_info_rgn_offset", ppa->info_rgn_offset);
 	mif_dt_read_u32(np, "pktproc_dl_info_rgn_size", ppa->info_rgn_size);
@@ -1803,7 +1819,6 @@ static int pktproc_get_info(struct pktproc_adaptor *ppa, struct device_node *np)
 	/* Check if config and dt are consistent */
 	if (ppa->use_hw_iocc != IS_ENABLED(CONFIG_LINK_DEVICE_PCIE_IOCC)) {
 		mif_err("PCIe IOCC config and dt are inconsistent\n");
-		panic("PCIe IOCC config and dt are inconsistent\n");
 		return -EINVAL;
 	}
 
@@ -1833,10 +1848,10 @@ int pktproc_create(struct platform_device *pdev, struct mem_link_device *mld,
 
 	ppa->dev = &pdev->dev;
 
+	/* Without it the modem uses the legacy buffers only */
 	mif_dt_read_u32_noerr(np, "pktproc_dl_support", ppa->support);
 	if (!ppa->support) {
-		mif_err("pktproc_support is 0.\n");
-		panic("pktproc_support is 0\n");
+		mif_info("pktproc_dl_support is 0: legacy buffers only\n");
 		return 0;
 	}
 
@@ -1860,26 +1875,29 @@ int pktproc_create(struct platform_device *pdev, struct mem_link_device *mld,
 	/* Get base addr */
 	mif_info("memaddr:0x%lx memsize:0x%08x\n", memaddr, memsize);
 
-	if (ppa->info_rgn_cached)
-		ppa->info_vbase = phys_to_virt(memaddr + ppa->info_rgn_offset);
-	else {
-		ppa->info_vbase = cp_shmem_get_nc_region(memaddr + ppa->info_rgn_offset,
-				ppa->info_rgn_size);
-		if (!ppa->info_vbase) {
-			mif_err("ppa->info_base error\n");
-			return -ENOMEM;
-		}
+	if (!memaddr ||
+	    ppa->info_rgn_size < sizeof(struct pktproc_info_v2) ||
+	    !pktproc_rgn_ok(ppa->info_rgn_offset, ppa->info_rgn_size, memsize) ||
+	    !pktproc_rgn_ok(ppa->desc_rgn_offset, ppa->desc_rgn_size, memsize) ||
+	    (!ppa->use_netrx_mng &&
+	     !pktproc_rgn_ok(ppa->buff_rgn_offset, ppa->buff_rgn_size, memsize))) {
+		mif_err("regions outside the PKTPROC region (0x%08x bytes)\n", memsize);
+		return -EINVAL;
 	}
 
-	if (ppa->desc_rgn_cached)
-		ppa->desc_vbase = phys_to_virt(memaddr + ppa->desc_rgn_offset);
-	else {
-		ppa->desc_vbase = cp_shmem_get_nc_region(memaddr + ppa->desc_rgn_offset,
-				ppa->desc_rgn_size);
-		if (!ppa->desc_vbase) {
-			mif_err("ppa->desc_base error\n");
-			return -ENOMEM;
-		}
+	ppa->info_vbase = pktproc_map_rgn(memaddr + ppa->info_rgn_offset,
+					  ppa->info_rgn_size, ppa->info_rgn_cached);
+	if (!ppa->info_vbase) {
+		mif_err("ppa->info_base error\n");
+		return -ENOMEM;
+	}
+
+	ppa->desc_vbase = pktproc_map_rgn(memaddr + ppa->desc_rgn_offset,
+					  ppa->desc_rgn_size, ppa->desc_rgn_cached);
+	if (!ppa->desc_vbase) {
+		mif_err("ppa->desc_base error\n");
+		ret = -ENOMEM;
+		goto create_error;
 	}
 	memset(ppa->info_vbase, 0, ppa->info_rgn_size);
 	memset(ppa->desc_vbase, 0, ppa->desc_rgn_size);
@@ -1893,17 +1911,12 @@ int pktproc_create(struct platform_device *pdev, struct mem_link_device *mld,
 		buff_size_by_q = rounddown(buff_size_by_q, SZ_4K);
 #endif
 		ppa->buff_pbase = memaddr + ppa->buff_rgn_offset;
-		if (ppa->buff_rgn_cached) {
-			ppa->buff_vbase = phys_to_virt(ppa->buff_pbase);
-#if IS_ENABLED(CONFIG_LINK_DEVICE_PCIE_IOMMU)
-			mif_info("release iommu buffer region offset:0x%08x\n",
-				 ppa->buff_rgn_offset);
-			cp_shmem_release_rmem(mld->link_dev.mdm_data->cp_num,
-					      SHMEM_PKTPROC, ppa->buff_rgn_offset);
-#endif
-		} else {
-			ppa->buff_vbase = cp_shmem_get_nc_region(ppa->buff_pbase,
-								 ppa->buff_rgn_size);
+		ppa->buff_vbase = pktproc_map_rgn(ppa->buff_pbase, ppa->buff_rgn_size,
+						  ppa->buff_rgn_cached);
+		if (!ppa->buff_vbase) {
+			mif_err("ppa->buff_base error\n");
+			ret = -ENOMEM;
+			goto create_error;
 		}
 		mif_info("Total buff buffer size:0x%08x Queue:%d Size by queue:0x%08x\n",
 			 ppa->buff_rgn_size, ppa->num_queue, buff_size_by_q);
@@ -2055,6 +2068,14 @@ int pktproc_create(struct platform_device *pdev, struct mem_link_device *mld,
 			goto create_error;
 		}
 
+		if (!q->num_desc ||
+		    q->desc_size > ppa->desc_rgn_size / ppa->num_queue) {
+			mif_err("Descriptors do not fit:%u 0x%08x\n", q->num_desc,
+				q->desc_size);
+			ret = -EINVAL;
+			goto create_error;
+		}
+
 		if ((!q->manager) &&
 				(q->cp_desc_pbase + q->desc_size) > q->cp_buff_pbase) {
 			mif_err("Descriptor overflow:0x%08llx 0x%08x 0x%08llx\n",
@@ -2072,8 +2093,12 @@ int pktproc_create(struct platform_device *pdev, struct mem_link_device *mld,
 
 		/* NAPI */
 		if (ppa->use_exclusive_irq) {
-			init_dummy_netdev(&q->netdev);
-			netif_napi_add(&q->netdev, &q->napi, pktproc_poll);
+			q->netdev = alloc_netdev_dummy(0);
+			if (!q->netdev) {
+				ret = -ENOMEM;
+				goto create_error;
+			}
+			netif_napi_add(q->netdev, &q->napi, pktproc_poll);
 			napi_enable(&q->napi);
 			q->napi_ptr = &q->napi;
 		} else {
@@ -2145,16 +2170,25 @@ create_error:
 		if (ppa->q[i]->manager)
 			cpif_exit_netrx_mng(ppa->q[i]->manager);
 
+		if (ppa->q[i]->netdev) {
+			napi_disable(&ppa->q[i]->napi);
+			netif_napi_del(&ppa->q[i]->napi);
+			free_netdev(ppa->q[i]->netdev);
+		}
 		kfree(ppa->q[i]->dma_addr);
 		kfree(ppa->q[i]);
+		ppa->q[i] = NULL;
 	}
 
-	if (!ppa->info_rgn_cached && ppa->info_vbase)
-		vunmap(ppa->info_vbase);
-	if (!ppa->desc_rgn_cached && ppa->desc_vbase)
-		vunmap(ppa->desc_vbase);
-	if (!ppa->buff_rgn_cached && ppa->buff_vbase)
-		vunmap(ppa->buff_vbase);
+	pktproc_unmap_rgn(ppa->info_vbase);
+	pktproc_unmap_rgn(ppa->desc_vbase);
+	pktproc_unmap_rgn(ppa->buff_vbase);
+	ppa->info_vbase = NULL;
+	ppa->desc_vbase = NULL;
+	ppa->buff_vbase = NULL;
+	/* the modem must not be told about queues that do not exist */
+	ppa->support = 0;
+	ppa->num_queue = 0;
 
 	return ret;
 }
