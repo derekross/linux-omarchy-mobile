@@ -386,6 +386,8 @@ static int s51xx_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *en
 			driver->name, __func__, mc->pcie_ch_num);
 
 	s51xx_pcie = devm_kzalloc(dev, sizeof(*s51xx_pcie), GFP_KERNEL);
+	if (!s51xx_pcie)
+		return -ENOMEM;
 	s51xx_pcie->s51xx_pdev = pdev;
 	s51xx_pcie->irq_num_base = pdev->irq;
 	s51xx_pcie->link_status = 1;
@@ -425,6 +427,22 @@ static int s51xx_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *en
 	dev_info(&bus_self->dev, "[%s] BAR %d: tmp rsc : %pR\n", __func__, resno, tmp_rsc);
 	s51xx_pcie->dbaddr_base = tmp_rsc->start;
 
+	/*
+	 * The doorbell is BAR0 + offset, reached through the root port's
+	 * memory window, which must therefore be assigned and contain it.
+	 * Stock maps whatever the sum gives; with an unassigned window that
+	 * is a low physical address, and every doorbell would write it.
+	 */
+	if (!(resource_type(tmp_rsc) & IORESOURCE_MEM) || !tmp_rsc->start ||
+	    tmp_rsc->flags & IORESOURCE_UNSET ||
+	    s51xx_pcie->dbaddr_base + s51xx_pcie->dbaddr_offset + SZ_4 - 1 > tmp_rsc->end) {
+		dev_err(dev, "doorbell base %#llx + %#x outside the bridge window %pR: not mapped\n",
+			(unsigned long long)s51xx_pcie->dbaddr_base,
+			s51xx_pcie->dbaddr_offset, tmp_rsc);
+		mc->s51xx_pdev = NULL;
+		return -ENODEV;
+	}
+
 	mif_info("Set Doorbell register address.\n");
 	s51xx_pcie->doorbell_addr = devm_ioremap(&pdev->dev,
 			s51xx_pcie->dbaddr_base + s51xx_pcie->dbaddr_offset, SZ_4);
@@ -440,8 +458,11 @@ static int s51xx_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *en
 		s51xx_pcie->doorbell_addr, (unsigned long)s51xx_pcie->dbaddr_base,
 					(unsigned long)s51xx_pcie->dbaddr_offset);
 
-	if (s51xx_pcie->doorbell_addr == NULL)
+	if (s51xx_pcie->doorbell_addr == NULL) {
 		mif_err("Can't ioremap doorbell address!!!\n");
+		mc->s51xx_pdev = NULL;
+		return -ENOMEM;
+	}
 
 	mif_info("Register PCIE notification LINKDOWN, CPL_TIMEOUT and LINKDOWN_RECOVERY_FAIL events...\n");
 	s51xx_pcie->pcie_event.events =
