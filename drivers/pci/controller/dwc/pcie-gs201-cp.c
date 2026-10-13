@@ -11,7 +11,9 @@
  *    Google's device tree): Linux asks for it with an SMC and then reaches
  *    the endpoint's configuration space through the fixed config window;
  *  - two lanes, Gen1 for the ROM, Gen3 later;
- *  - MSI to a fixed target in the modem's shared memory (the "bus" step).
+ *  - MSI to a fixed target in the modem's shared memory (the "bus" step):
+ *    block 0 through the DWC MSI domain, blocks 1-4 one per packet queue
+ *    of the modem driver, as Google's "separated" MSI.
  *
  * Sequences from Google's GPL driver for gs201
  * (google-modules/soc/gs/drivers/pci/controller/dwc-whi/pcie-exynos-rc.c:
@@ -149,6 +151,9 @@ MODULE_PARM_DESC(watch_lines, "Log every edge on the modem's cp2ap lines, with i
 #define CP_L2_POLL_US			10
 #define CP_L2_TIMEOUT_US		20000
 
+/* MSI blocks 1..4 (the GIC SPIs "msi1".."msi4"): one per packet queue */
+#define CP_MSI_QUEUES			4
+
 /* LTSSM states (DesignWare) in which the link counts as up for the client */
 #define CP_LTSSM_RCVRY_LOCK		0x0d
 #define CP_LTSSM_L1_IDLE		0x14
@@ -217,6 +222,13 @@ struct gs201_pcie_cp {
 	bool atu_done;
 	bool msi_ready;		/* MSI domain and chained handlers set up */
 	bool msi_irqs_on;	/* their parent interrupts enabled */
+	struct gs201_pcie_cp_queue {	/* MSI blocks 1..CP_MSI_QUEUES */
+		struct gs201_pcie_cp *cp;
+		unsigned int block;
+		int irq;		/* "msi<block>", requested at probe */
+		irq_handler_t handler;	/* the modem driver's, once registered */
+		void *ctx;
+	} queue[CP_MSI_QUEUES];
 	int ctrl_irq;		/* controller events: link down, CPL timeout */
 	bool ctrl_irq_on;
 	spinlock_t event_lock;	/* faults, event_pending, client */
@@ -426,34 +438,123 @@ static struct pci_ops cp_child_ops = {
 
 /*
  * MSI: the DWC iMSI-RX block, one GIC SPI per block of 32 vectors
- * ("msi0".."msi4", Google's "separated" MSI), aimed at the modem's MSI
- * page as Google's driver does (exynos_pcie_set_msi_ctrl_addr()). The
- * modem writes its boot stage into the same page, so it is reserved RAM.
- * The chained handlers read DBI, so their parent interrupts are disabled
- * before the PHY goes back into isolation and enabled again after the next
- * link_up.
+ * ("msi0".."msi4"), aimed at the modem's MSI page as Google's driver does
+ * (exynos_pcie_set_msi_ctrl_addr()). The modem writes its boot stage into
+ * the same page, so it is reserved RAM.
+ *
+ * As in Google's driver for this link ("separated" MSI,
+ * register_separated_msi_vector()), only block 0 is an MSI domain, for the
+ * modem's PCI function; blocks 1-4 each belong to one packet queue of the
+ * modem driver, which the modem signals with that block's vectors. Their
+ * interrupts are this driver's, and call the queue's handler.
+ *
+ * The handlers read DBI, so the parent interrupts are disabled before the
+ * PHY goes back into isolation and enabled again after the next link_up.
  */
 static void cp_msi_irqs(struct gs201_pcie_cp *cp, bool on)
 {
 	struct dw_pcie_rp *pp = &cp->pci.pp;
 	unsigned int i;
+	int irq;
 
 	if (!cp->msi_ready || cp->msi_irqs_on == on)
 		return;
-	for (i = 0; i < MAX_MSI_CTRLS; i++) {
-		if (pp->msi_irq[i] <= 0)
+	for (i = 0; i < MAX_MSI_CTRLS + CP_MSI_QUEUES; i++) {
+		irq = i < MAX_MSI_CTRLS ? pp->msi_irq[i] :
+					  cp->queue[i - MAX_MSI_CTRLS].irq;
+		if (irq <= 0)
 			continue;
 		if (on)
-			enable_irq(pp->msi_irq[i]);
+			enable_irq(irq);
 		else
-			disable_irq(pp->msi_irq[i]);
+			disable_irq(irq);
 	}
 	cp->msi_irqs_on = on;
 }
 
+static irqreturn_t cp_queue_irq_handler(int irq, void *data)
+{
+	struct gs201_pcie_cp_queue *q = data;
+	struct gs201_pcie_cp *cp = q->cp;
+	u32 reg = PCIE_MSI_INTR0_STATUS + q->block * MSI_REG_CTRL_BLOCK_SIZE;
+	irq_handler_t handler;
+	u32 status;
+
+	status = dw_pcie_readl_dbi(&cp->pci, reg);
+	if (!status)
+		return IRQ_NONE;
+	dw_pcie_writel_dbi(&cp->pci, reg, status);
+
+	/* Google's queues use vector 0 of their block: note anything else */
+	if (status & ~BIT(0))
+		dev_warn_ratelimited(cp->dev, "MSI block %u status %#x\n",
+				     q->block, status);
+
+	handler = smp_load_acquire(&q->handler);	/* after ctx */
+	if (handler)
+		handler(irq, q->ctx);
+
+	return IRQ_HANDLED;
+}
+
+/* Blocks 1-4: on for a registered queue, off otherwise */
+static void cp_msi_queue_init(struct gs201_pcie_cp *cp,
+			      struct gs201_pcie_cp_queue *q)
+{
+	u32 off = q->block * MSI_REG_CTRL_BLOCK_SIZE;
+	bool on = q->handler;
+
+	dw_pcie_writel_dbi(&cp->pci, PCIE_MSI_INTR0_MASK + off, on ? 0 : ~0);
+	dw_pcie_writel_dbi(&cp->pci, PCIE_MSI_INTR0_ENABLE + off, on ? ~0 : 0);
+}
+
+/*
+ * At probe, disabled: they are enabled with block 0's chained handler when
+ * MSI is first set up after a link_up, and follow it from then on.
+ */
+static int cp_msi_queues_request(struct gs201_pcie_cp *cp)
+{
+	struct platform_device *pdev = to_platform_device(cp->dev);
+	struct gs201_pcie_cp_queue *q;
+	char name[] = "msiX";
+	unsigned int i;
+	int irq, ret;
+
+	for (i = 0; i < CP_MSI_QUEUES; i++) {
+		q = &cp->queue[i];
+		q->cp = cp;
+		q->block = i + 1;
+		name[3] = '0' + q->block;
+		irq = platform_get_irq_byname_optional(pdev, name);
+		if (irq == -ENXIO)
+			break;
+		if (irq < 0)
+			return irq;
+		ret = devm_request_irq(cp->dev, irq, cp_queue_irq_handler,
+				       IRQF_NO_AUTOEN, dev_name(cp->dev), q);
+		if (ret)
+			return ret;
+		q->irq = irq;
+	}
+
+	return 0;
+}
+
+static unsigned int cp_msi_queue_count(struct gs201_pcie_cp *cp)
+{
+	unsigned int i, n = 0;
+
+	for (i = 0; i < CP_MSI_QUEUES; i++)
+		n += cp->queue[i].irq > 0;
+
+	return n;
+}
+
 static int cp_msi_setup(struct gs201_pcie_cp *cp)
 {
+	struct platform_device *pdev = to_platform_device(cp->dev);
 	struct dw_pcie_rp *pp = &cp->pci.pp;
+	unsigned int i;
 	int ret;
 
 	if (!cp->msi_page.start) {
@@ -463,16 +564,28 @@ static int cp_msi_setup(struct gs201_pcie_cp *cp)
 	if (!cp->msi_ready) {
 		raw_spin_lock_init(&pp->lock);
 		pp->use_imsi_rx = true;
+		/* The domain gets block 0 only; blocks 1-4 are the queues' */
+		ret = platform_get_irq_byname(pdev, "msi0");
+		if (ret < 0)
+			return ret;
+		pp->msi_irq[0] = ret;
+		pp->num_vectors = MAX_MSI_IRQS_PER_CTRL;
 		ret = dw_pcie_msi_host_init(pp);	/* handlers on, enabled */
 		if (ret)
 			return ret;
+		for (i = 0; i < CP_MSI_QUEUES; i++)
+			if (cp->queue[i].irq > 0)
+				enable_irq(cp->queue[i].irq);
 		pp->msi_data = cp->msi_page.start;
 		cp->msi_ready = true;
 		cp->msi_irqs_on = true;
-		dev_info(cp->dev, "MSI: %u vectors, target %pa\n",
-			 pp->num_vectors, &pp->msi_data);
+		dev_info(cp->dev, "MSI: %u vectors, target %pa, %u queue blocks\n",
+			 pp->num_vectors, &pp->msi_data, cp_msi_queue_count(cp));
 	}
 	dw_pcie_msi_init(pp);	/* the controller reset cleared these */
+	for (i = 0; i < CP_MSI_QUEUES; i++)
+		if (cp->queue[i].irq > 0)
+			cp_msi_queue_init(cp, &cp->queue[i]);
 	cp_msi_irqs(cp, true);
 
 	return 0;
@@ -1044,6 +1157,61 @@ int gs201_pcie_cp_check_msi_addr(u64 addr)
 EXPORT_SYMBOL_GPL(gs201_pcie_cp_check_msi_addr);
 
 /**
+ * gs201_pcie_cp_register_queue() - give a packet queue its own MSI block
+ * @handler: called from the block's interrupt, with @ctx
+ * @ctx: the queue
+ * @irq: set to the block's interrupt, which the caller may enable, disable
+ *	and set the affinity of (each disable needing its enable)
+ *
+ * As Google's register_separated_msi_vector(): the queues get blocks 1-4
+ * in the order they register, and the modem signals queue n with block
+ * n + 1. The block is armed now if the link is up, and at every link_up.
+ * Registrations last until the driver is unbound.
+ *
+ * Return: the block's first MSI data value (32 per block), -EBUSY when all
+ * blocks are taken, -EAGAIN before MSI was set up, or -ENODEV.
+ */
+int gs201_pcie_cp_register_queue(irq_handler_t handler, void *ctx, int *irq)
+{
+	struct gs201_pcie_cp *cp = cp_get();
+	struct gs201_pcie_cp_queue *q = NULL;
+	unsigned int i;
+	int ret;
+
+	if (!cp)
+		return -ENODEV;
+	if (!handler || !irq) {
+		ret = -EINVAL;
+		goto out;
+	}
+	if (!cp->msi_ready) {
+		ret = -EAGAIN;
+		goto out;
+	}
+	for (i = 0; i < CP_MSI_QUEUES && !q; i++)
+		if (cp->queue[i].irq > 0 && !cp->queue[i].handler)
+			q = &cp->queue[i];
+	if (!q) {
+		ret = -EBUSY;
+		goto out;
+	}
+
+	q->ctx = ctx;
+	/* the interrupt handler reads ctx once it sees the handler */
+	smp_store_release(&q->handler, handler);
+	if (cp->link_up)
+		cp_msi_queue_init(cp, q);
+	*irq = q->irq;
+	ret = q->block * MAX_MSI_IRQS_PER_CTRL;
+	dev_info(cp->dev, "MSI block %u: packet queue %u\n", q->block,
+		 q->block - 1);
+out:
+	cp_put(cp);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(gs201_pcie_cp_register_queue);
+
+/**
  * gs201_pcie_cp_set_perst_level() - drive PERST# to a raw level
  * @level: 1 releases the modem's PCIe reset, 0 asserts it
  *
@@ -1273,7 +1441,7 @@ static const struct file_operations cp_ctl_fops = {
 static int cp_status_show(struct seq_file *s, void *unused)
 {
 	struct gs201_pcie_cp *cp = s->private;
-	unsigned int i, iso = 0;
+	unsigned int i, iso = 0, reg;
 
 	mutex_lock(&cp->lock);
 	if (!cp->has_lines)
@@ -1294,6 +1462,12 @@ static int cp_status_show(struct seq_file *s, void *unused)
 		   cp->atu_done);
 	seq_printf(s, "faults: %#x, ctrl irq %s\n", READ_ONCE(cp->faults),
 		   cp->ctrl_irq_on ? "on" : "off");
+	for (i = 0, reg = 0; i < CP_MSI_QUEUES; i++)
+		if (cp->queue[i].handler)
+			reg |= BIT(cp->queue[i].block);
+	seq_printf(s, "MSI %s, irqs %s, queue blocks %u, registered %#x\n",
+		   cp->msi_ready ? "ready" : "not set up",
+		   cp->msi_irqs_on ? "on" : "off", cp_msi_queue_count(cp), reg);
 	if (cp->phy_inited)
 		seq_printf(s, "LTSSM %#lx, IRQ0/1/2 %#x %#x %#x\n",
 			   FIELD_GET(CP_ELBI_LTSSM_MASK,
@@ -1489,6 +1663,10 @@ static int gs201_pcie_cp_probe(struct platform_device *pdev)
 	} else {
 		dev_warn(dev, "no ctrl interrupt: link faults are not reported\n");
 	}
+
+	ret = cp_msi_queues_request(cp);
+	if (ret)
+		return dev_err_probe(dev, ret, "MSI queue interrupts\n");
 
 	ret = cp_get_lines(cp);
 	if (ret)

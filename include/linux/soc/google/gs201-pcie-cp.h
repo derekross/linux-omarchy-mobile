@@ -11,6 +11,7 @@
 
 #include <linux/bits.h>
 #include <linux/errno.h>
+#include <linux/interrupt.h>
 #include <linux/types.h>
 
 /* Link faults, reported to the registered client and kept until cleared */
@@ -34,6 +35,7 @@ int gs201_pcie_cp_poweron(unsigned int speed);
 void gs201_pcie_cp_poweroff(void);
 bool gs201_pcie_cp_link_ok(void);
 int gs201_pcie_cp_check_msi_addr(u64 addr);
+int gs201_pcie_cp_register_queue(irq_handler_t handler, void *ctx, int *irq);
 void gs201_pcie_cp_set_perst_level(int level);
 int gs201_pcie_cp_l1ss(bool enable);
 int gs201_pcie_cp_register_event(struct gs201_pcie_cp_event *ev);
@@ -48,6 +50,12 @@ static inline int gs201_pcie_cp_poweron(unsigned int speed) { return -ENODEV; }
 static inline void gs201_pcie_cp_poweroff(void) { }
 static inline bool gs201_pcie_cp_link_ok(void) { return false; }
 static inline int gs201_pcie_cp_check_msi_addr(u64 addr) { return -ENODEV; }
+static inline int gs201_pcie_cp_register_queue(irq_handler_t handler,
+					       void *ctx, int *irq)
+{
+	return -ENODEV;
+}
+
 static inline void gs201_pcie_cp_set_perst_level(int level) { }
 static inline int gs201_pcie_cp_l1ss(bool enable) { return -ENODEV; }
 static inline int gs201_pcie_cp_register_event(struct gs201_pcie_cp_event *ev)
