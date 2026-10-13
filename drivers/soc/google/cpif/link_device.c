@@ -3156,8 +3156,8 @@ static int parse_ect(struct mem_link_device *mld, char *dvfs_domain_name)
 
 static int shmem_rx_setup(struct link_device *ld)
 {
-	ld->rx_wq = alloc_workqueue(
-			"mem_rx_work", WQ_HIGHPRI | WQ_CPU_INTENSIVE, 1);
+	ld->rx_wq = alloc_workqueue("mem_rx_work",
+				    WQ_PERCPU | WQ_HIGHPRI | WQ_CPU_INTENSIVE, 1);
 	if (!ld->rx_wq) {
 		mif_err("%s: ERR! fail to create rx_wq\n", ld->name);
 		return -ENOMEM;
