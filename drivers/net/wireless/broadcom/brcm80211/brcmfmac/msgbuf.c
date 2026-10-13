@@ -1565,6 +1565,8 @@ int brcmf_proto_msgbuf_h2d_mb_data(struct device *dev, u32 data)
 	memset(mb_data, 0, sizeof(*mb_data));
 	mb_data->msg.msgtype = MSGBUF_TYPE_H2D_MAILBOX_DATA;
 	mb_data->mb_data = cpu_to_le32(data);
+	brcmf_msgbuf_set_epoch(msgbuf, BRCMF_H2D_MSGRING_CONTROL_SUBMIT,
+			       &mb_data->msg);
 	err = brcmf_commonring_write_complete(commonring);
 	brcmf_commonring_unlock(commonring);
 
