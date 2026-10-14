@@ -830,6 +830,33 @@ static int request_pcie_int(struct link_device *ld, struct platform_device *pdev
 	return base_irq;
 }
 
+/*
+ * Undo request_pcie_int() for the endpoint's own MSI vectors, which go
+ * with the endpoint: s51xx_pcie_remove() calls this before it gives them
+ * back. The packet queues' vectors are the controller's and stay.
+ */
+void s5100_free_pcie_int(struct modem_ctl *mc)
+{
+	struct link_device *ld = mc->iod ? get_current_link(mc->iod) : NULL;
+	struct mem_link_device *mld;
+	int irq;
+
+	if (!ld)
+		return;
+	mld = to_mem_link_device(ld);
+	irq = mld->msi_irq_base;
+	if (!irq)
+		return;
+
+	if (mld->msi_irq_base_wake) {
+		disable_irq_wake(irq);
+		mld->msi_irq_base_wake = false;
+	}
+	devm_free_irq(mc->dev, irq + 1, mld);	/* mif_cp2ap_status */
+	devm_free_irq(mc->dev, irq, mld);	/* mif_cp2ap_msg */
+	mld->msi_irq_base = 0;
+}
+
 static int register_pcie(struct link_device *ld)
 {
 	struct modem_ctl *mc = ld->mc;
