@@ -577,8 +577,6 @@ static void s51xx_pcie_remove(struct pci_dev *pdev)
 
 	if (s51xx_pcie->pci_saved_configs)
 		kfree(s51xx_pcie->pci_saved_configs);
-
-	pci_release_regions(pdev);
 }
 
 /*
