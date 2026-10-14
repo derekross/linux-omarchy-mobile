@@ -20,10 +20,14 @@ description:
 
 properties:
   compatible:
-    enum:
-      - google,gs201-decon
-      - google,zuma-decon
-      - google,zumapro-decon
+    oneOf:
+      - enum:
+          - google,gs201-decon
+          - google,zuma-decon
+          - google,zumapro-decon
+      - items:
+          - const: google,gs101-decon
+          - const: google,gs201-decon
 
   reg:
     items:
