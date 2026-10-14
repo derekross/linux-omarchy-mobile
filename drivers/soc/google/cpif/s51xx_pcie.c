@@ -557,8 +557,23 @@ void print_msi_register(struct pci_dev *pdev)
 static void s51xx_pcie_remove(struct pci_dev *pdev)
 {
 	struct s51xx_pcie *s51xx_pcie = pci_get_drvdata(pdev);
+	struct pci_driver *driver = pdev->driver;
+	struct modem_ctl *mc = container_of(driver, struct modem_ctl, pci_driver);
 
 	mif_err("s51xx PCIe Remove!!!\n");
+
+	/*
+	 * The MSI vectors are the endpoint's: its per-device MSI domain goes
+	 * when the driver core releases the device's resources, right after
+	 * this, and must be empty by then. Free the handlers on them, then the
+	 * vectors. With the link down the PCI core's config writes and the
+	 * controller's DBI writes are dropped by the host driver.
+	 */
+	s5100_free_pcie_int(mc);
+	pci_free_irq_vectors(pdev);
+
+	/* the pci_dev goes with the bus: nothing may use it after this */
+	mc->s51xx_pdev = NULL;
 
 	if (s51xx_pcie->pci_saved_configs)
 		kfree(s51xx_pcie->pci_saved_configs);
