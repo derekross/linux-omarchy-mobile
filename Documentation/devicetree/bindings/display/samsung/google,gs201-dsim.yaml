@@ -21,7 +21,12 @@ allOf:
 
 properties:
   compatible:
-    const: google,gs201-dsim
+    oneOf:
+      - const: google,gs201-dsim
+      - items:
+          - enum:
+              - google,gs101-dsim
+          - const: google,gs201-dsim
 
   reg:
     minItems: 1
