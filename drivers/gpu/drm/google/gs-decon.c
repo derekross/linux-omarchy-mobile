@@ -301,6 +301,8 @@ struct gs_decon {
 
 	/* optional ACPM DVFS domains, floors at 120 Hz */
 	struct clk *mif;
+	/* MIF before any 120 Hz floor, put back when the floor goes */
+	unsigned long mif_rest;
 	struct clk *disp;
 
 	/* the link and panel, for rate switching; NULL: 60 Hz only */
@@ -675,6 +677,17 @@ static void gs_decon_set_floors(struct gs_decon *dc, unsigned int hz)
 	ret = clk_set_min_rate(dc->disp, high ? GS_DECON_DISP_FLOOR_HZ : 0);
 	if (ret)
 		dev_warn(dc->dev, "DISP floor for %u Hz: %d\n", hz, ret);
+
+	/*
+	 * Nothing else votes on MIF yet, so without this it would stay at the
+	 * 120 Hz floor after every 120 Hz stint, screen off included.
+	 */
+	if (!high && dc->mif_rest && clk_get_rate(dc->mif) > dc->mif_rest) {
+		ret = clk_set_rate(dc->mif, dc->mif_rest);
+		if (ret)
+			dev_warn(dc->dev, "MIF back to %lu Hz: %d\n",
+				 dc->mif_rest, ret);
+	}
 
 	if (high)
 		dev_dbg(dc->dev, "MIF %lu Hz, DISP %lu Hz\n",
@@ -1438,6 +1451,8 @@ static int gs_decon_probe(struct platform_device *pdev)
 	dc->disp = devm_clk_get_optional(dev, "disp");
 	if (IS_ERR(dc->disp))
 		return dev_err_probe(dev, PTR_ERR(dc->disp), "disp clock\n");
+	if (dc->mif)
+		dc->mif_rest = clk_get_rate(dc->mif);
 	if (dc->mif)
 		dev_info(dev, "MIF at %lu Hz\n", clk_get_rate(dc->mif));
 	if (dc->disp)
