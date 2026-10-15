@@ -48,6 +48,10 @@
 	};
 };
 
+&acpm_tmu {
+	status = "okay";
+};
+
 &cont_splash_mem {
 	reg = <0x0 0xfac00000 (1440 * 3120 * 4)>;
 
