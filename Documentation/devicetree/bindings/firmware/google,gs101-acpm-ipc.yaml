@@ -73,6 +73,25 @@ properties:
     type: object
     additionalProperties: true
 
+  thermal-sensor:
+    description:
+      The SoC's thermal sensors, which the ACPM firmware reads on the
+      kernel's behalf. Cells are the sensor index (0 big, 1 mid, 2 little
+      CPU cluster, 3 GPU, 4 ISP, 5 TPU).
+    type: object
+    $ref: /schemas/thermal/thermal-sensor.yaml#
+    unevaluatedProperties: false
+
+    properties:
+      compatible:
+        const: google,gs101-acpm-tmu
+
+      "#thermal-sensor-cells":
+        const: 1
+
+    required:
+      - compatible
+
   shmem:
     description:
       List of phandle pointing to the shared memory (SHM) area. The memory
