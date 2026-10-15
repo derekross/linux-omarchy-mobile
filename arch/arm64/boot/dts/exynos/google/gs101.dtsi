@@ -1832,6 +1832,125 @@
 			};
 		};
 
+		/*
+		 * Power domains, from Google's gs101-pm-domains.dtsi: only those
+		 * Linux does not use yet, so that genpd powers them off at boot
+		 * (the bootloader leaves all of them on). Through the PMU regmap.
+		 */
+		pd_aoc: power-domain@17461880 {
+			compatible = "google,gs101-pd";
+			reg = <0x17461880 0x20>;
+			#power-domain-cells = <0>;
+			label = "aoc";
+			status = "disabled";
+		};
+
+		pd_g2d: power-domain@17462300 {
+			compatible = "google,gs101-pd";
+			reg = <0x17462300 0x20>;
+			#power-domain-cells = <0>;
+			label = "g2d";
+			status = "disabled";
+		};
+
+		pd_mfc: power-domain@17462380 {
+			compatible = "google,gs101-pd";
+			reg = <0x17462380 0x20>;
+			#power-domain-cells = <0>;
+			label = "mfc";
+			status = "disabled";
+		};
+
+		pd_csis: power-domain@17462400 {
+			compatible = "google,gs101-pd";
+			reg = <0x17462400 0x20>;
+			#power-domain-cells = <0>;
+			label = "csis";
+			status = "disabled";
+		};
+
+		pd_pdp: power-domain@17462480 {
+			compatible = "google,gs101-pd";
+			reg = <0x17462480 0x20>;
+			#power-domain-cells = <0>;
+			label = "pdp";
+			status = "disabled";
+		};
+
+		pd_dns: power-domain@17462500 {
+			compatible = "google,gs101-pd";
+			reg = <0x17462500 0x20>;
+			#power-domain-cells = <0>;
+			label = "dns";
+			power-domains = <&pd_itp>;
+			status = "disabled";
+		};
+
+		pd_g3aa: power-domain@17462580 {
+			compatible = "google,gs101-pd";
+			reg = <0x17462580 0x20>;
+			#power-domain-cells = <0>;
+			label = "g3aa";
+			status = "disabled";
+		};
+
+		pd_ipp: power-domain@17462600 {
+			compatible = "google,gs101-pd";
+			reg = <0x17462600 0x20>;
+			#power-domain-cells = <0>;
+			label = "ipp";
+			power-domains = <&pd_pdp>;
+			status = "disabled";
+		};
+
+		pd_itp: power-domain@17462680 {
+			compatible = "google,gs101-pd";
+			reg = <0x17462680 0x20>;
+			#power-domain-cells = <0>;
+			label = "itp";
+			status = "disabled";
+		};
+
+		pd_mcsc: power-domain@17462700 {
+			compatible = "google,gs101-pd";
+			reg = <0x17462700 0x20>;
+			#power-domain-cells = <0>;
+			label = "mcsc";
+			status = "disabled";
+		};
+
+		pd_gdc: power-domain@17462780 {
+			compatible = "google,gs101-pd";
+			reg = <0x17462780 0x20>;
+			#power-domain-cells = <0>;
+			label = "gdc";
+			status = "disabled";
+		};
+
+		pd_tnr: power-domain@17462800 {
+			compatible = "google,gs101-pd";
+			reg = <0x17462800 0x20>;
+			#power-domain-cells = <0>;
+			label = "tnr";
+			status = "disabled";
+		};
+
+		pd_bo: power-domain@17462880 {
+			compatible = "google,gs101-pd";
+			reg = <0x17462880 0x20>;
+			#power-domain-cells = <0>;
+			label = "bo";
+			status = "disabled";
+		};
+
+		pd_tpu: power-domain@17462900 {
+			compatible = "google,gs101-pd";
+			reg = <0x17462900 0x20>;
+			#power-domain-cells = <0>;
+			label = "tpu";
+			status = "disabled";
+		};
+
 		pmu_intr_gen: syscon@17470000 {
 			compatible = "google,gs101-pmu-intr-gen", "syscon";
 			reg = <0x17470000 0x10000>;
