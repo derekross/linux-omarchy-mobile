@@ -8,6 +8,7 @@
 
 /dts-v1/;
 
+#include <dt-bindings/leds/common.h>
 #include "gs101-pixel-common.dtsi"
 
 / {
@@ -296,4 +297,33 @@
 &pmic {
 	/* for the charger cell */
 	monitored-battery = <&battery>;
+};
+
+/*
+ * Rear flash LED: TI LM3644 at 0x63 on PERIC0 USI7 (Google's I2C bus 7, also
+ * the cameras' bus), HWEN on gpp23-6, as stock's raven device tree
+ * describes it. Stock drives it from the camera HAL through LWIS; torch only
+ * here, with cheetah's bring-up cap (not a stock value).
+ */
+&usi7 {
+	samsung,mode = <USI_MODE_I2C>;
+	status = "okay";
+};
+
+&hsi2c_7 {
+	clock-frequency = <370000>;
+	status = "okay";
+
+	led-controller@63 {
+		compatible = "ti,lm3644";
+		reg = <0x63>;
+		enable-gpios = <&gpp23 6 GPIO_ACTIVE_HIGH>;
+
+		led {
+			function = LED_FUNCTION_TORCH;
+			color = <LED_COLOR_ID_WHITE>;
+			led-sources = <1 2>;
+			led-max-microamp = <50000>;
+		};
+	};
 };
