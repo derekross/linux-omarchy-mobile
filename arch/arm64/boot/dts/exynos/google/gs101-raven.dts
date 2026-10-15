@@ -76,6 +76,10 @@
 	};
 };
 
+&acpm_tmu {
+	status = "okay";
+};
+
 /* Unused blocks the bootloader leaves powered: genpd turns them off */
 &pd_g2d {
 	status = "okay";
