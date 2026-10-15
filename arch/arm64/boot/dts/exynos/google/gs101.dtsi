@@ -1863,6 +1863,36 @@
 			};
 		};
 
+		/* APM USI1: a UART-only USI, wired to Bluetooth on Pixel 6 devices */
+		usi_apm1: usi@175b00c0 {
+			compatible = "google,gs101-usi", "samsung,exynos850-usi";
+			reg = <0x175b00c0 0x20>;
+			ranges;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			clocks = <&cmu_apm CLK_GOUT_APM_APM_USI1_UART_PCLK>,
+				 <&cmu_apm CLK_GOUT_APM_APM_USI1_UART_IPCLK>;
+			clock-names = "pclk", "ipclk";
+			samsung,sysreg = <&sysreg_apm 0x4e4>;
+			samsung,mode = <USI_MODE_UART>;
+			/* UART Rx needs the IP clock while idle */
+			samsung,clkreq-on;
+			status = "disabled";
+
+			serial_apm1: serial@175b0000 {
+				compatible = "google,gs101-uart";
+				reg = <0x175b0000 0xc0>;
+				clocks = <&cmu_apm CLK_GOUT_APM_APM_USI1_UART_PCLK>,
+					 <&cmu_apm CLK_GOUT_APM_APM_USI1_UART_IPCLK>;
+				clock-names = "uart", "clk_uart_baud0";
+				interrupts = <GIC_SPI 69 IRQ_TYPE_LEVEL_HIGH 0>;
+				pinctrl-0 = <&uart16_bus>;
+				pinctrl-names = "default";
+				samsung,uart-fifosize = <256>;
+				status = "disabled";
+			};
+		};
+
 		ap2apm_mailbox: mailbox@17610000 {
 			compatible = "google,gs101-mbox";
 			reg = <0x17610000 0x1000>;
