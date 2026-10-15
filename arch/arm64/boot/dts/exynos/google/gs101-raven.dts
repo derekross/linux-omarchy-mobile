@@ -26,7 +26,7 @@
 		 * panic is silent: panic=10 reboots instead of hanging. init hands
 		 * over to the Arch root on userdata when it finds one.
 		 */
-		bootargs = "console=tty0 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init";
+		bootargs = "console=tty0 panic=10 clk_ignore_unused rdinit=/init";
 	};
 };
 
@@ -46,6 +46,63 @@
 			};
 		};
 	};
+};
+
+/* Unused blocks the bootloader leaves powered: genpd turns them off */
+&pd_aoc {
+	status = "okay";
+};
+
+&pd_g2d {
+	status = "okay";
+};
+
+&pd_mfc {
+	status = "okay";
+};
+
+&pd_csis {
+	status = "okay";
+};
+
+&pd_pdp {
+	status = "okay";
+};
+
+&pd_dns {
+	status = "okay";
+};
+
+&pd_g3aa {
+	status = "okay";
+};
+
+&pd_ipp {
+	status = "okay";
+};
+
+&pd_itp {
+	status = "okay";
+};
+
+&pd_mcsc {
+	status = "okay";
+};
+
+&pd_gdc {
+	status = "okay";
+};
+
+&pd_tnr {
+	status = "okay";
+};
+
+&pd_bo {
+	status = "okay";
+};
+
+&pd_tpu {
+	status = "okay";
 };
 
 &cont_splash_mem {
