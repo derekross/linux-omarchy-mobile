@@ -2070,6 +2070,48 @@
 			clocks = <&cmu_dpu CLK_GOUT_DPU_SYSREG_DPU_PCLK>;
 		};
 
+		/*
+		 * The display pipeline as the bootloader leaves it running:
+		 * DECON0 in DSI command mode, scanning out through the DPP0
+		 * read DMA, into DSIM0 (Google's gs101-drm-dpu.dtsi). No
+		 * power-domains: nothing may power the DPU down under DECON.
+		 */
+		decon0: display-controller@1c300000 {
+			compatible = "google,gs101-decon", "google,gs201-decon";
+			reg = <0x1c300000 0x6000>, <0x1c0b0000 0x1000>;
+			reg-names = "main", "dma";
+			interrupts = <GIC_SPI 338 IRQ_TYPE_LEVEL_HIGH 0>,
+				     <GIC_SPI 337 IRQ_TYPE_LEVEL_HIGH 0>,
+				     <GIC_SPI 336 IRQ_TYPE_LEVEL_HIGH 0>;
+			interrupt-names = "frame_start", "frame_done", "extra";
+			clocks = <&acpm_ipc GS101_CLK_ACPM_DVFS_MIF>,
+				 <&acpm_ipc GS101_CLK_ACPM_DVFS_DISP>;
+			clock-names = "mif", "disp";
+			status = "disabled";
+
+			port {
+				decon0_out: endpoint {
+					remote-endpoint = <&dsi0_in>;
+				};
+			};
+		};
+
+		dsi0: dsi@1c2c0000 {
+			compatible = "google,gs101-dsim", "google,gs201-dsim";
+			reg = <0x1c2c0000 0x300>,
+			      <0x1c2e0100 0x700>,
+			      <0x1c2e0000 0x100>;
+			reg-names = "dsi", "dphy", "dphy-extra";
+			interrupts = <GIC_SPI 345 IRQ_TYPE_LEVEL_HIGH 0>;
+			status = "disabled";
+
+			port {
+				dsi0_in: endpoint {
+					remote-endpoint = <&decon0_out>;
+				};
+			};
+		};
+
 		gpu: gpu@1c500000 {
 			compatible = "google,gs101-mali", "arm,mali-valhall-jm";
 			reg = <0x1c500000 0x5000>;
