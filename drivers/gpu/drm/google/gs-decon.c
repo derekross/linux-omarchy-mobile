@@ -244,6 +244,8 @@ struct gs_decon_soc_data {
 	bool start_hw_trigger;
 	/* the bootloader leaves MIF and DISP above the 120 Hz floors */
 	bool floors_optional;
+	/* hold the boot framebuffer's aperture after evicting simpledrm */
+	bool hold_boot_fb;
 };
 
 static const struct gs_decon_soc_data gs201_decon_data = {
@@ -264,6 +266,7 @@ static const struct gs_decon_soc_data gs101_decon_data = {
 	.image_size_reg = RDMA_IMG_SIZE,
 	.source_offset_reg = RDMA_SRC_OFFSET,
 	.shadow_update_mask = SHD_REG_UP_REQ_FLIP(SHD_REG_UP_REQ_ALL_WIN),
+	.hold_boot_fb = true,
 };
 
 static const struct gs_decon_soc_data zumapro_decon_data = {
@@ -1508,6 +1511,17 @@ static int gs_decon_probe(struct platform_device *pdev)
 						  gs_decon_driver.name);
 	if (ret)
 		goto err_irqs;
+	/*
+	 * and keep it: on raven simpledrm probed 30 ms after us, found the
+	 * aperture free and stayed as a second, phantom output. Holding the
+	 * range makes its own acquire fail with -EBUSY.
+	 */
+	if (dc->soc->hold_boot_fb) {
+		ret = devm_aperture_acquire_for_platform_device(pdev, dc->boot_fb.start,
+								resource_size(&dc->boot_fb));
+		if (ret)
+			goto err_irqs;
+	}
 
 	dc->kms = true;
 	ret = drm_dev_register(&dc->drm, 0);
