@@ -531,7 +531,8 @@ config TOUCHSCREEN_S6SY761
 	tristate "Samsung S6SY761 Touchscreen driver"
 	depends on I2C
 	help
-	  Say Y if you have the Samsung S6SY761 driver
+	  Say Y if you have the Samsung S6SY761 driver, or, with SPI, one
+	  of the S6SY79x on an SPI bus (Pixel 6 Pro)
 
 	  If unsure, say N
 
