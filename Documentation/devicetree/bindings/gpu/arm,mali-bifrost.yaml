@@ -43,6 +43,7 @@ properties:
       - items:
           - enum:
               - allwinner,sun55i-a523-mali
+              - google,gs101-mali
               - mediatek,mt8188-mali
               - mediatek,mt8192-mali
               - mediatek,mt8370-mali
@@ -76,6 +77,15 @@ properties:
   mali-supply: true
 
   sram-supply: true
+
+  g3d-l2-supply:
+    description: GPU L2 cache rail (Google gs101 VDD_G3D_L2)
+
+  g3d-m-supply:
+    description: GPU memory rail (Google gs101 VDD_G3D_M)
+
+  int-m-supply:
+    description: SoC internal memory rail the GPU needs (Google gs101 VDD_INT_M)
 
   operating-points-v2: true
 
@@ -264,6 +274,22 @@ allOf:
       required:
         - power-domains
         - power-domain-names
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: google,gs101-mali
+    then:
+      required:
+        - mali-supply
+        - g3d-l2-supply
+        - g3d-m-supply
+        - int-m-supply
+    else:
+      properties:
+        g3d-l2-supply: false
+        g3d-m-supply: false
+        int-m-supply: false
   - if:
       properties:
         compatible:
