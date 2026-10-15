@@ -45,6 +45,12 @@ properties:
     minItems: 1
     maxItems: 8
 
+patternProperties:
+  '-hog(-[0-9]+)?$':
+    type: object
+    required:
+      - gpio-hog
+
 required:
   - '#gpio-cells'
   - gpio-controller
