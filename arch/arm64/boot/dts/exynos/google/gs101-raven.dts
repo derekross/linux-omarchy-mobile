@@ -48,6 +48,24 @@
 	};
 };
 
+/* Bluetooth: the BCM4389 on the APM USI1 UART (Google's gs101-common-bluetooth) */
+&usi_apm1 {
+	status = "okay";
+};
+
+&serial_apm1 {
+	status = "okay";
+
+	bluetooth {
+		compatible = "brcm,bcm4389-bt";
+		shutdown-gpios = <&gpp16 2 GPIO_ACTIVE_HIGH>;
+		device-wakeup-gpios = <&gpp14 3 GPIO_ACTIVE_HIGH>;
+		interrupts-extended = <&gpa6 6 IRQ_TYPE_EDGE_RISING>;
+		interrupt-names = "host-wakeup";
+		max-speed = <3000000>;
+	};
+};
+
 &cont_splash_mem {
 	reg = <0x0 0xfac00000 (1440 * 3120 * 4)>;
 
