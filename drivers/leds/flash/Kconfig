@@ -39,7 +39,7 @@ config LEDS_LM3644
 	help
 	  This option enables torch mode of the TI LM3644 and LM3644TT
 	  dual-channel flash LED drivers as an LED class device, as used
-	  for the rear flash LED of Google Pixel 7 phones.
+	  for the rear flash LED of Google Pixel 6 and 7 phones.
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called leds-lm3644.
