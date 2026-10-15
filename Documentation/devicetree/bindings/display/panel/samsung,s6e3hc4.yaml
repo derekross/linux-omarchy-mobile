@@ -20,7 +20,9 @@ allOf:
 
 properties:
   compatible:
-    const: samsung,s6e3hc4
+    enum:
+      - samsung,s6e3hc3
+      - samsung,s6e3hc4
 
   reg:
     maxItems: 1
@@ -39,7 +41,15 @@ properties:
 required:
   - compatible
   - reg
-  - reset-gpios
+
+if:
+  properties:
+    compatible:
+      contains:
+        const: samsung,s6e3hc4
+then:
+  required:
+    - reset-gpios
 
 unevaluatedProperties: false
 
