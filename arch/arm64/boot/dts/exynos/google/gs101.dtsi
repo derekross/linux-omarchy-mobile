@@ -2105,13 +2105,20 @@
 
 	thermal-zones {
 		big-thermal {
-			polling-delay-passive = <250>;
-			polling-delay = <1000>;
+			polling-delay-passive = <100>;
+			polling-delay = <250>;
 			thermal-sensors = <&acpm_tmu 0>;
 
 			trips {
 				big_hot: big-hot {
 					temperature = <85000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+
+				/* a fast burst outruns step_wise: throttle deep at once */
+				big_hotter: big-hotter {
+					temperature = <95000>;
 					hysteresis = <5000>;
 					type = "passive";
 				};
@@ -2129,17 +2136,30 @@
 					cooling-device = <&cpu6 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
 							 <&cpu7 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
 				};
+
+				map1 {
+					trip = <&big_hotter>;
+					cooling-device = <&cpu6 10 THERMAL_NO_LIMIT>,
+							 <&cpu7 10 THERMAL_NO_LIMIT>;
+				};
 			};
 		};
 
 		mid-thermal {
-			polling-delay-passive = <250>;
-			polling-delay = <1000>;
+			polling-delay-passive = <100>;
+			polling-delay = <250>;
 			thermal-sensors = <&acpm_tmu 1>;
 
 			trips {
 				mid_hot: mid-hot {
 					temperature = <85000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+
+				/* a fast burst outruns step_wise: throttle deep at once */
+				mid_hotter: mid-hotter {
+					temperature = <95000>;
 					hysteresis = <5000>;
 					type = "passive";
 				};
@@ -2157,17 +2177,30 @@
 					cooling-device = <&cpu4 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
 							 <&cpu5 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
 				};
+
+				map1 {
+					trip = <&mid_hotter>;
+					cooling-device = <&cpu4 8 THERMAL_NO_LIMIT>,
+							 <&cpu5 8 THERMAL_NO_LIMIT>;
+				};
 			};
 		};
 
 		little-thermal {
-			polling-delay-passive = <250>;
-			polling-delay = <1000>;
+			polling-delay-passive = <100>;
+			polling-delay = <250>;
 			thermal-sensors = <&acpm_tmu 2>;
 
 			trips {
 				little_hot: little-hot {
 					temperature = <85000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+
+				/* a fast burst outruns step_wise: throttle deep at once */
+				little_hotter: little-hotter {
+					temperature = <95000>;
 					hysteresis = <5000>;
 					type = "passive";
 				};
@@ -2186,6 +2219,14 @@
 							 <&cpu1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
 							 <&cpu2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
 							 <&cpu3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+
+				map1 {
+					trip = <&little_hotter>;
+					cooling-device = <&cpu0 6 THERMAL_NO_LIMIT>,
+							 <&cpu1 6 THERMAL_NO_LIMIT>,
+							 <&cpu2 6 THERMAL_NO_LIMIT>,
+							 <&cpu3 6 THERMAL_NO_LIMIT>;
 				};
 			};
 		};
