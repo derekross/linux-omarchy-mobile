@@ -6,6 +6,7 @@
 
 #include <linux/unaligned.h>
 #include <linux/delay.h>
+#include <linux/devm-helpers.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/input/mt.h>
@@ -144,6 +145,10 @@ struct s6sy761_data {
 
 	u16 devid;
 	u8 tx_channel;
+
+	/* consecutive failed event reads; past a threshold, reset the chip */
+	unsigned int read_errors;
+	struct work_struct recover_work;
 };
 
 /*
@@ -425,6 +430,20 @@ static void s6sy761_handle_events(struct s6sy761_data *sdata, u8 n_events)
 	}
 }
 
+/*
+ * The controller stops answering when the panel it sits on is switched off
+ * and on (raven: the S6E3HC3's display off), and then stops interrupting
+ * too. A run of failed reads hands it to s6sy761_recover().
+ */
+#define S6SY761_MAX_READ_ERRORS		5
+
+static void s6sy761_read_failed(struct s6sy761_data *sdata)
+{
+	dev_err_ratelimited(sdata->dev, "failed to read events\n");
+	if (++sdata->read_errors == S6SY761_MAX_READ_ERRORS)
+		schedule_work(&sdata->recover_work);
+}
+
 static irqreturn_t s6sy761_irq_handler(int irq, void *dev)
 {
 	struct s6sy761_data *sdata = dev;
@@ -434,9 +453,10 @@ static irqreturn_t s6sy761_irq_handler(int irq, void *dev)
 	ret = sdata->bus->read(sdata, S6SY761_READ_ONE_EVENT, sdata->data,
 			       S6SY761_EVENT_SIZE);
 	if (ret < 0) {
-		dev_err(sdata->dev, "failed to read events\n");
+		s6sy761_read_failed(sdata);
 		return IRQ_HANDLED;
 	}
+	sdata->read_errors = 0;
 
 	if (!sdata->data[0])
 		return IRQ_HANDLED;
@@ -448,7 +468,7 @@ static irqreturn_t s6sy761_irq_handler(int irq, void *dev)
 	if (n_events) {
 		ret = s6sy761_read_events(sdata, n_events);
 		if (ret < 0) {
-			dev_err(sdata->dev, "failed to read events\n");
+			s6sy761_read_failed(sdata);
 			return IRQ_HANDLED;
 		}
 	}
@@ -630,6 +650,46 @@ static int s6sy761_hw_init(struct s6sy761_data *sdata,
 	return 0;
 }
 
+static void s6sy761_release_all(struct s6sy761_data *sdata)
+{
+	int i;
+
+	for (i = 0; i < S6SY761_MAX_FINGERS; i++) {
+		input_mt_slot(sdata->input, i);
+		input_mt_report_slot_inactive(sdata->input);
+	}
+	input_mt_sync_frame(sdata->input);
+	input_sync(sdata->input);
+}
+
+/* Power cycle and re-initialise a controller that stopped answering. */
+static void s6sy761_recover(struct work_struct *work)
+{
+	struct s6sy761_data *sdata = container_of(work, struct s6sy761_data,
+						  recover_work);
+	int ret;
+
+	dev_warn(sdata->dev, "controller stopped answering, resetting it\n");
+	disable_irq(sdata->irq);
+	if (sdata->reset)
+		gpiod_set_value_cansleep(sdata->reset, 1);
+	regulator_bulk_disable(ARRAY_SIZE(sdata->regulators),
+			       sdata->regulators);
+	msleep(50);
+
+	ret = s6sy761_power_on(sdata);
+	if (!ret && input_device_enabled(sdata->input))
+		ret = s6sy761_sense_on(sdata);
+	if (ret)
+		dev_err(sdata->dev, "reset failed: %d\n", ret);
+	else
+		dev_info(sdata->dev, "controller reset, sensing again\n");
+
+	s6sy761_release_all(sdata);
+	sdata->read_errors = 0;
+	enable_irq(sdata->irq);
+}
+
 static void s6sy761_power_off(void *data)
 {
 	struct s6sy761_data *sdata = data;
@@ -661,6 +721,11 @@ static int s6sy761_probe_common(struct s6sy761_data *sdata)
 		return err;
 
 	err = devm_add_action_or_reset(dev, s6sy761_power_off, sdata);
+	if (err)
+		return err;
+
+	/* cancelled before the power-off action above runs */
+	err = devm_work_autocancel(dev, &sdata->recover_work, s6sy761_recover);
 	if (err)
 		return err;
 
