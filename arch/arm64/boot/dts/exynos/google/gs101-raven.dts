@@ -44,6 +44,22 @@
 		constant-charge-voltage-max-microvolt = <4450000>;
 		constant-charge-current-max-microamp = <1466730>;
 	};
+
+	reserved-memory {
+		/*
+		 * Scanout buffers for gs-decon: DPP0 takes 32-bit addresses and
+		 * the DPU SysMMU is bypassed (as on cheetah). Five 1440x3120
+		 * XRGB8888 buffers; reusable while unused.
+		 */
+		display_pool: display-pool {
+			compatible = "shared-dma-pool";
+			reusable;
+			size = <0x5c00000>;
+			alignment = <0x0 0x200000>;
+			/* Not in 3.75-4 GiB: DPP0's reads from 0xf2c00000+ hung silently */
+			alloc-ranges = <0x0 0xa0000000 0x40000000>;
+		};
+	};
 };
 
 &acpm_ipc {
@@ -153,6 +169,25 @@
 	reg = <0x0 0xfac00000 (1440 * 3120 * 4)>;
 
 	status = "okay";
+};
+
+/* The display: gs-decon takes over the bootloader's pipeline from simpledrm */
+&decon0 {
+	memory-region = <&display_pool>, <&cont_splash_mem>;
+	memory-region-names = "pool", "boot-framebuffer";
+	status = "okay";
+};
+
+&dsi0 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	/* brightness, display on/off and 60/120 Hz; the bootloader runs it */
+	panel@0 {
+		compatible = "samsung,s6e3hc3";
+		reg = <0>;
+	};
 };
 
 &framebuffer0 {
@@ -341,4 +376,18 @@
 		cirrus,boost-peak-microamp = <4500000>;
 		cirrus,boost-ctl-microvolt = <7500000>;
 	};
+};
+
+/*
+ * The panel's rails (the framebuffer's vci and vddi supplies). simpledrm
+ * holds them; when gs-decon takes the display over, simpledrm goes away and
+ * releases them, the panel lost power and DECON stalled on its first flip.
+ * The S6E3HC3 driver doesn't switch them, so they stay on.
+ */
+&s2mpg10_ldo22m {
+	regulator-always-on;
+};
+
+&s2mpg11_bucka {
+	regulator-always-on;
 };
