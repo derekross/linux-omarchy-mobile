@@ -31,6 +31,14 @@
 };
 
 &acpm_ipc {
+	/*
+	 * ABL leaves the memory bus at 2028 MHz and nothing scales it yet.
+	 * 1014 MHz saved about 70 mA, as much as stock's
+	 * 421 MHz idle, with headroom for the display and the GPU.
+	 */
+	assigned-clocks = <&acpm_ipc GS101_CLK_ACPM_DVFS_MIF>;
+	assigned-clock-rates = <1014000000>;
+
 	pmic-2 {
 		regulators {
 			ldo4s {
