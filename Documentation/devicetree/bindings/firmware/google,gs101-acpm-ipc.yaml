@@ -36,6 +36,13 @@ properties:
       appropriately with the clock scaling. The argument is the ID of the
       clock contained by the firmware messages.
 
+  assigned-clocks:
+    description:
+      Firmware clocks to set at boot, for a board whose bootloader leaves
+      a domain at a rate nothing else scales yet.
+
+  assigned-clock-rates: true
+
   mboxes:
     maxItems: 1
 
