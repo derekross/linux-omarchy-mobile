@@ -21,6 +21,7 @@ properties:
     enum:
       - samsung,exynos4210-pd
       - samsung,exynos5433-pd
+      - google,gs101-pd
 
   reg:
     maxItems: 1
