@@ -148,7 +148,8 @@ struct s6sy761_data {
 
 	/* consecutive failed event reads; past a threshold, reset the chip */
 	unsigned int read_errors;
-	struct work_struct recover_work;
+	unsigned int recover_tries;
+	struct delayed_work recover_work;
 };
 
 /*
@@ -436,12 +437,13 @@ static void s6sy761_handle_events(struct s6sy761_data *sdata, u8 n_events)
  * too. A run of failed reads hands it to s6sy761_recover().
  */
 #define S6SY761_MAX_READ_ERRORS		5
+#define S6SY761_MAX_RECOVER_TRIES	5
 
 static void s6sy761_read_failed(struct s6sy761_data *sdata)
 {
 	dev_err_ratelimited(sdata->dev, "failed to read events\n");
 	if (++sdata->read_errors == S6SY761_MAX_READ_ERRORS)
-		schedule_work(&sdata->recover_work);
+		schedule_delayed_work(&sdata->recover_work, 0);
 }
 
 static irqreturn_t s6sy761_irq_handler(int irq, void *dev)
@@ -510,7 +512,15 @@ static int s6sy761_input_open(struct input_dev *dev)
 {
 	struct s6sy761_data *sdata = input_get_drvdata(dev);
 
-	return s6sy761_sense_on(sdata);
+	/*
+	 * A controller that doesn't answer (still booting after a resume, or
+	 * being reset) gets reset again rather than failing the open: a failed
+	 * open loses the device for userspace, which won't open it again.
+	 */
+	if (s6sy761_sense_on(sdata))
+		schedule_delayed_work(&sdata->recover_work, 0);
+
+	return 0;
 }
 
 static void s6sy761_input_close(struct input_dev *dev)
@@ -665,9 +675,17 @@ static void s6sy761_release_all(struct s6sy761_data *sdata)
 /* Power cycle and re-initialise a controller that stopped answering. */
 static void s6sy761_recover(struct work_struct *work)
 {
-	struct s6sy761_data *sdata = container_of(work, struct s6sy761_data,
+	struct s6sy761_data *sdata = container_of(to_delayed_work(work),
+						  struct s6sy761_data,
 						  recover_work);
 	int ret;
+
+	/*
+	 * Serialised with open and close: an open while the controller is
+	 * powered down here would fail, and sensing must follow whether the
+	 * device is open once the reset is done.
+	 */
+	guard(mutex)(&sdata->input->mutex);
 
 	dev_warn(sdata->dev, "controller stopped answering, resetting it\n");
 	disable_irq(sdata->irq);
@@ -688,6 +706,12 @@ static void s6sy761_recover(struct work_struct *work)
 	s6sy761_release_all(sdata);
 	sdata->read_errors = 0;
 	enable_irq(sdata->irq);
+
+	/* A controller that didn't come back gets a few more tries. */
+	if (!ret)
+		sdata->recover_tries = 0;
+	else if (++sdata->recover_tries < S6SY761_MAX_RECOVER_TRIES)
+		schedule_delayed_work(&sdata->recover_work, HZ);
 }
 
 static void s6sy761_power_off(void *data)
@@ -721,11 +745,6 @@ static int s6sy761_probe_common(struct s6sy761_data *sdata)
 		return err;
 
 	err = devm_add_action_or_reset(dev, s6sy761_power_off, sdata);
-	if (err)
-		return err;
-
-	/* cancelled before the power-off action above runs */
-	err = devm_work_autocancel(dev, &sdata->recover_work, s6sy761_recover);
 	if (err)
 		return err;
 
@@ -776,6 +795,16 @@ static int s6sy761_probe_common(struct s6sy761_data *sdata)
 		return err;
 
 	input_set_drvdata(sdata->input, sdata);
+
+	/*
+	 * Set up before the device can be opened (an open may schedule a
+	 * reset), and cancelled after the IRQ is freed but before the input
+	 * device goes and the power-off action runs.
+	 */
+	err = devm_delayed_work_autocancel(dev, &sdata->recover_work,
+					   s6sy761_recover);
+	if (err)
+		return err;
 
 	err = input_register_device(sdata->input);
 	if (err)
@@ -839,6 +868,9 @@ static int s6sy761_suspend(struct device *dev)
 {
 	struct s6sy761_data *sdata = dev_get_drvdata(dev);
 
+	/* a reset still running would power the controller up again */
+	cancel_delayed_work_sync(&sdata->recover_work);
+	sdata->recover_tries = 0;
 	s6sy761_power_off(sdata);
 
 	return 0;
@@ -850,19 +882,20 @@ static int s6sy761_resume(struct device *dev)
 	int err;
 
 	err = s6sy761_power_on(sdata);
-	if (err)
-		return err;
-
 	enable_irq(sdata->irq);
+	if (err) {
+		/* not fatal to the system resume: reset it from the work */
+		dev_warn(dev, "no answer after resume (%d)\n", err);
+		schedule_delayed_work(&sdata->recover_work, 0);
+		return 0;
+	}
 
 	guard(mutex)(&sdata->input->mutex);
 
-	if (!input_device_enabled(sdata->input))
-		return 0;
+	if (input_device_enabled(sdata->input) && s6sy761_sense_on(sdata))
+		schedule_delayed_work(&sdata->recover_work, 0);
 
-	err = s6sy761_sense_on(sdata);
-
-	return err;
+	return 0;
 }
 
 static const struct dev_pm_ops s6sy761_pm_ops = {
