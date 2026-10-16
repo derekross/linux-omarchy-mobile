@@ -53,6 +53,7 @@
 #include <linux/of_graph.h>
 #include <linux/of_reserved_mem.h>
 #include <linux/platform_device.h>
+#include <linux/pm.h>
 #include <linux/property.h>
 #include <linux/spinlock.h>
 #include <linux/wait.h>
@@ -242,6 +243,8 @@ struct gs_decon_soc_data {
 	bool start_hw_trigger;
 	/* hold the boot framebuffer's aperture after evicting simpledrm */
 	bool hold_boot_fb;
+	/* a VT switch around system sleep only with the fbdev console */
+	bool vt_switch_fbdev_only;
 };
 
 static const struct gs_decon_soc_data gs201_decon_data = {
@@ -263,6 +266,7 @@ static const struct gs_decon_soc_data gs101_decon_data = {
 	.source_offset_reg = RDMA_SRC_OFFSET,
 	.shadow_update_mask = SHD_REG_UP_REQ_FLIP(SHD_REG_UP_REQ_ALL_WIN),
 	.hold_boot_fb = true,
+	.vt_switch_fbdev_only = true,
 };
 
 static const struct gs_decon_soc_data zumapro_decon_data = {
@@ -1530,6 +1534,15 @@ static int gs_decon_probe(struct platform_device *pdev)
 	 */
 	if (fbdev)
 		drm_client_setup(&dc->drm, NULL);
+
+	/*
+	 * Without an fbdev console, a VT switch around system sleep has
+	 * nothing to show, and it costs the compositor its input devices:
+	 * logind takes the session away and gives it back, and the key press
+	 * that woke the phone is lost with the device it was queued on.
+	 */
+	if (dc->soc->vt_switch_fbdev_only)
+		pm_vt_switch_required(dev, fbdev);
 	dev_info(dev, "flip-only KMS on DECON0, %ux%u, up to %u Hz (at %u Hz)\n",
 		 dc->width, dc->height, dc->max_hz, dc->hz);
 
@@ -1548,6 +1561,8 @@ static void gs_decon_remove(struct platform_device *pdev)
 	struct gs_decon *dc = platform_get_drvdata(pdev);
 
 	if (dc->kms) {
+		if (dc->soc->vt_switch_fbdev_only)
+			pm_vt_switch_unregister(&pdev->dev);
 		dc->going_down = true;
 		drm_dev_unplug(&dc->drm);
 		drm_atomic_helper_shutdown(&dc->drm);
