@@ -213,6 +213,22 @@ static int bcm_set_baudrate(struct hci_uart *hu, unsigned int speed)
 	 */
 	skb = __hci_cmd_sync(hdev, 0xfc18, sizeof(param), &param,
 			     HCI_INIT_TIMEOUT);
+	if (PTR_ERR_OR_ZERO(skb) == -ETIMEDOUT) {
+		/* The BCM4389 can drop the first command after power-on and
+		 * still answer an HCI_Reset sent after it. Without the baud
+		 * rate change the firmware download runs at the init speed
+		 * and Launch RAM times out, so reset and try once more.
+		 */
+		bt_dev_warn(hdev, "BCM: baud rate change timed out, retrying after reset");
+		skb = __hci_cmd_sync(hdev, HCI_OP_RESET, 0, NULL,
+				     HCI_INIT_TIMEOUT);
+		if (!IS_ERR(skb)) {
+			kfree_skb(skb);
+			msleep(100);
+			skb = __hci_cmd_sync(hdev, 0xfc18, sizeof(param),
+					     &param, HCI_INIT_TIMEOUT);
+		}
+	}
 	if (IS_ERR(skb)) {
 		int err = PTR_ERR(skb);
 		bt_dev_err(hdev, "BCM: failed to write update baudrate (%d)",
