@@ -819,6 +819,13 @@ static int s6sy761_probe_common(struct s6sy761_data *sdata)
 
 	pm_runtime_enable(dev);
 
+	/*
+	 * Powering the SPI controller up and waiting for its boot event takes
+	 * some 200 ms; done in order it holds up the whole system resume, the
+	 * display and the key that woke the phone with it.
+	 */
+	device_enable_async_suspend(dev);
+
 	return 0;
 }
 
