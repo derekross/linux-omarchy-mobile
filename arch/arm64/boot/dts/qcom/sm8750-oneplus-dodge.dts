@@ -384,7 +384,7 @@
 		vddrfa1p2-supply = <&vreg_s7i_1p2>;
 		vddrfa1p8-supply = <&vreg_s3g_1p8>;
 
-		status = "disabled";
+		status = "okay";
 
 		clocks = <&rpmhcc RPMH_RF_CLK1>;
 
