@@ -20,6 +20,16 @@
 		serial0 = &serial_0;
 	};
 
+	/* Target of the debug-policy overlay ABL applies from the dpm partition. */
+	dpm: dpm { };
+
+	/* Label stubs so that overlay applies (it only sets their status). */
+	dpm-stubs {
+		log_arrdumppanic: log-arrdumppanic { status = "disabled"; };
+		log_preslcdump: log-preslcdump { status = "disabled"; };
+		log_slcdump: log-slcdump { status = "disabled"; };
+	};
+
 	chosen {
 		/* Bootloader expects bootargs specified otherwise it crashes */
 		bootargs = "";
@@ -927,6 +937,16 @@
 };
 
 &watchdog_cl0 {
+	timeout-sec = <30>;
+
+	status = "okay";
+};
+
+/*
+ * Linux runs both cluster watchdogs: some ABLs leave them running, and
+ * a running one nobody feeds resets the phone at about 60 s.
+ */
+&watchdog_cl1 {
 	timeout-sec = <30>;
 
 	status = "okay";

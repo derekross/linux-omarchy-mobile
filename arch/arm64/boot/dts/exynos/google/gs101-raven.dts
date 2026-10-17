@@ -13,6 +13,21 @@
 / {
 	model = "Raven";
 	compatible = "google,gs101-raven", "google,gs101";
+
+	/*
+	 * ABL picks the base DTB by soc_id (product id 0x09845000 | major
+	 * revision); the factory vendor_boot carries one per revision. B0 = 1.
+	 */
+	soc_id = <0x09845001 0x0>;
+
+	chosen {
+		/*
+		 * ABL appends its own arguments (console=null among them), so a
+		 * panic is silent: panic=10 reboots instead of hanging. init hands
+		 * over to the Arch root on userdata when it finds one.
+		 */
+		bootargs = "console=tty0 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init";
+	};
 };
 
 &acpm_ipc {
