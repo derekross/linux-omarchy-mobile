@@ -1907,6 +1907,21 @@
 			clocks = <&cmu_dpu CLK_GOUT_DPU_SYSREG_DPU_PCLK>;
 		};
 
+		gpu: gpu@1c500000 {
+			compatible = "google,gs101-mali", "arm,mali-valhall-jm";
+			reg = <0x1c500000 0x5000>;
+			/*
+			 * TODO: placeholder until a CMU_G3D driver exists. ABL
+			 * leaves the G3D clock running; this is not that clock.
+			 */
+			clocks = <&ext_24_5m>;
+			interrupt-names = "job", "mmu", "gpu";
+			interrupts = <GIC_SPI 420 IRQ_TYPE_LEVEL_HIGH 0>,
+				     <GIC_SPI 421 IRQ_TYPE_LEVEL_HIGH 0>,
+				     <GIC_SPI 419 IRQ_TYPE_LEVEL_HIGH 0>;
+			status = "disabled";
+		};
+
 		cmu_top: clock-controller@1e080000 {
 			compatible = "google,gs101-cmu-top";
 			reg = <0x1e080000 0x10000>;
