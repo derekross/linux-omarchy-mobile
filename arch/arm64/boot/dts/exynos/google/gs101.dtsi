@@ -1964,14 +1964,14 @@
 
 			trips {
 				big_hot: big-hot {
-					temperature = <85000>;
+					temperature = <75000>;
 					hysteresis = <5000>;
 					type = "passive";
 				};
 
 				/* a fast burst outruns step_wise: throttle deep at once */
 				big_hotter: big-hotter {
-					temperature = <95000>;
+					temperature = <85000>;
 					hysteresis = <5000>;
 					type = "passive";
 				};
@@ -2005,14 +2005,14 @@
 
 			trips {
 				mid_hot: mid-hot {
-					temperature = <85000>;
+					temperature = <75000>;
 					hysteresis = <5000>;
 					type = "passive";
 				};
 
 				/* a fast burst outruns step_wise: throttle deep at once */
 				mid_hotter: mid-hotter {
-					temperature = <95000>;
+					temperature = <85000>;
 					hysteresis = <5000>;
 					type = "passive";
 				};
@@ -2046,14 +2046,14 @@
 
 			trips {
 				little_hot: little-hot {
-					temperature = <85000>;
+					temperature = <75000>;
 					hysteresis = <5000>;
 					type = "passive";
 				};
 
 				/* a fast burst outruns step_wise: throttle deep at once */
 				little_hotter: little-hotter {
-					temperature = <95000>;
+					temperature = <85000>;
 					hysteresis = <5000>;
 					type = "passive";
 				};
