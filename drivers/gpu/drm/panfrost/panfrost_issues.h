@@ -265,6 +265,14 @@ enum panfrost_hw_issue {
 #define hw_issues_g57_r0p0 (\
 	BIT_ULL(HW_ISSUE_TTRX_3485))
 
+/*
+ * Mali-G78 (tBEx), from Arm's kbase base_hw_issues_tBEx_r0p1: of the
+ * issues tracked here only TTRX_2968_TTRX_3162 applies (no TTRX_3076, and
+ * TTRX_3485 is G57 r0p0 only).
+ */
+#define hw_issues_g78 (\
+	BIT_ULL(HW_ISSUE_TTRX_2968_TTRX_3162))
+
 static inline bool panfrost_has_hw_issue(const struct panfrost_device *pfdev,
 					 enum panfrost_hw_issue issue)
 {

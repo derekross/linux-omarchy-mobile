@@ -242,6 +242,9 @@ static const struct panfrost_model gpu_models[] = {
 	/* MediaTek MT8188 Mali-G57 MC3 */
 	GPU_MODEL(g57, 0x9093,
 		GPU_REV(g57, 0, 0)),
+
+	/* Google gs101 (Pixel 6) Mali-G78 MP20, tBEx: GPU_ID 0x9202, matched masked */
+	GPU_MODEL(g78, 0x9002),
 	{0},
 };
 
