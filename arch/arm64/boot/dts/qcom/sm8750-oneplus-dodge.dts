@@ -1358,7 +1358,6 @@
 		vddrfa1p8-supply = <&vreg_pmu_rfa_1p8>;
 
 		max-speed = <3200000>;
-		status = "disabled";
 	};
 };
 
