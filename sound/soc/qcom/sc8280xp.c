@@ -193,6 +193,12 @@ static int sc8280xp_snd_init(struct snd_soc_pcm_runtime *rtd)
 		snd_soc_limit_volume(card, "SpkrLeft PA Volume", 17);
 		snd_soc_limit_volume(card, "SpkrRight PA Volume", 17);
 		break;
+	case PRIMARY_MI2S_RX ... QUATERNARY_MI2S_TX:
+	case QUINARY_MI2S_RX ... QUINARY_MI2S_TX:
+		/* Format comes from .codec_dai_fmt on the board's priv_data.
+		 * No headset behind an MI2S amplifier link.
+		 */
+		return 0;
 	case DISPLAY_PORT_RX_0:
 		/* DISPLAY_PORT dai ids are not contiguous */
 		dp_pcm_id = 0;
@@ -556,6 +562,9 @@ static const struct qcom_snd_soc_common sm8750_priv_data = {
 	.dapm_widgets = sc8280xp_dapm_widgets,
 	.num_dapm_widgets = ARRAY_SIZE(sc8280xp_dapm_widgets),
 	.wcd_jack = true,
+	.codec_dai_fmt = SND_SOC_DAIFMT_BC_FC |
+			 SND_SOC_DAIFMT_NB_NF |
+			 SND_SOC_DAIFMT_I2S,
 };
 
 static const struct of_device_id snd_sc8280xp_dt_match[] = {
