@@ -199,7 +199,8 @@ static int sc8280xp_snd_init(struct snd_soc_pcm_runtime *rtd)
 		snd_soc_runtime_set_dai_fmt(rtd, SND_SOC_DAIFMT_I2S |
 					    SND_SOC_DAIFMT_NB_NF |
 					    SND_SOC_DAIFMT_BC_FC);
-		break;
+		/* No headset behind an MI2S amplifier link. */
+		return 0;
 	case DISPLAY_PORT_RX_0:
 		/* DISPLAY_PORT dai ids are not contiguous */
 		dp_pcm_id = 0;
