@@ -1259,6 +1259,15 @@
 	status = "okay";
 };
 
+/*
+ * The two speaker amplifiers (Awinic, product id 0x2308) sit at 0x34 and
+ * 0x35, resets on TLMM 2 and 164, as in stock's live DT. Bus only for
+ * now: the amplifier driver binds through new_device during bring-up.
+ */
+&i2c_hub_4 {
+	status = "okay";
+};
+
 &i2c_hub_3 {
 	status = "okay";
 	bq28z610: fuel-gauge@55 {
