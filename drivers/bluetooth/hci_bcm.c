@@ -19,6 +19,7 @@
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
 #include <linux/clk.h>
+#include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/gpio/machine.h>
 #include <linux/tty.h>
@@ -291,6 +292,19 @@ static int bcm_gpio_set_power(struct bcm_device *dev, bool powered)
 		err = clk_prepare_enable(dev->txco_clk);
 		if (err)
 			goto err_lpo_clk_disable;
+	}
+
+	/*
+	 * Power on from a known reset: BT_REG_ON low for 30 ms first, as
+	 * Google's driver for the BCM4389 does. A warm reboot can leave the
+	 * line high from the previous boot, so without the pulse the chip is
+	 * never reset and may stay in whatever state that boot left it.
+	 */
+	if (powered && !dev->res_enabled && dev->shutdown) {
+		err = dev->set_shutdown(dev, false);
+		if (err)
+			goto err_txco_clk_disable;
+		msleep(30);
 	}
 
 	err = dev->set_shutdown(dev, powered);
