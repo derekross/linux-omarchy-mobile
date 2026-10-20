@@ -71,6 +71,8 @@ struct aw882308 {
 	struct gpio_desc *reset;
 	unsigned int atten;	/* user attenuation, >= min_atten */
 	unsigned int chsel;
+	unsigned int profile;	/* table loaded: 0 Speaker, 1 Receiver */
+	unsigned int want;	/* profile for the next start */
 	bool running;
 };
 
@@ -96,6 +98,8 @@ static int aw882308_wait_sysst(struct aw882308 *aw, unsigned int want)
 	dev_err(aw->dev, "SYSST 0x%04x, wanted 0x%04x\n", st, want);
 	return -ETIMEDOUT;
 }
+
+static int aw882308_apply_fw(struct aw882308 *aw, unsigned int profile);
 
 static void aw882308_set_vol(struct aw882308 *aw, unsigned int v)
 {
@@ -176,6 +180,18 @@ static int aw882308_hw_params(struct snd_pcm_substream *substream,
 	struct aw882308 *aw = snd_soc_component_get_drvdata(dai->component);
 	unsigned int width = params_physical_width(params);
 	unsigned int fs, bck, val;
+
+	/*
+	 * A profile picked while playing takes effect here, powered down and
+	 * before the I2S setup below, which the table would otherwise undo.
+	 */
+	if (!aw->running && aw->want != aw->profile) {
+		if (aw882308_apply_fw(aw, aw->want))
+			aw->want = aw->profile;
+		else
+			aw->profile = aw->want;
+		aw882308_stop(aw);
+	}
 
 	if (params_rate(params) != 48000) {
 		dev_err(aw->dev, "only 48 kHz for now, got %u\n", params_rate(params));
@@ -292,7 +308,41 @@ static int aw882308_vol_put(struct snd_kcontrol *kc, struct snd_ctl_elem_value *
 	return 1;
 }
 
+/*
+ * Stock profiles: 0 (Speaker) for music, 10 (Receiver) when the top
+ * speaker is the earpiece. Each has its own table, loaded only while the
+ * amplifier is powered down, in hw_params: a change takes effect when the
+ * next stream is set up. The volume floor applies to both.
+ */
+static const char * const aw882308_profiles[] = { "Speaker", "Receiver" };
+static SOC_ENUM_SINGLE_EXT_DECL(aw882308_profile_enum, aw882308_profiles);
+
+static int aw882308_profile_get(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
+{
+	struct snd_soc_component *c = snd_kcontrol_chip(kc);
+	struct aw882308 *aw = snd_soc_component_get_drvdata(c);
+
+	uc->value.enumerated.item[0] = aw->want;
+	return 0;
+}
+
+static int aw882308_profile_put(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
+{
+	struct snd_soc_component *c = snd_kcontrol_chip(kc);
+	struct aw882308 *aw = snd_soc_component_get_drvdata(c);
+	unsigned int p = uc->value.enumerated.item[0];
+
+	if (p >= ARRAY_SIZE(aw882308_profiles))
+		return -EINVAL;
+	if (p == aw->want)
+		return 0;
+	aw->want = p;
+	return 1;
+}
+
 static const struct snd_kcontrol_new aw882308_controls[] = {
+	SOC_ENUM_EXT("Amp Profile", aw882308_profile_enum,
+		     aw882308_profile_get, aw882308_profile_put),
 	{
 		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 		.name = "Amp Volume",
@@ -320,22 +370,25 @@ static const struct snd_soc_component_driver aw882308_component = {
 };
 
 /*
- * Optional register table, firmware "aw882308-<i2c addr>.bin": little-endian
- * u16 (reg, value) pairs, e.g. made from the phone's own ACF by
- * tools/aw-acf-regs.py. Never shipped in the repo.
+ * Optional register tables, firmware "aw882308-<i2c addr>.bin" (Speaker)
+ * and "aw882308-<i2c addr>-receiver.bin": little-endian u16 (reg, value)
+ * pairs, e.g. made from the phone's own ACF by tools/aw-acf-regs.py.
+ * Never shipped in the repo.
  */
-static void aw882308_apply_fw(struct aw882308 *aw, struct i2c_client *i2c)
+static int aw882308_apply_fw(struct aw882308 *aw, unsigned int profile)
 {
+	struct i2c_client *i2c = to_i2c_client(aw->dev);
 	const struct firmware *fw;
-	char name[32];
+	char name[40];
 	unsigned int cur;
 	size_t i;
 	int n = 0;
 
-	snprintf(name, sizeof(name), "aw882308-%02x.bin", i2c->addr);
+	snprintf(name, sizeof(name), "aw882308-%02x%s.bin", i2c->addr,
+		 profile ? "-receiver" : "");
 	if (firmware_request_nowarn(&fw, name, aw->dev)) {
-		dev_info(aw->dev, "no %s, running on register defaults\n", name);
-		return;
+		dev_info(aw->dev, "no %s, register table unchanged\n", name);
+		return -ENOENT;
 	}
 	for (i = 0; i + 4 <= fw->size; i += 4) {
 		unsigned int reg = get_unaligned_le16(fw->data + i);
@@ -363,6 +416,7 @@ static void aw882308_apply_fw(struct aw882308 *aw, struct i2c_client *i2c)
 	regmap_read(aw->regmap, AW_SYSCTRL, &cur);
 	dev_info(aw->dev, "applied %d registers from %s, SYSCTRL 0x%04x chsel %u\n",
 		 n, name, cur, aw->chsel);
+	return 0;
 }
 
 static int aw882308_probe(struct i2c_client *i2c)
@@ -406,7 +460,7 @@ static int aw882308_probe(struct i2c_client *i2c)
 	regmap_write(aw->regmap, AW_ID, AW_SOFT_RESET);
 	usleep_range(2000, 2100);
 	if (use_fw)
-		aw882308_apply_fw(aw, i2c);
+		aw882308_apply_fw(aw, 0);
 	aw882308_stop(aw);
 
 	/*
