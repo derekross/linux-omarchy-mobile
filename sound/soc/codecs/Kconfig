@@ -664,6 +664,15 @@ config SND_SOC_AW8738
 	  SND_SOC_SIMPLE_AMPLIFIER, but additionally allows setting the
 	  operation mode using the Awinic-specific one-wire pulse control.
 
+config SND_SOC_AW882308
+	tristate "Awinic 0x2308 speaker amplifier (bring-up)"
+	depends on I2C
+	select REGMAP_I2C
+	help
+	  Bring-up driver for the Awinic smart amplifiers with product id
+	  0x2308, as on the OnePlus 13. No speaker protection: the volume
+	  control keeps an attenuation floor.
+
 config SND_SOC_AW88395_LIB
 	select CRC8
 	tristate
