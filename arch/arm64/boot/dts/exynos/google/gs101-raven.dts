@@ -233,3 +233,29 @@
 	regulator-min-microvolt = <3300000>;
 	regulator-max-microvolt = <3300000>;
 };
+
+/*
+ * The CPU zones report the cluster hotspot through ACPM, which can jump by
+ * 30 °C for one sample under a short burst of load. Google's raven
+ * throttles from 90 °C and only has a "hot" trip at 115 °C: keep our
+ * throttling from 75 °C and power off at a sustained 115 °C. The GPU zone
+ * gets the same until it has GPU cooling: a panfrost burst may spike it
+ * the same way. The bootloader sets the TMU's own hardware trip at 115 °C
+ * too, so this trip is a backstop: a sustained overheat may end in that
+ * hardware reset rather than an orderly shutdown.
+ */
+&big_crit {
+	temperature = <115000>;
+};
+
+&mid_crit {
+	temperature = <115000>;
+};
+
+&little_crit {
+	temperature = <115000>;
+};
+
+&gpu_crit {
+	temperature = <115000>;
+};
