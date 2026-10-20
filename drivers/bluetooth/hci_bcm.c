@@ -19,6 +19,7 @@
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
 #include <linux/clk.h>
+#include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/gpio/machine.h>
 #include <linux/tty.h>
@@ -56,6 +57,8 @@
  * @no_uart_clock_set: UART clock set command for >3Mbps mode is unavailable
  * @max_autobaud_speed: max baudrate supported by device in autobaud mode
  * @max_speed: max baudrate supported
+ * @power_on_delay_ms: time to hold the shutdown line low, UART open, before
+ *	raising it
  */
 struct bcm_device_data {
 	bool	no_early_set_baudrate;
@@ -63,6 +66,7 @@ struct bcm_device_data {
 	bool	no_uart_clock_set;
 	u32	max_autobaud_speed;
 	u32	max_speed;
+	u32	power_on_delay_ms;
 };
 
 /**
@@ -108,6 +112,8 @@ struct bcm_device_data {
  * @pcm_int_params: keep the initial PCM configuration
  * @use_autobaud_mode: start Bluetooth device in autobaud mode
  * @max_autobaud_speed: max baudrate supported by device in autobaud mode
+ * @power_on_delay_ms: time to hold the shutdown line low, UART open, before
+ *	raising it
  */
 struct bcm_device {
 	/* Must be the first member, hci_serdev.c expects this. */
@@ -149,6 +155,7 @@ struct bcm_device {
 	bool			use_autobaud_mode;
 	u8			pcm_int_params[5];
 	u32			max_autobaud_speed;
+	u32			power_on_delay_ms;
 };
 
 /* generic bcm uart resources */
@@ -292,6 +299,20 @@ static int bcm_gpio_set_power(struct bcm_device *dev, bool powered)
 		err = clk_prepare_enable(dev->txco_clk);
 		if (err)
 			goto err_lpo_clk_disable;
+	}
+
+	/*
+	 * Some chips (the BCM4389) need the shutdown line held low for a
+	 * while, with the UART already open, before it is raised, as Google's
+	 * driver does. The line is low from probe or the last power-off; drive
+	 * it low anyway so the wait starts from a known level.
+	 */
+	if (powered && !dev->res_enabled && dev->shutdown &&
+	    dev->power_on_delay_ms) {
+		err = dev->set_shutdown(dev, false);
+		if (err)
+			goto err_txco_clk_disable;
+		msleep(dev->power_on_delay_ms);
 	}
 
 	err = dev->set_shutdown(dev, powered);
@@ -1567,6 +1588,7 @@ static int bcm_serdev_probe(struct serdev_device *serdev)
 		bcmdev->no_early_set_baudrate = data->no_early_set_baudrate;
 		bcmdev->drive_rts_on_open = data->drive_rts_on_open;
 		bcmdev->no_uart_clock_set = data->no_uart_clock_set;
+		bcmdev->power_on_delay_ms = data->power_on_delay_ms;
 		if (data->max_speed && bcmdev->oper_speed > data->max_speed)
 			bcmdev->oper_speed = data->max_speed;
 	}
@@ -1584,6 +1606,10 @@ static void bcm_serdev_remove(struct serdev_device *serdev)
 #ifdef CONFIG_OF
 static struct bcm_device_data bcm4354_device_data = {
 	.no_early_set_baudrate = true,
+};
+
+static struct bcm_device_data bcm4389_device_data = {
+	.power_on_delay_ms = 30,
 };
 
 static struct bcm_device_data bcm43438_device_data = {
@@ -1608,7 +1634,7 @@ static const struct of_device_id bcm_bluetooth_of_match[] = {
 	{ .compatible = "brcm,bcm43430a1-bt" },
 	{ .compatible = "brcm,bcm43438-bt", .data = &bcm43438_device_data },
 	{ .compatible = "brcm,bcm4349-bt", .data = &bcm43438_device_data },
-	{ .compatible = "brcm,bcm4389-bt" },
+	{ .compatible = "brcm,bcm4389-bt", .data = &bcm4389_device_data },
 	{ .compatible = "brcm,bcm43540-bt", .data = &bcm4354_device_data },
 	{ .compatible = "brcm,bcm4335a0" },
 	{ .compatible = "cypress,cyw4373a0-bt", .data = &cyw4373a0_device_data },
