@@ -25,6 +25,30 @@
 	compatible = "oneplus,dodge", "qcom,sm8750";
 	chassis-type = "handset";
 
+	sound {
+		compatible = "qcom,sm8750-sndcard", "qcom,sm8450-sndcard";
+		model = "OnePlus-dodge";
+
+		pinctrl-0 = <&i2s1_active>;
+		pinctrl-names = "default";
+
+		speaker-dai-link {
+			link-name = "Speaker Playback";
+
+			cpu {
+				sound-dai = <&q6apmbedai SECONDARY_MI2S_RX>;
+			};
+
+			codec {
+				sound-dai = <&speaker_left>, <&speaker_right>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
+	};
+
 	aliases {
 		serial0 = &uart7;
 	};
@@ -1058,6 +1082,37 @@
 &tlmm {
 	/* reserved for secure world */
 	gpio-reserved-ranges = <36 4>, <74 1>;
+
+	/* Secondary MI2S to the speaker amplifiers; data1 is their input. */
+	i2s1_active: i2s1-active-state {
+		sck-pins {
+			pins = "gpio121";
+			function = "i2s1_sck";
+			drive-strength = <4>;
+			bias-disable;
+		};
+
+		data0-pins {
+			pins = "gpio122";
+			function = "i2s1_data0";
+			drive-strength = <4>;
+			bias-disable;
+		};
+
+		ws-pins {
+			pins = "gpio123";
+			function = "i2s1_ws";
+			drive-strength = <4>;
+			bias-disable;
+		};
+
+		data1-pins {
+			pins = "gpio124";
+			function = "i2s1_data1";
+			drive-strength = <4>;
+			bias-disable;
+		};
+	};
 
 	ts_reset_active: ts_reset_active-state {
 		pins = "gpio161";
