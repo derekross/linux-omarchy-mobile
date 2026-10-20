@@ -47,3 +47,13 @@
 
 	status = "okay";
 };
+
+/* The Mali-G78 MP20 on its S2MPG10/11 rails, as postmarketOS describes them */
+&gpu {
+	mali-supply = <&s2mpg11_buck2s>;
+	g3d-l2-supply = <&s2mpg11_buck8s>;
+	g3d-m-supply = <&s2mpg11_ldo1s>;
+	int-m-supply = <&s2mpg10_buck7m>;
+
+	status = "okay";
+};
