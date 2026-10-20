@@ -32,6 +32,33 @@
 		pinctrl-0 = <&i2s1_active>;
 		pinctrl-names = "default";
 
+		/* Mic bias wiring as on stock; AMIC2 is the USB-C headset mic. */
+		audio-routing = "AMIC1", "MIC BIAS1",
+				"AMIC2", "MIC BIAS2",
+				"AMIC3", "MIC BIAS4",
+				"AMIC4", "MIC BIAS3",
+				"AMIC5", "MIC BIAS1",
+				"TX SWR_INPUT0", "ADC1_OUTPUT",
+				"TX SWR_INPUT1", "ADC2_OUTPUT",
+				"TX SWR_INPUT2", "ADC3_OUTPUT",
+				"TX SWR_INPUT3", "ADC4_OUTPUT";
+
+		wcd-capture-dai-link {
+			link-name = "WCD Capture";
+
+			cpu {
+				sound-dai = <&q6apmbedai TX_CODEC_DMA_TX_3>;
+			};
+
+			codec {
+				sound-dai = <&wcd939x 1>, <&swr2 0>, <&lpass_txmacro 0>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
+
 		speaker-dai-link {
 			link-name = "Speaker Playback";
 
@@ -47,6 +74,33 @@
 				sound-dai = <&q6apm>;
 			};
 		};
+	};
+
+	wcd939x: audio-codec {
+		compatible = "qcom,wcd9395-codec", "qcom,wcd9390-codec";
+
+		pinctrl-0 = <&wcd_default>;
+		pinctrl-names = "default";
+
+		/* Stock runs all four mic biases at 2.7 V. */
+		qcom,micbias1-microvolt = <2700000>;
+		qcom,micbias2-microvolt = <2700000>;
+		qcom,micbias3-microvolt = <2700000>;
+		qcom,micbias4-microvolt = <2700000>;
+		qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000 500000 500000 500000 500000 500000>;
+		qcom,mbhc-headset-vthreshold-microvolt = <1700000>;
+		qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
+		qcom,rx-device = <&wcd_rx>;
+		qcom,tx-device = <&wcd_tx>;
+
+		reset-gpios = <&tlmm 101 GPIO_ACTIVE_LOW>;
+
+		vdd-buck-supply = <&vreg_l15b_1p8>;
+		vdd-rxtx-supply = <&vreg_l15b_1p8>;
+		vdd-io-supply = <&vreg_l15b_1p8>;
+		vdd-mic-bias-supply = <&vreg_bob1>;
+
+		#sound-dai-cells = <1>;
 	};
 
 	aliases {
@@ -1079,9 +1133,39 @@
 			"qcom/sm8750/OnePlus/modem_dtb.mbn";
 };
 
+&swr1 {
+	status = "okay";
+
+	/* WCD939x RX */
+	wcd_rx: codec@0,4 {
+		compatible = "sdw20217010e00";
+		reg = <0 4>;
+		qcom,rx-port-mapping = <1 2 3 4 5 9>;
+	};
+};
+
+&swr2 {
+	status = "okay";
+
+	/* WCD939x TX */
+	wcd_tx: codec@0,3 {
+		compatible = "sdw20217010e00";
+		reg = <0 3>;
+		qcom,tx-port-mapping = <2 2 3 4>;
+	};
+};
+
 &tlmm {
 	/* reserved for secure world */
 	gpio-reserved-ranges = <36 4>, <74 1>;
+
+	wcd_default: wcd-reset-n-active-state {
+		pins = "gpio101";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-disable;
+		output-low;
+	};
 
 	/* Secondary MI2S to the speaker amplifiers; data1 is their input. */
 	i2s1_active: i2s1-active-state {
