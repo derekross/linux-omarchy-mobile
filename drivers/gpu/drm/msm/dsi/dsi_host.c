@@ -852,7 +852,17 @@ static void dsi_ctrl_enable(struct msm_dsi_host *msm_host,
 	} else {
 		/* Do not swap RGB colors */
 		data = DSI_CMD_CFG0_RGB_SWAP(SWAP_RGB);
-		data |= DSI_CMD_CFG0_DST_FORMAT(dsi_get_cmd_fmt(mipi_fmt));
+		/*
+		 * With DSC and an RGB101010 panel (the AA569 on the OnePlus 13)
+		 * the RGB101010 command DST format makes the first DCS command
+		 * time out (cmd dma tx -110), while RGB888, which older kernels
+		 * programmed here, works. Keep RGB888 with DSC until the cause
+		 * is understood.
+		 */
+		if (msm_host->dsc && mipi_fmt == MIPI_DSI_FMT_RGB101010)
+			data |= DSI_CMD_CFG0_DST_FORMAT(CMD_DST_FORMAT_RGB888);
+		else
+			data |= DSI_CMD_CFG0_DST_FORMAT(dsi_get_cmd_fmt(mipi_fmt));
 		dsi_write(msm_host, REG_DSI_CMD_CFG0, data);
 
 		data = DSI_CMD_CFG1_WR_MEM_START(MIPI_DCS_WRITE_MEMORY_START) |
