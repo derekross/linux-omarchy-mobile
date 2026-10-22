@@ -26,11 +26,19 @@
 		 * panic is silent: panic=10 reboots instead of hanging. init hands
 		 * over to the Arch root on userdata when it finds one.
 		 */
-		bootargs = "console=tty0 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init";
+		bootargs = "console=tty0 panic=10 clk_ignore_unused rdinit=/init";
 	};
 };
 
 &acpm_ipc {
+	/*
+	 * ABL leaves the memory bus at 2028 MHz and nothing scales it yet.
+	 * 1014 MHz saved about 70 mA, as much as stock's
+	 * 421 MHz idle, with headroom for the display and the GPU.
+	 */
+	assigned-clocks = <&acpm_ipc GS101_CLK_ACPM_DVFS_MIF>;
+	assigned-clock-rates = <1014000000>;
+
 	pmic-2 {
 		regulators {
 			ldo4s {
@@ -46,6 +54,63 @@
 			};
 		};
 	};
+};
+
+/* Unused blocks the bootloader leaves powered: genpd turns them off */
+&pd_aoc {
+	status = "okay";
+};
+
+&pd_g2d {
+	status = "okay";
+};
+
+&pd_mfc {
+	status = "okay";
+};
+
+&pd_csis {
+	status = "okay";
+};
+
+&pd_pdp {
+	status = "okay";
+};
+
+&pd_dns {
+	status = "okay";
+};
+
+&pd_g3aa {
+	status = "okay";
+};
+
+&pd_ipp {
+	status = "okay";
+};
+
+&pd_itp {
+	status = "okay";
+};
+
+&pd_mcsc {
+	status = "okay";
+};
+
+&pd_gdc {
+	status = "okay";
+};
+
+&pd_tnr {
+	status = "okay";
+};
+
+&pd_bo {
+	status = "okay";
+};
+
+&pd_tpu {
+	status = "okay";
 };
 
 &cont_splash_mem {

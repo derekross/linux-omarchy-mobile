@@ -18,10 +18,18 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/pm_runtime.h>
+#include <linux/regmap.h>
+#include <linux/soc/samsung/exynos-pmu.h>
 
 struct exynos_pm_domain_config {
 	/* Value for LOCAL_PWR_CFG and STATUS fields for each domain */
 	u32 local_pwr_cfg;
+	/*
+	 * Non-zero where the PMU only takes writes through the secure
+	 * monitor (gs101): the domain is reached through the PMU regmap, at
+	 * its address minus this PMU base.
+	 */
+	phys_addr_t pmu_base;
 };
 
 /*
@@ -29,27 +37,46 @@ struct exynos_pm_domain_config {
  */
 struct exynos_pm_domain {
 	void __iomem *base;
+	struct regmap *pmu;
+	u32 offset;
 	struct generic_pm_domain pd;
 	u32 local_pwr_cfg;
 };
 
+static u32 exynos_pd_read(struct exynos_pm_domain *pd, u32 reg)
+{
+	u32 val = 0;
+
+	if (pd->pmu) {
+		regmap_read(pd->pmu, pd->offset + reg, &val);
+		return val;
+	}
+	return readl_relaxed(pd->base + reg);
+}
+
+static void exynos_pd_write(struct exynos_pm_domain *pd, u32 reg, u32 val)
+{
+	if (pd->pmu)
+		regmap_write(pd->pmu, pd->offset + reg, val);
+	else
+		writel_relaxed(val, pd->base + reg);
+}
+
 static int exynos_pd_power(struct generic_pm_domain *domain, bool power_on)
 {
 	struct exynos_pm_domain *pd;
-	void __iomem *base;
 	u32 timeout, pwr;
 	char *op;
 
 	pd = container_of(domain, struct exynos_pm_domain, pd);
-	base = pd->base;
 
 	pwr = power_on ? pd->local_pwr_cfg : 0;
-	writel_relaxed(pwr, base);
+	exynos_pd_write(pd, 0x0, pwr);
 
 	/* Wait max 1ms */
 	timeout = 10;
 
-	while ((readl_relaxed(base + 0x4) & pd->local_pwr_cfg) != pwr) {
+	while ((exynos_pd_read(pd, 0x4) & pd->local_pwr_cfg) != pwr) {
 		if (!timeout) {
 			op = (power_on) ? "enable" : "disable";
 			pr_err("Power domain %s %s failed\n", domain->name, op);
@@ -81,6 +108,11 @@ static const struct exynos_pm_domain_config exynos5433_cfg = {
 	.local_pwr_cfg		= 0xf,
 };
 
+static const struct exynos_pm_domain_config gs101_cfg = {
+	.local_pwr_cfg		= 0x1,
+	.pmu_base		= 0x17460000,
+};
+
 static const struct of_device_id exynos_pm_domain_of_match[] = {
 	{
 		.compatible = "samsung,exynos4210-pd",
@@ -88,6 +120,9 @@ static const struct of_device_id exynos_pm_domain_of_match[] = {
 	}, {
 		.compatible = "samsung,exynos5433-pd",
 		.data = &exynos5433_cfg,
+	}, {
+		.compatible = "google,gs101-pd",
+		.data = &gs101_cfg,
 	},
 	{ },
 };
@@ -120,9 +155,21 @@ static int exynos_pd_probe(struct platform_device *pdev)
 	if (!pd->pd.name)
 		return -ENOMEM;
 
-	pd->base = of_iomap(np, 0);
-	if (!pd->base)
-		return -ENODEV;
+	if (pm_domain_cfg->pmu_base) {
+		struct resource res;
+
+		ret = of_address_to_resource(np, 0, &res);
+		if (ret)
+			return ret;
+		pd->pmu = exynos_get_pmu_regmap();
+		if (IS_ERR(pd->pmu))
+			return PTR_ERR(pd->pmu);
+		pd->offset = res.start - pm_domain_cfg->pmu_base;
+	} else {
+		pd->base = of_iomap(np, 0);
+		if (!pd->base)
+			return -ENODEV;
+	}
 
 	pd->pd.power_off = exynos_pd_power_off;
 	pd->pd.power_on = exynos_pd_power_on;
@@ -137,7 +184,7 @@ static int exynos_pd_probe(struct platform_device *pdev)
 	    of_device_is_compatible(np, "samsung,exynos4210-pd"))
 		exynos_pd_power_off(&pd->pd);
 
-	on = readl_relaxed(pd->base + 0x4) & pd->local_pwr_cfg;
+	on = exynos_pd_read(pd, 0x4) & pd->local_pwr_cfg;
 
 	pm_genpd_init(&pd->pd, NULL, !on);
 	ret = of_genpd_add_provider_simple(np, &pd->pd);
