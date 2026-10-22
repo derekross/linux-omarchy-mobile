@@ -27,6 +27,7 @@ properties:
     enum:
       - google,gs101-usb31drd-phy
       - google,gs201-usb31drd-phy
+      - google,zuma-usb32drd-phy
       - samsung,exynos2200-usb32drd-phy
       - samsung,exynos5250-usbdrd-phy
       - samsung,exynos5420-usbdrd-phy
@@ -219,6 +220,7 @@ allOf:
         compatible:
           contains:
             enum:
+              - google,zuma-usb32drd-phy
               - samsung,exynos2200-usb32drd-phy
     then:
       properties:

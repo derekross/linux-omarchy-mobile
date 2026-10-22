@@ -15,8 +15,11 @@ description:
 
 properties:
   compatible:
-    enum:
-      - samsung,exynos2200-eusb2-phy
+    oneOf:
+      - const: samsung,exynos2200-eusb2-phy
+      - items:
+          - const: google,zuma-eusb2-phy
+          - const: samsung,exynos2200-eusb2-phy
 
   reg:
     maxItems: 1
