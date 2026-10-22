@@ -330,12 +330,59 @@ const struct exynos_pmu_data gs101_pmu_data = {
 };
 
 /*
- * zuma's PMU is written through the same EL3 call, but its register map and
- * CPU layout differ from gs101's, so no access tables and no CPU hotplug
- * hooks yet: only the regmap, for its PHY and power-domain consumers.
+ * zuma's register map differs from gs101's and is not documented, so only the
+ * registers its drivers use are accessible: a read of an arbitrary PMU offset
+ * (as the regmap's debugfs would do) is not known to be safe. Any other offset
+ * fails with -EIO, so a new user of this regmap must add its registers here.
+ */
+#define ZUMA_CLUSTER0_NONCPU_OUT	0x1220
+#define ZUMA_CLUSTER0_NONCPU_INT_EN	0x1244
+#define ZUMA_CLUSTER1_NONCPU_OUT	0x1520
+#define ZUMA_CLUSTER1_NONCPU_INT_EN	0x1544
+#define ZUMA_HSI0_STATUS		0x2a84
+#define ZUMA_PHY_CTRL_UFS		0x3ec0
+
+static const struct regmap_range zuma_pmu_registers[] = {
+	/* reboot mode */
+	regmap_reg_range(GS101_SYSIP_DAT(0), GS101_SYSIP_DAT(0)),
+	/* watchdogs */
+	regmap_reg_range(ZUMA_CLUSTER0_NONCPU_OUT, ZUMA_CLUSTER0_NONCPU_OUT),
+	regmap_reg_range(ZUMA_CLUSTER0_NONCPU_INT_EN, ZUMA_CLUSTER0_NONCPU_INT_EN),
+	regmap_reg_range(ZUMA_CLUSTER1_NONCPU_OUT, ZUMA_CLUSTER1_NONCPU_OUT),
+	regmap_reg_range(ZUMA_CLUSTER1_NONCPU_INT_EN, ZUMA_CLUSTER1_NONCPU_INT_EN),
+	regmap_reg_range(GS101_RST_STAT, GS101_RST_STAT),
+	/* HSI0's power status, read by Tensor G4's HSI0 clock driver */
+	regmap_reg_range(ZUMA_HSI0_STATUS, ZUMA_HSI0_STATUS),
+	/* PHY isolation */
+	regmap_reg_range(GS101_PHY_CTRL_USB20, GS101_PHY_CTRL_USB20),
+	regmap_reg_range(ZUMA_PHY_CTRL_UFS, ZUMA_PHY_CTRL_UFS),
+};
+
+static const struct regmap_range zuma_pmu_ro_registers[] = {
+	regmap_reg_range(ZUMA_HSI0_STATUS, ZUMA_HSI0_STATUS),
+	regmap_reg_range(GS101_RST_STAT, GS101_RST_STAT),
+};
+
+static const struct regmap_access_table zuma_pmu_rd_table = {
+	.yes_ranges = zuma_pmu_registers,
+	.n_yes_ranges = ARRAY_SIZE(zuma_pmu_registers),
+};
+
+static const struct regmap_access_table zuma_pmu_wr_table = {
+	.yes_ranges = zuma_pmu_registers,
+	.n_yes_ranges = ARRAY_SIZE(zuma_pmu_registers),
+	.no_ranges = zuma_pmu_ro_registers,
+	.n_no_ranges = ARRAY_SIZE(zuma_pmu_ro_registers),
+};
+
+/*
+ * zuma's PMU is written through the same EL3 call, but its CPU layout differs
+ * from gs101's, so no CPU hotplug hooks yet.
  */
 const struct exynos_pmu_data zuma_pmu_data = {
 	.pmu_secure = true,
+	.rd_table = &zuma_pmu_rd_table,
+	.wr_table = &zuma_pmu_wr_table,
 };
 
 /*
