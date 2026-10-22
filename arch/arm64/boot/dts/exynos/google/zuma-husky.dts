@@ -36,8 +36,13 @@
 	};
 
 	chosen {
-		/* ABL requires bootargs to exist; it appends its own after these. */
-		bootargs = "console=tty0 fbcon=font:TER16x32 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init";
+		/*
+		 * ABL requires bootargs to exist; it appends its own after these.
+		 * reboot=warm: a cold PSCI reset clears the reboot reason in
+		 * SYSIP_DAT0 before ABL reads it, so "reboot bootloader" would
+		 * only boot the slot again.
+		 */
+		bootargs = "console=tty0 fbcon=font:TER16x32 reboot=warm panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init";
 		#address-cells = <2>;
 		#size-cells = <1>;
 		ranges;
