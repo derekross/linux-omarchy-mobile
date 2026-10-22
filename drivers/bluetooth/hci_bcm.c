@@ -19,6 +19,7 @@
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
 #include <linux/clk.h>
+#include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/gpio/machine.h>
 #include <linux/tty.h>
@@ -213,6 +214,22 @@ static int bcm_set_baudrate(struct hci_uart *hu, unsigned int speed)
 	 */
 	skb = __hci_cmd_sync(hdev, 0xfc18, sizeof(param), &param,
 			     HCI_INIT_TIMEOUT);
+	if (PTR_ERR_OR_ZERO(skb) == -ETIMEDOUT) {
+		/* The BCM4389 can drop the first command after power-on and
+		 * still answer an HCI_Reset sent after it. Without the baud
+		 * rate change the firmware download runs at the init speed
+		 * and Launch RAM times out, so reset and try once more.
+		 */
+		bt_dev_warn(hdev, "BCM: baud rate change timed out, retrying after reset");
+		skb = __hci_cmd_sync(hdev, HCI_OP_RESET, 0, NULL,
+				     HCI_INIT_TIMEOUT);
+		if (!IS_ERR(skb)) {
+			kfree_skb(skb);
+			msleep(100);
+			skb = __hci_cmd_sync(hdev, 0xfc18, sizeof(param),
+					     &param, HCI_INIT_TIMEOUT);
+		}
+	}
 	if (IS_ERR(skb)) {
 		int err = PTR_ERR(skb);
 		bt_dev_err(hdev, "BCM: failed to write update baudrate (%d)",
@@ -275,6 +292,19 @@ static int bcm_gpio_set_power(struct bcm_device *dev, bool powered)
 		err = clk_prepare_enable(dev->txco_clk);
 		if (err)
 			goto err_lpo_clk_disable;
+	}
+
+	/*
+	 * Power on from a known reset: BT_REG_ON low for 30 ms first, as
+	 * Google's driver for the BCM4389 does. A warm reboot can leave the
+	 * line high from the previous boot, so without the pulse the chip is
+	 * never reset and may stay in whatever state that boot left it.
+	 */
+	if (powered && !dev->res_enabled && dev->shutdown) {
+		err = dev->set_shutdown(dev, false);
+		if (err)
+			goto err_txco_clk_disable;
+		msleep(30);
 	}
 
 	err = dev->set_shutdown(dev, powered);
