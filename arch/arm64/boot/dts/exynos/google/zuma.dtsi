@@ -316,6 +316,19 @@
 		pmu_system_controller: system-controller@15460000 {
 			compatible = "google,zuma-pmu";
 			reg = <0x15460000 0x10000>;
+
+			/*
+			 * The bootloader reads the reboot reason from SYSIP_DAT0,
+			 * where stock's pixel-reboot driver writes it
+			 * (reboot-cmd-offset 0x810), with gs101's and gs201's values.
+			 */
+			reboot-mode {
+				compatible = "syscon-reboot-mode";
+				offset = <0x0810>; /* SYSIP_DAT0 */
+				mode-bootloader = <0xfc>;
+				mode-fastboot = <0xfa>;
+				mode-recovery = <0xff>;
+			};
 		};
 	};
 };
