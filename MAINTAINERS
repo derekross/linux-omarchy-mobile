@@ -11168,6 +11168,7 @@ F:	drivers/clk/samsung/clk-gs201.c
 F:	drivers/phy/phy-google-usb.c
 F:	drivers/soc/samsung/gs101-pmu.c
 F:	drivers/phy/samsung/phy-gs101-ufs.c
+F:	drivers/thermal/samsung/gs101_acpm_tmu.c
 F:	drivers/usb/dwc3/dwc3-google.c
 F:	include/dt-bindings/clock/google,gs101*
 F:	include/dt-bindings/clock/google,gs201*

@@ -10,3 +10,16 @@ config EXYNOS_THERMAL
 	  the TMU, reports temperature and handles cooling action if defined.
 	  This driver uses the Exynos core thermal APIs and TMU configuration
 	  data from the supported SoCs.
+
+config GS101_ACPM_THERMAL
+	tristate "Google gs101 thermal sensors through ACPM"
+	depends on THERMAL_OF
+	depends on EXYNOS_ACPM_PROTOCOL
+	help
+	  Thermal zones for the gs101 TMU sensors (CPU clusters, GPU, ISP,
+	  TPU), read from the ACPM firmware that owns the TMU. On gs101 the
+	  APM owns the TMU registers, so the temperatures come from ACPM's
+	  TMU channel. The driver only reads; the firmware's own hardware
+	  trips stay as the bootloader left them.
+
+	  Say Y or M here on Google gs101 (Pixel 6) devices.

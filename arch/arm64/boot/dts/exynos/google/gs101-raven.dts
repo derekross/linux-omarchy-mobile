@@ -48,6 +48,10 @@
 	};
 };
 
+&acpm_tmu {
+	status = "okay";
+};
+
 &cont_splash_mem {
 	reg = <0x0 0xfac00000 (1440 * 3120 * 4)>;
 
@@ -71,4 +75,22 @@
 	int-m-supply = <&s2mpg10_buck7m>;
 
 	status = "okay";
+};
+
+/*
+ * The CPU zones report the cluster hotspot through ACPM, which can jump by
+ * 30 °C for one sample under a short burst of load. Google's raven
+ * throttles from 90 °C and only has a "hot" trip at 115 °C: keep our
+ * throttling from 75 °C and power off at a sustained 115 °C.
+ */
+&big_crit {
+	temperature = <115000>;
+};
+
+&mid_crit {
+	temperature = <115000>;
+};
+
+&little_crit {
+	temperature = <115000>;
 };
