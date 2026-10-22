@@ -239,6 +239,35 @@
 		clock-output-names = "gpio_stub";
 	};
 
+	/*
+	 * Stand-ins for the UFS clocks (no clock driver yet; ABL leaves them
+	 * running, as it reads UFS itself). The UniPro clock is stock's
+	 * (its driver logs "mclk: 178000000"); the link core clock's rate is
+	 * only checked against the driver's range, and it also stands in for
+	 * the FMP, bus and sysreg gates; the PHY's reference is the 38.4 MHz
+	 * its CAL is written for.
+	 */
+	clk_ufs_unipro_stub: clock-ufs-unipro-stub {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <178000000>;
+		clock-output-names = "ufs_unipro_stub";
+	};
+
+	clk_ufs_core_stub: clock-ufs-core-stub {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <267000000>;
+		clock-output-names = "ufs_core_stub";
+	};
+
+	clk_ufs_ref_stub: clock-ufs-ref-stub {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <38400000>;
+		clock-output-names = "ufs_ref_stub";
+	};
+
 	soc: soc@0 {
 		compatible = "simple-bus";
 		#address-cells = <1>;
@@ -336,12 +365,51 @@
 			status = "disabled";
 		};
 
+		sysreg_ufs: syscon@13020000 {
+			compatible = "google,zuma-ufs-sysreg", "syscon";
+			reg = <0x13020000 0x1000>;
+		};
+
 		pinctrl_hsi2ufs: pinctrl@13060000 {
 			compatible = "google,zuma-pinctrl";
 			reg = <0x13060000 0x1000>;
 			clocks = <&clk_gpio_stub>;
 			clock-names = "pclk";
 			interrupts = <GIC_SPI 433 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		ufs_0: ufs@13200000 {
+			compatible = "google,zuma-ufs", "google,zumapro-ufs";
+			reg = <0x13200000 0x200>,
+			      <0x13201100 0x2000>,
+			      <0x13280000 0x8000>,
+			      <0x132a0000 0xa014>;
+			reg-names = "hci", "vs_hci", "unipro", "ufsp";
+			interrupts = <GIC_SPI 466 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk_ufs_core_stub>, <&clk_ufs_unipro_stub>,
+				 <&clk_ufs_core_stub>, <&clk_ufs_core_stub>,
+				 <&clk_ufs_core_stub>, <&clk_ufs_core_stub>;
+			clock-names = "core_clk", "sclk_unipro_main", "fmp",
+				      "aclk", "pclk", "sysreg";
+			dma-coherent;
+			freq-table-hz = <0 0>, <0 0>, <0 0>, <0 0>, <0 0>, <0 0>;
+			phys = <&ufs_0_phy>;
+			phy-names = "ufs-phy";
+			pinctrl-0 = <&ufs_rst_n &ufs_refclk_out>;
+			pinctrl-names = "default";
+			samsung,sysreg = <&sysreg_ufs 0x710>;
+			status = "disabled";
+		};
+
+		ufs_0_phy: phy@13204000 {
+			compatible = "google,zuma-ufs-phy", "google,zumapro-ufs-phy";
+			reg = <0x13204000 0x4000>;
+			reg-names = "phy-pma";
+			samsung,pmu-syscon = <&pmu_system_controller>;
+			#phy-cells = <0>;
+			clocks = <&clk_ufs_ref_stub>;
+			clock-names = "ref_clk";
+			status = "disabled";
 		};
 
 		/* Writes go through EL3 (SMC), as on gs101. */
