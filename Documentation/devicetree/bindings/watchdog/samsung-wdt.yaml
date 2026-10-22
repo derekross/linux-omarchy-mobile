@@ -19,6 +19,7 @@ properties:
     oneOf:
       - enum:
           - google,gs101-wdt                      # for Google gs101
+          - google,zuma-wdt                       # for Google zuma
           - samsung,s3c6410-wdt                   # for S3C6410, S5PV210 and Exynos4
           - samsung,exynos5250-wdt                # for Exynos5250
           - samsung,exynos5420-wdt                # for Exynos5420
@@ -51,13 +52,13 @@ properties:
     enum: [0, 1, 2]
     description:
       Index of CPU cluster on which watchdog is running (in case of Exynos850,
-      Exynos990 or Google gs101).
+      Exynos990, Google gs101 or Google zuma).
 
   samsung,syscon-phandle:
     $ref: /schemas/types.yaml#/definitions/phandle
     description:
       Phandle to the PMU system controller node (in case of Exynos5250,
-      Exynos5420, Exynos7, Exynos850, Exynos990 and gs101).
+      Exynos5420, Exynos7, Exynos850, Exynos990, gs101 and zuma).
 
 required:
   - compatible
@@ -74,6 +75,7 @@ allOf:
           contains:
             enum:
               - google,gs101-wdt
+              - google,zuma-wdt
               - samsung,exynos850-wdt
               - samsung,exynosautov9-wdt
               - samsung,exynosautov920-wdt
