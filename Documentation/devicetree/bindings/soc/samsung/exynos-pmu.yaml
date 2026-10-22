@@ -14,6 +14,7 @@ properties:
     oneOf:
       - enum:
           - google,gs101-pmu
+          - google,zuma-pmu
       - items:
           - enum:
               - samsung,exynos3250-pmu
