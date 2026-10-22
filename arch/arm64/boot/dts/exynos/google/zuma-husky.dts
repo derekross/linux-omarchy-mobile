@@ -50,3 +50,15 @@
 		 */
 	};
 };
+
+&usb_dwc3 {
+	status = "okay";
+};
+
+&usb_hsphy {
+	status = "okay";
+};
+
+&usbdrd_phy {
+	status = "okay";
+};
