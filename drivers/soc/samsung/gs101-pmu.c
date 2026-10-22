@@ -330,6 +330,15 @@ const struct exynos_pmu_data gs101_pmu_data = {
 };
 
 /*
+ * zuma's PMU is written through the same EL3 call, but its register map and
+ * CPU layout differ from gs101's, so no access tables and no CPU hotplug
+ * hooks yet: only the regmap, for its PHY and power-domain consumers.
+ */
+const struct exynos_pmu_data zuma_pmu_data = {
+	.pmu_secure = true,
+};
+
+/*
  * Tensor SoCs are configured so that PMU_ALIVE registers can only be written
  * from EL3, but are still read accessible. As Linux needs to write some of
  * these registers, the following functions are provided and exposed via
