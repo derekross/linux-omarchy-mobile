@@ -197,6 +197,18 @@
 		bldr-log@fd800000 { reg = <0x0 0xfd800000 0x100000>; no-map; };
 	};
 
+	/*
+	 * Stand-in for CMU_HSI0's USB clocks until zuma has a clock driver.
+	 * ABL leaves HSI0 clocked (the DWC3 ID register reads back correctly);
+	 * the PHY drivers only need a handle and the 19.2 MHz reference rate.
+	 */
+	clk_usb_stub: clock-usb-stub {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <19200000>;
+		clock-output-names = "usb_stub";
+	};
+
 	soc: soc@0 {
 		compatible = "simple-bus";
 		#address-cells = <1>;
@@ -214,21 +226,57 @@
 		};
 
 		/*
-		 * The DWC3 controller. Stock has it in peripheral mode behind
-		 * Google's exynos9-dwusb glue, with an eUSB2 PHY at 0x11100000
-		 * and a Samsung eUSB2 repeater on I2C (0x3e). ABL leaves both
-		 * set up from fastboot [I], so the first-light gate tries the
-		 * bare core without a PHY node; a PHY driver comes next.
+		 * USB control block: Exynos 2200's link registers, with the
+		 * eUSB2 PHY below as its high-speed PHY. The USB3/DP combo PHY
+		 * (0x11130000) is left alone; the link runs at high speed.
+		 */
+		usbdrd_phy: phy@11100000 {
+			compatible = "google,zuma-usb32drd-phy";
+			reg = <0x11100000 0x200>;
+			clocks = <&clk_usb_stub>;
+			clock-names = "phy";
+			#phy-cells = <1>;
+			phys = <&usb_hsphy>;
+			phy-names = "hs";
+			samsung,pmu-syscon = <&pmu_system_controller>;
+			status = "disabled";
+		};
+
+		/* Synopsys eUSB2 PHY, the same IP and register map as Exynos 2200's. */
+		usb_hsphy: phy@11110000 {
+			compatible = "google,zuma-eusb2-phy",
+				     "samsung,exynos2200-eusb2-phy";
+			reg = <0x11110000 0x200>;
+			clocks = <&clk_usb_stub>, <&clk_usb_stub>, <&clk_usb_stub>;
+			clock-names = "ref", "bus", "ctrl";
+			#phy-cells = <0>;
+			status = "disabled";
+		};
+
+		/*
+		 * The DWC3 controller, in peripheral mode as on stock (which
+		 * wraps it in Google's exynos9-dwusb glue). On a normal boot
+		 * ABL leaves the eUSB2 PHY off, so the core's soft reset only
+		 * completes once the PHY above supplies its UTMI clock. The
+		 * Samsung eUSB2 repeater on I2C (0x3e) has no driver yet.
 		 */
 		usb_dwc3: usb@11210000 {
 			compatible = "snps,dwc3";
 			reg = <0x11210000 0x10000>;
 			interrupts = <GIC_SPI 402 IRQ_TYPE_LEVEL_HIGH>;
+			phys = <&usbdrd_phy 0>;
+			phy-names = "usb2-phy";
 			dr_mode = "peripheral";
 			maximum-speed = "high-speed";
 			snps,dis_u2_susphy_quirk;
 			snps,dis_u3_susphy_quirk;
 			status = "disabled";
+		};
+
+		/* Writes go through EL3 (SMC), as on gs101. */
+		pmu_system_controller: system-controller@15460000 {
+			compatible = "google,zuma-pmu";
+			reg = <0x15460000 0x10000>;
 		};
 	};
 };
