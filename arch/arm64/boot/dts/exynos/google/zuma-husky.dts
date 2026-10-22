@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Google Pixel 8 Pro (husky) - first-light board file.
+ */
+
+/dts-v1/;
+
+#include "zuma.dtsi"
+
+/ {
+	model = "Google Pixel 8 Pro";
+	compatible = "google,zuma-husky", "google,zuma";
+
+	/*
+	 * zuma's ABL picks the base DTB by matching these children against
+	 * the SoC's product id, revision and package; there is no /soc_id.
+	 * A retail husky has a B0/B1 FOPLP part (stock base DTB 2, which
+	 * carries exactly these two).
+	 */
+	soc_compatible {
+		B0_FOPLP {
+			description = "B0,FOPLP";
+			product_id = <0x9865>;
+			major = <1>;
+			minor = <0>;
+			pkg_mode = <0>;
+		};
+
+		B1_FOPLP {
+			description = "B1,FOPLP";
+			product_id = <0x9865>;
+			major = <1>;
+			minor = <1>;
+			pkg_mode = <0>;
+		};
+	};
+
+	chosen {
+		/* ABL requires bootargs to exist; it appends its own after these. */
+		bootargs = "console=tty0 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init";
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+
+		/*
+		 * No simple-framebuffer yet: the live tree names no splash
+		 * carve-out, and the address is read from DPP's RDMA base
+		 * register on a booted phone before it goes here (as on the
+		 * Pixel 7 Pro and the Fold), never guessed.
+		 */
+	};
+};
