@@ -211,11 +211,48 @@
 		clock-output-names = "usb_stub";
 	};
 
+	/*
+	 * Stand-in for the watchdogs' clocks (zuma has no clock driver yet):
+	 * stock runs both counters from the 24.576 MHz oscillator, and ABL
+	 * leaves their gates open.
+	 */
+	clk_wdt_stub: clock-wdt-stub {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <24576000>;
+		clock-output-names = "wdt_stub";
+	};
+
 	soc: soc@0 {
 		compatible = "simple-bus";
 		#address-cells = <1>;
 		#size-cells = <1>;
 		ranges = <0x0 0x0 0x0 0x40000000>;
+
+		/*
+		 * ABL hands over with both cluster watchdogs counting (30 s);
+		 * without a driver to take them over the phone resets about
+		 * 80 s into boot.
+		 */
+		watchdog_cl0: watchdog@10060000 {
+			compatible = "google,zuma-wdt";
+			reg = <0x10060000 0x100>;
+			interrupts = <GIC_SPI 767 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk_wdt_stub>, <&clk_wdt_stub>;
+			clock-names = "watchdog", "watchdog_src";
+			samsung,cluster-index = <0>;
+			samsung,syscon-phandle = <&pmu_system_controller>;
+		};
+
+		watchdog_cl1: watchdog@10070000 {
+			compatible = "google,zuma-wdt";
+			reg = <0x10070000 0x100>;
+			interrupts = <GIC_SPI 768 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk_wdt_stub>, <&clk_wdt_stub>;
+			clock-names = "watchdog", "watchdog_src";
+			samsung,cluster-index = <1>;
+			samsung,syscon-phandle = <&pmu_system_controller>;
+		};
 
 		gic: interrupt-controller@10400000 {
 			compatible = "arm,gic-v3";
