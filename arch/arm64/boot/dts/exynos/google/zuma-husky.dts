@@ -37,17 +37,36 @@
 
 	chosen {
 		/* ABL requires bootargs to exist; it appends its own after these. */
-		bootargs = "console=tty0 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init";
+		bootargs = "console=tty0 fbcon=font:TER16x32 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init";
 		#address-cells = <2>;
 		#size-cells = <1>;
 		ranges;
 
 		/*
-		 * No simple-framebuffer yet: the live tree names no splash
-		 * carve-out, and the address is read from DPP's RDMA base
-		 * register on a booted phone before it goes here (as on the
-		 * Pixel 7 Pro and the Fold), never guessed.
+		 * ABL's splash, still scanned out at handover: DPP0's
+		 * RDMA_BASEADDR_P0 (0x19900040) reads 0xfac00000 on a booted
+		 * phone, as on the Pixel 7 Pro. The panel is DSI command mode,
+		 * so new frames reach it only once DECON0's trigger is unmasked.
 		 */
+		framebuffer0: framebuffer {
+			compatible = "simple-framebuffer";
+			memory-region = <&cont_splash_mem>;
+			width = <1344>;
+			height = <2992>;
+			stride = <(1344 * 4)>;
+			format = "a8r8g8b8";
+		};
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+
+		cont_splash_mem: splash@fac00000 {
+			reg = <0x0 0xfac00000 (1344 * 2992 * 4)>;
+			no-map;
+		};
 	};
 };
 
