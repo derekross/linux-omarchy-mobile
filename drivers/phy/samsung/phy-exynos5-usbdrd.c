@@ -2090,6 +2090,22 @@ static const struct exynos5_usbdrd_phy_drvdata exynos2200_usb32drd_phy = {
 	.n_regulators		= 0,
 };
 
+/*
+ * zuma's USB control block has Exynos 2200's link registers and the same
+ * Synopsys eUSB2 PHY behind it; only its PMU isolation register differs.
+ */
+static const struct exynos5_usbdrd_phy_drvdata zuma_usb32drd_phy = {
+	.phy_cfg		= phy_cfg_exynos2200,
+	.phy_ops		= &exynos2200_usbdrd_phy_ops,
+	.pmu_offset_usbdrd0_phy	= GS101_PHY_CTRL_USB20,
+	.clk_names		= exynos5_clk_names,
+	.n_clks			= ARRAY_SIZE(exynos5_clk_names),
+	.core_clk_names		= NULL,
+	.n_core_clks		= 0,
+	.regulator_names	= NULL,
+	.n_regulators		= 0,
+};
+
 static const struct exynos5_usbdrd_phy_drvdata exynos5420_usbdrd_phy = {
 	.phy_cfg		= phy_cfg_exynos5,
 	.phy_ops		= &exynos5_usbdrd_phy_ops,
@@ -2968,6 +2984,9 @@ static const struct of_device_id exynos5_usbdrd_phy_of_match[] = {
 	}, {
 		.compatible = "google,gs201-usb31drd-phy",
 		.data = &gs101_usbd31rd_phy
+	}, {
+		.compatible = "google,zuma-usb32drd-phy",
+		.data = &zuma_usb32drd_phy
 	}, {
 		.compatible = "samsung,exynos2200-usb32drd-phy",
 		.data = &exynos2200_usb32drd_phy,
