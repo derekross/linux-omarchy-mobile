@@ -25,7 +25,9 @@ properties:
           - google,gs101-mbox
           - samsung,exynos850-mbox
       - items:
-          - const: google,gs201-mbox
+          - enum:
+              - google,gs201-mbox
+              - google,zumapro-mbox
           - const: google,gs101-mbox
 
   reg:
