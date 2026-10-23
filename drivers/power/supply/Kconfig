@@ -459,6 +459,17 @@ config BATTERY_MAX17042
 
 	  Driver can be build as a module (max17042_battery).
 
+config BATTERY_MAX77779
+	tristate "Maxim MAX77779 read-only Fuel Gauge"
+	depends on I2C
+	select REGMAP_I2C
+	help
+	  Report battery measurements from a MAX77779 with a retained,
+	  initialized firmware model. Probe refuses an uninitialized gauge.
+	  Model loading and charger control are not provided.
+
+	  The module is named max77779_battery.
+
 config BATTERY_MAX1720X
 	tristate "Maxim MAX17201/MAX17205 Fuel Gauge"
 	depends on I2C
