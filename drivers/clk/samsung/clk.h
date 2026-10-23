@@ -430,6 +430,8 @@ void samsung_clk_register_div(struct samsung_clk_provider *ctx,
 void samsung_clk_register_gate(struct samsung_clk_provider *ctx,
 			const struct samsung_gate_clock *clk_list,
 			unsigned int nr_clk);
+struct clk_hw *devm_samsung_clk_register_pll(struct samsung_clk_provider *ctx,
+					     const struct samsung_pll_clock *clock);
 void samsung_clk_register_pll(struct samsung_clk_provider *ctx,
 			const struct samsung_pll_clock *pll_list,
 			unsigned int nr_clk);

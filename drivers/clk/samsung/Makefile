@@ -31,6 +31,7 @@ obj-$(CONFIG_EXYNOS_ARM64_COMMON_CLK)	+= clk-exynosautov920.o
 obj-$(CONFIG_EXYNOS_ARM64_COMMON_CLK)	+= clk-gs101.o
 obj-$(CONFIG_EXYNOS_ARM64_COMMON_CLK)	+= clk-gs201.o
 obj-$(CONFIG_EXYNOS_ARM64_COMMON_CLK)	+= clk-zumapro.o
+obj-$(CONFIG_EXYNOS_ARM64_COMMON_CLK) += clk-zumapro-hsi0.o
 obj-$(CONFIG_EXYNOS_ACPM_CLK)		+= clk-acpm.o
 obj-$(CONFIG_S3C64XX_COMMON_CLK)	+= clk-s3c64xx.o
 obj-$(CONFIG_S5PV210_COMMON_CLK)	+= clk-s5pv210.o clk-s5pv210-audss.o

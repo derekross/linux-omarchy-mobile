@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/clock/google,zumapro-hsi0-clock.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Google Tensor G4 HSI0 clock controller
+
+maintainers:
+  - W4HO <87742609+W4HO-ham@users.noreply.github.com>
+
+description: |
+  CMU_HSI0 provides clocks for USB and the HSI0 USI interfaces. Its local
+  bus mux can select the TOP NoC clock or a separate alternate input. The
+  USB reference mux selects the local USB PLL divider or the TCXO user mux.
+  Firmware leaves HSI0 powered at handoff and Linux does not power it off.
+  Power-off, suspend and S2MPU context restoration are not qualified.
+  Clock identifiers are defined in dt-bindings/clock/google,zumapro.h.
+
+properties:
+  compatible:
+    const: google,zumapro-cmu-hsi0
+
+  reg:
+    maxItems: 1
+
+  clocks:
+    items:
+      - description: OSCCLK_HSI0 oscillator reference
+      - description: TOP CLKCMU_HSI0_NOC input
+      - description: TOP CLKCMU_HSI0_PERI input
+      - description: Separate I_CLK_HSI0_ALT input
+      - description: TCXO_HSI1_HSI0 input
+
+  clock-names:
+    items:
+      - const: oscclk
+      - const: noc
+      - const: peri
+      - const: alt
+      - const: tcxo
+
+  "#clock-cells":
+    const: 1
+
+  power-domains: false
+
+required:
+  - compatible
+  - reg
+  - clocks
+  - clock-names
+  - "#clock-cells"
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/clock/google,zumapro.h>
+
+    clock-controller@11000000 {
+        compatible = "google,zumapro-cmu-hsi0";
+        reg = <0x11000000 0x8000>;
+        clocks = <&oscclk>, <&cmu_top CLK_DOUT_HSI0_NOC>,
+                 <&cmu_top CLK_DOUT_HSI0_PERI>, <&hsi0_alt>, <&hsi0_tcxo>;
+        clock-names = "oscclk", "noc", "peri", "alt", "tcxo";
+        #clock-cells = <1>;
+    };

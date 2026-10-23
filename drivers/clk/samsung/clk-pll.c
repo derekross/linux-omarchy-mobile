@@ -12,6 +12,7 @@
 #include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/clk-provider.h>
+#include <linux/device.h>
 #include <linux/io.h>
 #include "clk.h"
 #include "clk-pll.h"
@@ -1591,11 +1592,11 @@ static const struct clk_ops samsung_a9fraco_clk_min_ops = {
 	.recalc_rate = samsung_a9fraco_recalc_rate,
 };
 
-static void __init _samsung_clk_register_pll(struct samsung_clk_provider *ctx,
-				const struct samsung_pll_clock *pll_clk)
+static struct clk_hw *_samsung_clk_register_pll(struct samsung_clk_provider *ctx,
+						const struct samsung_pll_clock *pll_clk)
 {
 	struct samsung_clk_pll *pll;
-	struct clk_init_data init;
+	struct clk_init_data init = { };
 	unsigned int len = 0;
 	int ret;
 
@@ -1609,7 +1610,7 @@ static void __init _samsung_clk_register_pll(struct samsung_clk_provider *ctx,
 	if (!pll) {
 		pr_err("%s: could not allocate pll clk %s\n",
 			__func__, pll_clk->name);
-		return;
+		return ERR_PTR(-ENOMEM);
 	}
 
 	pll->rate_count = len;
@@ -1750,6 +1751,8 @@ static void __init _samsung_clk_register_pll(struct samsung_clk_provider *ctx,
 	default:
 		pr_warn("%s: Unknown pll type for pll clk %s\n",
 			__func__, pll_clk->name);
+		kfree(pll);
+		return ERR_PTR(-EINVAL);
 	}
 
 	pll->hw.init = &init;
@@ -1762,10 +1765,11 @@ static void __init _samsung_clk_register_pll(struct samsung_clk_provider *ctx,
 		pr_err("%s: failed to register pll clock %s : %d\n",
 			__func__, pll_clk->name, ret);
 		kfree(pll);
-		return;
+		return ERR_PTR(ret);
 	}
 
 	samsung_clk_add_lookup(ctx, &pll->hw, pll_clk->id);
+	return &pll->hw;
 }
 
 void __init samsung_clk_register_pll(struct samsung_clk_provider *ctx,
@@ -1776,4 +1780,48 @@ void __init samsung_clk_register_pll(struct samsung_clk_provider *ctx,
 
 	for (cnt = 0; cnt < nr_pll; cnt++)
 		_samsung_clk_register_pll(ctx, &pll_list[cnt]);
+}
+
+struct samsung_pll_resource {
+	struct samsung_clk_provider *ctx;
+	struct clk_hw *hw;
+	unsigned int id;
+};
+
+static void samsung_clk_unregister_pll(void *data)
+{
+	struct samsung_pll_resource *resource = data;
+	struct samsung_clk_pll *pll = to_clk_pll(resource->hw);
+
+	if (resource->id)
+		resource->ctx->clk_data.hws[resource->id] = ERR_PTR(-ENOENT);
+	clk_hw_unregister(resource->hw);
+	kfree(pll);
+}
+
+struct clk_hw *devm_samsung_clk_register_pll(struct samsung_clk_provider *ctx,
+					     const struct samsung_pll_clock *clock)
+{
+	struct samsung_pll_resource *resource;
+	struct clk_hw *hw;
+	int ret;
+
+	if (!ctx->dev || clock->id >= ctx->clk_data.num)
+		return ERR_PTR(-EINVAL);
+	if (clock->id && !IS_ERR_OR_NULL(ctx->clk_data.hws[clock->id]))
+		return ERR_PTR(-EEXIST);
+	resource = devm_kzalloc(ctx->dev, sizeof(*resource), GFP_KERNEL);
+	if (!resource)
+		return ERR_PTR(-ENOMEM);
+	hw = _samsung_clk_register_pll(ctx, clock);
+	if (IS_ERR(hw))
+		return hw;
+	resource->ctx = ctx;
+	resource->hw = hw;
+	resource->id = clock->id;
+	ret = devm_add_action_or_reset(ctx->dev, samsung_clk_unregister_pll,
+				       resource);
+	if (ret)
+		return ERR_PTR(ret);
+	return hw;
 }
