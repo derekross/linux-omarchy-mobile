@@ -2270,8 +2270,8 @@ static const struct regulator_desc s2mpu05_regulators[] = {
 };
 
 /*
- * Only LDO4M and LDO25M have been qualified on S2MPG14. Both switch with
- * bit7; the low six voltage-selector bits remain firmware-owned here.
+ * Voltage selectors remain firmware-owned. Enable fields vary between
+ * outputs; LDO8M shares its enable register with other regulators.
  */
 static const struct regulator_ops s2mpg14_ldo_ops = {
 	.list_voltage		= regulator_list_voltage_linear,
@@ -2297,6 +2297,54 @@ static const struct regulator_desc s2mpg14_regulators[] = {
 		.vsel_mask = GENMASK(5, 0),
 		.enable_reg = S2MPG14_PMIC_L4M_CTRL,
 		.enable_mask = BIT(7),
+		.enable_time = 128,
+	}, {
+		.name = "ldo8m",
+		.id = 7,
+		.of_match = of_match_ptr("ldo8m"),
+		.regulators_node = of_match_ptr("regulators"),
+		.ops = &s2mpg14_ldo_ops,
+		.type = REGULATOR_VOLTAGE,
+		.owner = THIS_MODULE,
+		.min_uV = 300000,
+		.uV_step = 12500,
+		.n_voltages = 128,
+		.vsel_reg = S2MPG14_PMIC_L8M_CTRL,
+		.vsel_mask = GENMASK(6, 0),
+		.enable_reg = S2MPG14_PMIC_LDO_CTRL1,
+		.enable_mask = GENMASK(1, 0),
+		.enable_time = 128,
+	}, {
+		.name = "ldo9m",
+		.id = 8,
+		.of_match = of_match_ptr("ldo9m"),
+		.regulators_node = of_match_ptr("regulators"),
+		.ops = &s2mpg14_ldo_ops,
+		.type = REGULATOR_VOLTAGE,
+		.owner = THIS_MODULE,
+		.min_uV = 725000,
+		.uV_step = 12500,
+		.n_voltages = 64,
+		.vsel_reg = S2MPG14_PMIC_L9M_CTRL,
+		.vsel_mask = GENMASK(5, 0),
+		.enable_reg = S2MPG14_PMIC_L9M_CTRL,
+		.enable_mask = GENMASK(7, 6),
+		.enable_time = 128,
+	}, {
+		.name = "ldo19m",
+		.id = 18,
+		.of_match = of_match_ptr("ldo19m"),
+		.regulators_node = of_match_ptr("regulators"),
+		.ops = &s2mpg14_ldo_ops,
+		.type = REGULATOR_VOLTAGE,
+		.owner = THIS_MODULE,
+		.min_uV = 1800000,
+		.uV_step = 25000,
+		.n_voltages = 64,
+		.vsel_reg = S2MPG14_PMIC_L19M_CTRL,
+		.vsel_mask = GENMASK(5, 0),
+		.enable_reg = S2MPG14_PMIC_L19M_CTRL,
+		.enable_mask = GENMASK(7, 6),
 		.enable_time = 128,
 	}, {
 		.name = "ldo25m",
@@ -2348,6 +2396,19 @@ static int s2mps11_handle_ext_control(struct s2mps11_info *s2mps11,
 	}
 
 	return ret;
+}
+
+/* Leave firmware-owned outputs alone unless the board describes them. */
+static bool s2mpg14_regulator_is_described(struct device *dev,
+					   const struct regulator_desc *desc)
+{
+	struct device_node *regulators __free(device_node) =
+		of_get_child_by_name(dev->of_node, desc->regulators_node);
+	struct device_node *node __free(device_node) =
+		of_get_child_by_name(regulators, desc->of_match);
+
+	return of_device_is_available(regulators) &&
+	       of_device_is_available(node);
 }
 
 static int s2mps11_pmic_probe(struct platform_device *pdev)
@@ -2453,6 +2514,10 @@ static int s2mps11_pmic_probe(struct platform_device *pdev)
 			rdesc = &s2mpg1x_regulators[i].desc;
 		else
 			rdesc = &regulators[i];
+
+		if (s2mps11->dev_type == S2MPG14 &&
+		    !s2mpg14_regulator_is_described(&pdev->dev, rdesc))
+			continue;
 
 		regulator = devm_regulator_register(&pdev->dev,
 						    rdesc, &config);
