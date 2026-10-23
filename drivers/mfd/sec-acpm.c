@@ -563,7 +563,7 @@ static const struct regmap_config s2mpg13_regmap_config_gpio = {
 	.cache_type = REGCACHE_NONE,
 };
 
-/* S2MPG14 support deliberately exposes only the qualified touch LDOs. */
+/* Expose only the touchscreen and eUSB2 supply controls. */
 static const struct regmap_range s2mpg14_common_registers[] = {
 	regmap_reg_range(S2MPG14_COMMON_CHIPID, S2MPG14_COMMON_CHIPID),
 };
@@ -591,23 +591,37 @@ static const struct regmap_config s2mpg14_regmap_config_common = {
 	.wr_table = &s2mpg14_common_wr_table,
 };
 
-static const struct regmap_range s2mpg14_pmic_registers[] = {
+static const struct regmap_range s2mpg14_pmic_rd_registers[] = {
 	regmap_reg_range(S2MPG14_PMIC_L4M_CTRL, S2MPG14_PMIC_L4M_CTRL),
-	regmap_reg_range(S2MPG14_PMIC_L25M_CTRL, S2MPG14_PMIC_L25M_CTRL),
+	regmap_reg_range(S2MPG14_PMIC_L8M_CTRL, S2MPG14_PMIC_L9M_CTRL),
+	regmap_reg_range(S2MPG14_PMIC_L19M_CTRL, S2MPG14_PMIC_L19M_CTRL),
+	regmap_reg_range(S2MPG14_PMIC_L25M_CTRL, S2MPG14_PMIC_LDO_CTRL1),
 };
 
-static const struct regmap_access_table s2mpg14_pmic_table = {
-	.yes_ranges = s2mpg14_pmic_registers,
-	.n_yes_ranges = ARRAY_SIZE(s2mpg14_pmic_registers),
+static const struct regmap_range s2mpg14_pmic_wr_registers[] = {
+	regmap_reg_range(S2MPG14_PMIC_L4M_CTRL, S2MPG14_PMIC_L4M_CTRL),
+	regmap_reg_range(S2MPG14_PMIC_L9M_CTRL, S2MPG14_PMIC_L9M_CTRL),
+	regmap_reg_range(S2MPG14_PMIC_L19M_CTRL, S2MPG14_PMIC_L19M_CTRL),
+	regmap_reg_range(S2MPG14_PMIC_L25M_CTRL, S2MPG14_PMIC_LDO_CTRL1),
+};
+
+static const struct regmap_access_table s2mpg14_pmic_rd_table = {
+	.yes_ranges = s2mpg14_pmic_rd_registers,
+	.n_yes_ranges = ARRAY_SIZE(s2mpg14_pmic_rd_registers),
+};
+
+static const struct regmap_access_table s2mpg14_pmic_wr_table = {
+	.yes_ranges = s2mpg14_pmic_wr_registers,
+	.n_yes_ranges = ARRAY_SIZE(s2mpg14_pmic_wr_registers),
 };
 
 static const struct regmap_config s2mpg14_regmap_config_pmic = {
 	.name = "pmic",
 	.reg_bits = ACPM_ADDR_BITS,
 	.val_bits = 8,
-	.max_register = S2MPG14_PMIC_L25M_CTRL,
-	.rd_table = &s2mpg14_pmic_table,
-	.wr_table = &s2mpg14_pmic_table,
+	.max_register = S2MPG14_PMIC_LDO_CTRL1,
+	.rd_table = &s2mpg14_pmic_rd_table,
+	.wr_table = &s2mpg14_pmic_wr_table,
 };
 
 struct sec_pmic_acpm_shared_bus_context {
