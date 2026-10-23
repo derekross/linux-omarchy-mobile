@@ -12,6 +12,7 @@ maintainers:
 description: |
   CMU_TOP supplies the NoC and UFS clock paths to CMU_HSI2 and the supply-GPIO
   path in CMU_PERIC0. CMU_TOP also provides the HSI0 parent rate paths.
+  CMU_MISC supplies the firmware-owned watchdog bus clock paths.
   The external oscillator supplies the PLL reference and oscillator mux
   paths.
   Clock identifiers are defined in dt-bindings/clock/google,zumapro.h.
@@ -22,6 +23,7 @@ properties:
       - google,zumapro-cmu-top
       - google,zumapro-cmu-hsi2
       - google,zumapro-cmu-peric0
+      - google,zumapro-cmu-misc
 
   reg:
     maxItems: 1
@@ -78,13 +80,15 @@ allOf:
   - if:
       properties:
         compatible:
-          const: google,zumapro-cmu-peric0
+          enum:
+            - google,zumapro-cmu-peric0
+            - google,zumapro-cmu-misc
     then:
       properties:
         clocks:
           items:
-            - description: PERIC0 oscillator clock
-            - description: PERIC0 NoC clock from CMU_TOP
+            - description: Domain oscillator reference clock
+            - description: Domain NoC clock from CMU_TOP
         clock-names:
           items:
             - const: oscclk
@@ -112,6 +116,14 @@ examples:
                  <&cmu_top CLK_DOUT_HSI2_UFS>,
                  <&cmu_top CLK_DOUT_HSI2_PCIE>;
         clock-names = "oscclk", "bus", "ufs", "pcie";
+    };
+
+    clock-controller@10010000 {
+        compatible = "google,zumapro-cmu-misc";
+        reg = <0x10010000 0x8000>;
+        #clock-cells = <1>;
+        clocks = <&oscclk>, <&cmu_top CLK_DOUT_MISC_NOC>;
+        clock-names = "oscclk", "bus";
     };
 
     clock-controller@10800000 {
