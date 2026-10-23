@@ -348,9 +348,10 @@
 		};
 
 		/*
-		 * Off by default: only Bluetooth (BT_REG_ON, BT_DEV_WAKE on gpp16)
-		 * and the haptics I2C bus (gpp16-0/1) use it so far, and both are
-		 * still at bring-up.
+		 * Off by default. Bluetooth (BT_REG_ON, BT_DEV_WAKE on gpp16),
+		 * the haptics I2C bus (gpp16-0/1), and the Pixel Fold cover
+		 * touch SPI bus (gpp12) use it. All of those are still at
+		 * bring-up.
 		 */
 		pinctrl_peric0: pinctrl@10840000 {
 			compatible = "google,gs201-pinctrl";
