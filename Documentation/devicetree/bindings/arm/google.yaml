@@ -46,14 +46,70 @@ properties:
               - google,gs201-cheetah
               - google,gs201-felix
           - const: google,gs201
+      - description: Google Tensor G3 (zuma) boards
+        items:
+          - enum:
+              - google,zuma-husky
+          - const: google,zuma
 
-  # Bootloader requires empty ect node to be present
+  # Bootloader requires an ect node to be present: empty on gs101 and gs201,
+  # with the location of the ECT blob on zuma
   ect:
     type: object
     additionalProperties: false
+    properties:
+      parameter_address:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description:
+          Physical address of the Exynos Characteristic Table (ECT), the
+          bootloader-provided table of clock, voltage and timing parameters.
+      parameter_size:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description: Size of the ECT in bytes.
+
+  soc_compatible:
+    type: object
+    description:
+      The zuma bootloader picks the base DTB by matching the SoC's product
+      id, revision and package against these children, one per supported
+      silicon revision and package.
+    additionalProperties:
+      type: object
+      # Stock trees also give each child a human-readable label in a
+      # property named "description", which a schema cannot name.
+      additionalProperties: true
+      properties:
+        product_id:
+          $ref: /schemas/types.yaml#/definitions/uint32
+        major:
+          $ref: /schemas/types.yaml#/definitions/uint32
+        minor:
+          $ref: /schemas/types.yaml#/definitions/uint32
+        pkg_mode:
+          $ref: /schemas/types.yaml#/definitions/uint32
+      required:
+        - product_id
+        - major
+        - minor
+        - pkg_mode
 
 required:
   - ect
+
+allOf:
+  - if:
+      properties:
+        compatible:
+          not:
+            contains:
+              const: google,zuma
+    then:
+      properties:
+        ect:
+          properties:
+            parameter_address: false
+            parameter_size: false
+        soc_compatible: false
 
 additionalProperties: true
 
