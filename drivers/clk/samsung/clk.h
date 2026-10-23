@@ -340,6 +340,8 @@ struct samsung_clock_reg_cache {
  * @nr_div_clks: count of clocks in @div_clks
  * @gate_clks: list of gate clocks
  * @nr_gate_clks: count of clocks in @gate_clks
+ * @ro_gate_clks: list of firmware-owned, read-only gate clocks
+ * @nr_ro_gate_clks: count of clocks in @ro_gate_clks
  * @fixed_clks: list of fixed clocks
  * @nr_fixed_clks: count clocks in @fixed_clks
  * @fixed_factor_clks: list of fixed factor clocks
@@ -370,6 +372,8 @@ struct samsung_cmu_info {
 	unsigned int nr_div_clks;
 	const struct samsung_gate_clock *gate_clks;
 	unsigned int nr_gate_clks;
+	const struct samsung_gate_clock *ro_gate_clks;
+	unsigned int nr_ro_gate_clks;
 	const struct samsung_fixed_rate_clock *fixed_clks;
 	unsigned int nr_fixed_clks;
 	const struct samsung_fixed_factor_clock *fixed_factor_clks;

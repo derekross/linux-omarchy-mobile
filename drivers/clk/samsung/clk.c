@@ -335,6 +335,67 @@ struct clk_hw *samsung_register_auto_gate(struct device *dev,
 	return hw;
 }
 
+/* Firmware owns these gates; CCF may observe but must not switch them. */
+static int samsung_clk_ro_gate_enable(struct clk_hw *hw)
+{
+	return clk_gate_is_enabled(hw) ? 0 : -EIO;
+}
+
+static void samsung_clk_ro_gate_disable(struct clk_hw *hw)
+{
+	/* Keep firmware's gate state when a Linux reference is released. */
+}
+
+static const struct clk_ops samsung_clk_ro_gate_ops = {
+	.enable = samsung_clk_ro_gate_enable,
+	.disable = samsung_clk_ro_gate_disable,
+	.is_enabled = clk_gate_is_enabled,
+};
+
+static void __init samsung_clk_register_ro_gate(struct samsung_clk_provider *ctx,
+						const struct samsung_gate_clock *list,
+						unsigned int nr_clk)
+{
+	unsigned int i;
+
+	for (i = 0; i < nr_clk; i++, list++) {
+		struct clk_init_data init = {};
+		struct clk_gate *gate;
+		int ret;
+
+		if (list->id >= ctx->clk_data.num ||
+		    (list->id && !IS_ERR_OR_NULL(ctx->clk_data.hws[list->id]))) {
+			pr_err("%s: invalid clock ID for %s\n", __func__, list->name);
+			continue;
+		}
+
+		gate = kzalloc_obj(*gate);
+		if (!gate)
+			continue;
+
+		init.name = list->name;
+		init.ops = &samsung_clk_ro_gate_ops;
+		init.flags = list->flags | CLK_IGNORE_UNUSED;
+		init.parent_names = &list->parent_name;
+		init.num_parents = list->parent_name ? 1 : 0;
+		gate->hw.init = &init;
+		gate->reg = ctx->reg_base + list->offset;
+		gate->bit_idx = list->bit_idx;
+		gate->flags = list->gate_flags;
+		gate->lock = &ctx->lock;
+
+		ret = clk_hw_register(ctx->dev, &gate->hw);
+		if (ret) {
+			pr_err("%s: failed to register %s: %d\n", __func__,
+			       list->name, ret);
+			kfree(gate);
+			continue;
+		}
+
+		samsung_clk_add_lookup(ctx, &gate->hw, list->id);
+	}
+}
+
 /* register a list of gate clocks */
 void __init samsung_clk_register_gate(struct samsung_clk_provider *ctx,
 				const struct samsung_gate_clock *list,
@@ -478,6 +539,9 @@ void __init samsung_cmu_register_clocks(struct samsung_clk_provider *ctx,
 	if (cmu->gate_clks)
 		samsung_clk_register_gate(ctx, cmu->gate_clks,
 					  cmu->nr_gate_clks);
+	if (cmu->ro_gate_clks)
+		samsung_clk_register_ro_gate(ctx, cmu->ro_gate_clks,
+					     cmu->nr_ro_gate_clks);
 	if (cmu->fixed_clks)
 		samsung_clk_register_fixed_rate(ctx, cmu->fixed_clks,
 						cmu->nr_fixed_clks);
