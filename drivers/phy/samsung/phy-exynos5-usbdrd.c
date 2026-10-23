@@ -1403,12 +1403,6 @@ static const struct phy_ops exynos7870_usbdrd_phy_ops = {
 	.owner		= THIS_MODULE,
 };
 
-static void exynos2200_usbdrd_utmi_init(struct exynos5_usbdrd_phy *phy_drd)
-{
-	/* Configure non-Samsung IP PHY, responsible for UTMI */
-	phy_init(phy_drd->hs_phy);
-}
-
 static void exynos2200_usbdrd_link_init(struct exynos5_usbdrd_phy *phy_drd)
 {
 	void __iomem *regs_base = phy_drd->reg_phy;
@@ -1497,7 +1491,7 @@ static int exynos2200_usbdrd_phy_init(struct phy *phy)
 
 	ret = clk_bulk_prepare_enable(phy_drd->drv_data->n_clks, phy_drd->clks);
 	if (ret)
-		return ret;
+		goto isolate_phy;
 
 	/* Set up the link controller */
 	exynos2200_usbdrd_link_init(phy_drd);
@@ -1506,11 +1500,22 @@ static int exynos2200_usbdrd_phy_init(struct phy *phy)
 	exynos2200_usbdrd_link_attach_detach_pipe3_phy(inst);
 
 	/* UTMI or PIPE3 specific init */
-	inst->phy_cfg->phy_init(phy_drd);
+	if (inst->phy_cfg->id == EXYNOS5_DRDPHY_UTMI)
+		ret = phy_init(phy_drd->hs_phy);
+	else
+		inst->phy_cfg->phy_init(phy_drd);
 
 	clk_bulk_disable_unprepare(phy_drd->drv_data->n_clks, phy_drd->clks);
+	if (!ret)
+		return 0;
 
-	return 0;
+isolate_phy:
+	exynos5_usbdrd_phy_isol(inst, true);
+	if (inst->phy_cfg->id == EXYNOS5_DRDPHY_UTMI)
+		regulator_bulk_disable(phy_drd->drv_data->n_regulators,
+				       phy_drd->regulators);
+
+	return ret;
 }
 
 static int exynos2200_usbdrd_phy_exit(struct phy *phy)
@@ -1533,7 +1538,12 @@ static int exynos2200_usbdrd_phy_exit(struct phy *phy)
 	reg |= CLKRST_LINK_SW_RST;
 	writel(reg, regs_base + EXYNOS2200_DRD_CLKRST);
 
+	if (inst->phy_cfg->id == EXYNOS5_DRDPHY_UTMI)
+		ret = phy_exit(phy_drd->hs_phy);
+
 	clk_bulk_disable_unprepare(phy_drd->drv_data->n_clks, phy_drd->clks);
+	if (ret)
+		return ret;
 
 	exynos5_usbdrd_phy_isol(inst, true);
 	return regulator_bulk_disable(phy_drd->drv_data->n_regulators,
@@ -1874,7 +1884,6 @@ static const struct exynos5_usbdrd_phy_config phy_cfg_exynos2200[] = {
 	{
 		.id		= EXYNOS5_DRDPHY_UTMI,
 		.phy_isol	= exynos5_usbdrd_phy_isol,
-		.phy_init	= exynos2200_usbdrd_utmi_init,
 	},
 };
 

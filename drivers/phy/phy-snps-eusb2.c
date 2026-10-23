@@ -24,6 +24,7 @@
 #define FSEL_48_MHZ_VAL			(0x2)
 
 #define EXYNOS_USB_PHY_CFG_PLLCFG0	(0x8)
+#define EXYNOS_PHY_CFG_PLL_CPBIAS_MASK	GENMASK(6, 0)
 #define PHY_CFG_PLL_FB_DIV_19_8_MASK	GENMASK(19, 8)
 #define DIV_19_8_19_2_MHZ_VAL		(0x170)
 #define DIV_19_8_20_MHZ_VAL		(0x160)
@@ -314,7 +315,7 @@ static int qcom_eusb2_ref_clk_init(struct snps_eusb2_hsphy *phy)
 	return 0;
 }
 
-static int exynos_snps_eusb2_hsphy_init(struct phy *p)
+static int exynos_snps_eusb2_hsphy_init_common(struct phy *p, bool zumapro)
 {
 	struct snps_eusb2_hsphy *phy = phy_get_drvdata(p);
 	int ret;
@@ -332,6 +333,11 @@ static int exynos_snps_eusb2_hsphy_init(struct phy *p)
 	if (ret)
 		return ret;
 
+	/* G4's eUSB PHY revision requires a zero charge-pump bias. */
+	if (zumapro)
+		snps_eusb2_hsphy_write_mask(phy->base, EXYNOS_USB_PHY_CFG_PLLCFG0,
+					    EXYNOS_PHY_CFG_PLL_CPBIAS_MASK, 0);
+
 	/* default parameter: tx fsls-vref */
 	snps_eusb2_hsphy_write_mask(phy->base, EXYNOS_PHY_CFG_TX,
 				    EXYNOS_PHY_CFG_TX_FSLS_VREF_TUNE_MASK,
@@ -339,18 +345,35 @@ static int exynos_snps_eusb2_hsphy_init(struct phy *p)
 
 	snps_eusb2_hsphy_write_mask(phy->base, EXYNOS_USB_PHY_UTMI_TESTSE,
 				    TEST_IDDQ, 0);
+	if (zumapro)
+		snps_eusb2_hsphy_write_mask(phy->base, EXYNOS_USB_PHY_HS_PHY_CTRL_COMMON,
+					    PHY_ENABLE, 0);
 	fsleep(10); /* required after releasing test_iddq */
 
 	snps_eusb2_hsphy_write_mask(phy->base, EXYNOS_USB_PHY_HS_PHY_CTRL_RST,
-				    USB_PHY_RST_MASK, 0);
+				    zumapro ? BIT(0) : USB_PHY_RST_MASK, 0);
+	if (zumapro)
+		fsleep(10); /* REXT calibration before PHY_ENABLE */
 
 	snps_eusb2_hsphy_write_mask(phy->base, EXYNOS_USB_PHY_HS_PHY_CTRL_COMMON,
 				    PHY_ENABLE, PHY_ENABLE);
+	if (zumapro)
+		fsleep(3528); /* REXT calibration, PHY power-up and port reset */
 
 	snps_eusb2_hsphy_write_mask(phy->base, EXYNOS_USB_PHY_HS_PHY_CTRL_RST,
 				    UTMI_PORT_RST_MASK, 0);
 
 	return 0;
+}
+
+static int exynos_snps_eusb2_hsphy_init(struct phy *p)
+{
+	return exynos_snps_eusb2_hsphy_init_common(p, false);
+}
+
+static int zumapro_snps_eusb2_hsphy_init(struct phy *p)
+{
+	return exynos_snps_eusb2_hsphy_init_common(p, true);
 }
 
 static const char * const exynos_eusb2_hsphy_clock_names[] = {
@@ -359,6 +382,12 @@ static const char * const exynos_eusb2_hsphy_clock_names[] = {
 
 static const struct snps_eusb2_phy_drvdata exynos2200_snps_eusb2_phy = {
 	.phy_init	= exynos_snps_eusb2_hsphy_init,
+	.clk_names	= exynos_eusb2_hsphy_clock_names,
+	.num_clks	= ARRAY_SIZE(exynos_eusb2_hsphy_clock_names),
+};
+
+static const struct snps_eusb2_phy_drvdata zumapro_snps_eusb2_phy = {
+	.phy_init	= zumapro_snps_eusb2_hsphy_init,
 	.clk_names	= exynos_eusb2_hsphy_clock_names,
 	.num_clks	= ARRAY_SIZE(exynos_eusb2_hsphy_clock_names),
 };
@@ -613,6 +642,9 @@ static const struct of_device_id snps_eusb2_hsphy_of_match_table[] = {
 	}, {
 		.compatible = "samsung,exynos2200-eusb2-phy",
 		.data = &exynos2200_snps_eusb2_phy,
+	}, {
+		.compatible = "google,zumapro-eusb2-phy",
+		.data = &zumapro_snps_eusb2_phy,
 	}, {
 		/* sentinel */
 	}

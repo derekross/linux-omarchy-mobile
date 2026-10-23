@@ -18,7 +18,9 @@ properties:
     oneOf:
       - const: samsung,exynos2200-eusb2-phy
       - items:
-          - const: google,zuma-eusb2-phy
+          - enum:
+              - google,zuma-eusb2-phy
+              - google,zumapro-eusb2-phy
           - const: samsung,exynos2200-eusb2-phy
 
   reg:
@@ -49,7 +51,7 @@ properties:
 
   vdd-supply:
     description:
-      Phandle to 0.88V regulator supply to PHY digital circuit.
+      Phandle to the regulator supply to the PHY digital circuit.
 
   vdda12-supply:
     description:
