@@ -2,9 +2,9 @@
 /*
  * Google Pixel 7a (lynx) - M1 bring-up board file.
  *
- * First light: USB (NCM + ACM), the cluster watchdogs from gs201.dtsi,
- * and a simple-framebuffer on the buffer ABL leaves DPP0 scanning out.
- * UFS, the panel driver, touch and the GPU stay disabled.
+ * USB (NCM + ACM), the cluster watchdogs from gs201.dtsi, a
+ * simple-framebuffer on the buffer ABL leaves DPP0 scanning out, and UFS.
+ * The panel driver, touch and the GPU stay disabled.
  */
 
 /dts-v1/;
@@ -33,7 +33,7 @@
 
 	chosen {
 		/* ABL requires bootargs to exist; it appends its own after these. */
-		bootargs = "console=tty0 fbcon=font:TER16x32 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init";
+		bootargs = "console=tty0 fbcon=font:TER16x32 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init omamobile.ufs-probe";
 		#address-cells = <2>;
 		#size-cells = <1>;
 		ranges;
@@ -53,6 +53,18 @@
 			stride = <(1080 * 4)>;
 			format = "a8r8g8b8";
 		};
+	};
+
+	/*
+	 * UFS VCC. Stock drives it from GPIO gpp0-1 (boot-on), as on
+	 * cheetah; there is no gs201 GPIO driver yet, so describe it as
+	 * always on, as the bootloader leaves it.
+	 */
+	ufs_0_fixed_vcc_reg: regulator-ufs-vcc {
+		compatible = "regulator-fixed";
+		regulator-name = "ufs-vcc";
+		regulator-always-on;
+		regulator-boot-on;
 	};
 
 	/*
@@ -87,5 +99,14 @@
 };
 
 &usb_dwc3 {
+	status = "okay";
+};
+
+&ufs_0 {
+	vcc-supply = <&ufs_0_fixed_vcc_reg>;
+	status = "okay";
+};
+
+&ufs_0_phy {
 	status = "okay";
 };
