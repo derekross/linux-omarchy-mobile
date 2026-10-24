@@ -19,7 +19,6 @@
 	 */
 	soc_compatible {
 		B0_FOPLP {
-			description = "B0,FOPLP";
 			product_id = <0x9865>;
 			major = <1>;
 			minor = <0>;
@@ -27,7 +26,6 @@
 		};
 
 		B1_FOPLP {
-			description = "B1,FOPLP";
 			product_id = <0x9865>;
 			major = <1>;
 			minor = <1>;
