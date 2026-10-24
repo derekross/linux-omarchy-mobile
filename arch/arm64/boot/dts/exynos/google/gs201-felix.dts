@@ -77,13 +77,15 @@
 
 	/*
 	 * Volume down is gpa10-1 with a pull-up. Volume up is gpa8-5 with
-	 * no pull. The hinge hall is the factory hall_sensor on gpa2-3,
-	 * active-low with no pull. All three are active-low.
+	 * no pull. Power is gpa10-0, the S2MPG12 PWRONB line, with a
+	 * pull-up. The hinge hall is the factory hall_sensor on gpa2-3,
+	 * active-low with no pull. All four are active-low. The PMIC's
+	 * own long-press reset is unaffected.
 	 */
 	gpio-keys {
 		compatible = "gpio-keys";
 		pinctrl-names = "default";
-		pinctrl-0 = <&key_voldown>, <&key_volup>, <&hall_lid>;
+		pinctrl-0 = <&key_voldown>, <&key_volup>, <&key_power>, <&hall_lid>;
 
 		button-vol-down {
 			label = "KEY_VOLUMEDOWN";
@@ -96,6 +98,13 @@
 			label = "KEY_VOLUMEUP";
 			linux,code = <KEY_VOLUMEUP>;
 			gpios = <&gpa8 5 GPIO_ACTIVE_LOW>;
+			wakeup-source;
+		};
+
+		button-power {
+			label = "KEY_POWER";
+			linux,code = <KEY_POWER>;
+			gpios = <&gpa10 0 GPIO_ACTIVE_LOW>;
 			wakeup-source;
 		};
 
