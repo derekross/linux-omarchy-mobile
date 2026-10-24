@@ -144,6 +144,11 @@ struct goodix_berlin_touch {
 	__le16 w;
 };
 #define GOODIX_BERLIN_TOUCH_SIZE	sizeof(struct goodix_berlin_touch)
+/*
+ * Some firmware appends pressure, both axes and an orientation to each
+ * record. The first GOODIX_BERLIN_TOUCH_SIZE bytes keep the layout above.
+ */
+#define GOODIX_BERLIN_TOUCH_SIZE_MAX	14
 
 struct goodix_berlin_header {
 	u8 status;
@@ -157,7 +162,7 @@ struct goodix_berlin_header {
 struct goodix_berlin_event {
 	struct goodix_berlin_header hdr;
 	/* The data below is u16/__le16 aligned */
-	u8 data[GOODIX_BERLIN_TOUCH_SIZE * GOODIX_BERLIN_MAX_TOUCH +
+	u8 data[GOODIX_BERLIN_TOUCH_SIZE_MAX * GOODIX_BERLIN_MAX_TOUCH +
 		GOODIX_BERLIN_CHECKSUM_SIZE];
 };
 
@@ -176,6 +181,7 @@ struct goodix_berlin_core {
 	u32 touch_data_addr;
 
 	const struct goodix_berlin_ic_data *ic_data;
+	size_t touch_size;
 
 	struct goodix_berlin_event event;
 };
@@ -416,14 +422,14 @@ static int goodix_berlin_get_ic_info(struct goodix_berlin_core *cd)
 static int goodix_berlin_get_remaining_contacts(struct goodix_berlin_core *cd,
 						int n)
 {
-	size_t offset = 2 * GOODIX_BERLIN_TOUCH_SIZE +
+	size_t offset = 2 * cd->touch_size +
 				GOODIX_BERLIN_CHECKSUM_SIZE;
 	u32 addr = cd->touch_data_addr + GOODIX_BERLIN_HEADER_SIZE + offset;
 	int error;
 
 	error = regmap_raw_read(cd->regmap, addr,
 				&cd->event.data[offset],
-				(n - 2) * GOODIX_BERLIN_TOUCH_SIZE);
+				(n - 2) * cd->touch_size);
 	if (error) {
 		dev_err_ratelimited(cd->dev, "failed to get touch data, %d\n",
 				    error);
@@ -435,14 +441,12 @@ static int goodix_berlin_get_remaining_contacts(struct goodix_berlin_core *cd,
 
 static void goodix_berlin_report_state(struct goodix_berlin_core *cd, int n)
 {
-	struct goodix_berlin_touch *touch_data =
-			(struct goodix_berlin_touch *)cd->event.data;
 	struct goodix_berlin_touch *t;
 	int i;
 	u8 type, id;
 
 	for (i = 0; i < n; i++) {
-		t = &touch_data[i];
+		t = (struct goodix_berlin_touch *)&cd->event.data[i * cd->touch_size];
 
 		type = FIELD_GET(GOODIX_BERLIN_POINT_TYPE_MASK, t->status);
 		if (type == GOODIX_BERLIN_POINT_TYPE_STYLUS ||
@@ -491,7 +495,7 @@ static void goodix_berlin_touch_handler(struct goodix_berlin_core *cd)
 	}
 
 	if (touch_num) {
-		int len = touch_num * GOODIX_BERLIN_TOUCH_SIZE +
+		int len = touch_num * cd->touch_size +
 			  GOODIX_BERLIN_CHECKSUM_SIZE;
 		if (!goodix_berlin_checksum_valid(cd->event.data, len)) {
 			dev_err(cd->dev, "touch data checksum error: %*ph\n",
@@ -524,7 +528,8 @@ static irqreturn_t goodix_berlin_irq(int irq, void *data)
 	 * - GOODIX_BERLIN_HEADER_SIZE = 8 bytes
 	 * - GOODIX_BERLIN_TOUCH_SIZE * 2 = 16 bytes
 	 * - GOODIX_BERLIN_CHECKLSUM_SIZE = 2 bytes
-	 * For a total of 26 bytes.
+	 * For a total of 26 bytes. The layout below is for 8-byte records;
+	 * with a larger touch_size the same reads cover touch_size per finger.
 	 *
 	 * If only a single finger is reported, we will read 8 bytes more than
 	 * needed:
@@ -557,7 +562,7 @@ static irqreturn_t goodix_berlin_irq(int irq, void *data)
 	error = regmap_raw_read(cd->regmap, cd->touch_data_addr,
 				&cd->event,
 				GOODIX_BERLIN_HEADER_SIZE +
-					2 * GOODIX_BERLIN_TOUCH_SIZE +
+					2 * cd->touch_size +
 					GOODIX_BERLIN_CHECKSUM_SIZE);
 	if (error) {
 		dev_warn_ratelimited(cd->dev,
@@ -745,6 +750,7 @@ int goodix_berlin_probe(struct device *dev, int irq, const struct input_id *id,
 	cd->regmap = regmap;
 	cd->irq = irq;
 	cd->ic_data = ic_data;
+	cd->touch_size = ic_data->touch_size ?: GOODIX_BERLIN_TOUCH_SIZE;
 
 	cd->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
 	if (IS_ERR(cd->reset_gpio))

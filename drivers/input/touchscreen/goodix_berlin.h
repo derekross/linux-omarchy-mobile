@@ -23,6 +23,8 @@ struct goodix_berlin_ic_data {
 	int ic_info_addr;
 	ssize_t read_dummy_len;
 	ssize_t read_prefix_len;
+	/* Size of one contact record, 0 for the 8-byte default */
+	size_t touch_size;
 };
 
 struct device;

@@ -158,6 +158,14 @@ static int goodix_berlin_spi_probe(struct spi_device *spi)
 	return 0;
 }
 
+static const struct goodix_berlin_ic_data gt9895_data = {
+	.fw_version_info_addr = GOODIX_BERLIN_FW_VERSION_INFO_ADDR_D,
+	.ic_info_addr = GOODIX_BERLIN_IC_INFO_ADDR_D,
+	.read_dummy_len = GOODIX_BERLIN_SPI_READ_DUMMY_LEN_D,
+	.read_prefix_len = GOODIX_BERLIN_SPI_READ_PREFIX_LEN_D,
+	.touch_size = 14,
+};
+
 static const struct goodix_berlin_ic_data gt9897_data = {
 	.fw_version_info_addr = GOODIX_BERLIN_FW_VERSION_INFO_ADDR_A,
 	.ic_info_addr = GOODIX_BERLIN_IC_INFO_ADDR_A,
@@ -173,6 +181,7 @@ static const struct goodix_berlin_ic_data gt9916_data = {
 };
 
 static const struct spi_device_id goodix_berlin_spi_ids[] = {
+	{ .name = "gt9895", .driver_data = (long)&gt9895_data },
 	{ .name = "gt9897", .driver_data = (long)&gt9897_data },
 	{ .name = "gt9916", .driver_data = (long)&gt9916_data },
 	{ },
@@ -180,6 +189,7 @@ static const struct spi_device_id goodix_berlin_spi_ids[] = {
 MODULE_DEVICE_TABLE(spi, goodix_berlin_spi_ids);
 
 static const struct of_device_id goodix_berlin_spi_of_match[] = {
+	{ .compatible = "goodix,gt9895", .data = &gt9895_data },
 	{ .compatible = "goodix,gt9897", .data = &gt9897_data },
 	{ .compatible = "goodix,gt9916", .data = &gt9916_data },
 	{ }
