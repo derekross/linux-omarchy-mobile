@@ -10,9 +10,9 @@ maintainers:
   - W4HO <87742609+W4HO-ham@users.noreply.github.com>
 
 description: |
-  S2MPG14 provides programmable voltage outputs. LDO4M and LDO25M supply
-  touchscreen power; LDO8M, LDO9M and LDO19M supply eUSB2 PHY and repeater
-  power on the Pixel 9a.
+  S2MPG14 provides programmable voltage outputs. This binding covers
+  LDO4M, LDO8M, LDO9M, LDO19M and LDO25M. Board descriptions specify their
+  consumers and operating constraints.
 
 patternProperties:
   "^ldo(4|8|9|19|25)m$":
