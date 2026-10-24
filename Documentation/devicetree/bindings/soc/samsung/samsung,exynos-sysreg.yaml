@@ -27,6 +27,7 @@ properties:
               - google,gs201-peric0-sysreg
               - google,gs201-peric1-sysreg
               - google,gs201-vgpio2ap-sysreg
+              - google,zumapro-peric0-sysreg
               - samsung,exynos2200-cmgp-sysreg
               - samsung,exynos2200-peric0-sysreg
               - samsung,exynos2200-peric1-sysreg
@@ -109,6 +110,7 @@ allOf:
               - google,gs201-hsi2-sysreg
               - google,gs201-peric0-sysreg
               - google,gs201-peric1-sysreg
+              - google,zumapro-peric0-sysreg
               - samsung,exynos850-cmgp-sysreg
               - samsung,exynos850-peri-sysreg
               - samsung,exynos850-sysreg

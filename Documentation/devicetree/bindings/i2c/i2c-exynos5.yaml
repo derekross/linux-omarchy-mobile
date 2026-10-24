@@ -41,6 +41,7 @@ properties:
           - enum:
               - google,gs101-hsi2c
               - google,gs201-hsi2c
+              - google,zumapro-hsi2c
               - samsung,exynos2200-hsi2c
               - samsung,exynos850-hsi2c
               - samsung,exynos990-hsi2c
