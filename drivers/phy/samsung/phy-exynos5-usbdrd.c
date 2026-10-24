@@ -1529,8 +1529,16 @@ static int exynos2200_usbdrd_phy_exit(struct phy *phy)
 	reg &= ~(EXYNOS2200_UTMI_FORCE_BVALID | EXYNOS2200_UTMI_FORCE_VBUSVALID);
 	writel(reg, regs_base + EXYNOS2200_DRD_UTMI);
 
+	/*
+	 * Pulse the link reset rather than leave the link in it: the DWC3
+	 * core reads its registers when it next probes, before phy_init()
+	 * runs, and on zuma such a read of a link held in reset hangs the bus.
+	 */
 	reg = readl(regs_base + EXYNOS2200_DRD_CLKRST);
 	reg |= CLKRST_LINK_SW_RST;
+	writel(reg, regs_base + EXYNOS2200_DRD_CLKRST);
+	fsleep(10);
+	reg &= ~CLKRST_LINK_SW_RST;
 	writel(reg, regs_base + EXYNOS2200_DRD_CLKRST);
 
 	clk_bulk_disable_unprepare(phy_drd->drv_data->n_clks, phy_drd->clks);
