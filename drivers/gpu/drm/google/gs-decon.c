@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Flip-only KMS driver for the Google gs201 DECON0, on a display the
+ * Flip-only KMS driver for the Google Tensor DECON0, on a display the
  * bootloader left running.
  *
  * The bootloader brings up DECON0 -> DSIM0 -> the panel in DSI command
@@ -26,13 +26,15 @@
  *
  *  0: log the DECON and DPP0 state, read only
  *  1: also enable the frame start/done interrupts and count them, to
- *     measure the refresh rate (sysfs "stats")
+ *     measure the refresh rate (sysfs "stats"); on G4, start its trigger
+ *     and restore the saved trigger bits when the measurement is removed
  *  2: also register a DRM device that takes the display over from
  *     simpledrm (default)
  *
  * Register layout from Google's GPL display driver
  * (google-modules/display/samsung/cal_9845/regs-decon.h and regs-dpp.h),
- * which gs201 shares with gs101.
+ * which gs201 shares with gs101. G4 offsets and the fourteen-window mask
+ * follow cal_9865/regs-decon.h and regs-dpp.h in the same GPL driver.
  */
 
 #include <linux/aperture.h>
@@ -50,6 +52,7 @@
 #include <linux/of_graph.h>
 #include <linux/of_reserved_mem.h>
 #include <linux/platform_device.h>
+#include <linux/property.h>
 #include <linux/spinlock.h>
 #include <linux/wait.h>
 #include <linux/workqueue.h>
@@ -117,6 +120,7 @@
 /* 0..7 are the 32-bit RGB formats */
 #define IDMA_IMG_FORMAT_LAST_8888	7
 #define RDMA_SRC_SIZE			0x0010
+#define RDMA_SRC_HEIGHT_G4		0x0014
 #define RDMA_SRC_OFFSET			0x0014
 #define RDMA_IMG_SIZE			0x0018
 #define RDMA_BASEADDR_Y8		0x0040
@@ -127,9 +131,9 @@
  * What the driver writes on a flip: every window, the global registers
  * and the compressor, as Google's command-mode commit does.
  */
-#define SHD_REG_UP_REQ_FLIP		(SHD_REG_UP_REQ_GLOBAL | \
+#define SHD_REG_UP_REQ_FLIP(windows)	(SHD_REG_UP_REQ_GLOBAL | \
 					 SHD_REG_UP_REQ_CMP | \
-					 SHD_REG_UP_REQ_ALL_WIN)
+					 (windows))
 
 /*
  * DECON clears the shadow update request as the frame starts; allow it
@@ -205,6 +209,53 @@ static const struct drm_display_mode gs_decon_modes[] = {
 	GS_DECON_MODE(120),
 };
 
+/* The tegu panel variants share these timings; keep their inherited 60 Hz. */
+static const struct drm_display_mode tegu_decon_modes[] = {
+	{
+		.clock = (1080 + 32 + 12 + 16) * (2424 + 12 + 4 + 15) * 60 / 1000,
+		.hdisplay = 1080,
+		.hsync_start = 1080 + 32,
+		.hsync_end = 1080 + 32 + 12,
+		.htotal = 1080 + 32 + 12 + 16,
+		.vdisplay = 2424,
+		.vsync_start = 2424 + 12,
+		.vsync_end = 2424 + 12 + 4,
+		.vtotal = 2424 + 12 + 4 + 15,
+		/* Physical size depends on the panel variant, not yet selected. */
+		.type = DRM_MODE_TYPE_DRIVER,
+	},
+};
+
+struct gs_decon_soc_data {
+	const struct drm_display_mode *modes;
+	unsigned int num_modes;
+	u32 image_size_reg;
+	u32 source_offset_reg;
+	u32 shadow_update_mask;
+	bool separate_source_height;
+	bool padded_pitch;
+	bool start_hw_trigger;
+};
+
+static const struct gs_decon_soc_data gs201_decon_data = {
+	.modes = gs_decon_modes,
+	.num_modes = ARRAY_SIZE(gs_decon_modes),
+	.image_size_reg = RDMA_IMG_SIZE,
+	.source_offset_reg = RDMA_SRC_OFFSET,
+	.shadow_update_mask = SHD_REG_UP_REQ_FLIP(SHD_REG_UP_REQ_ALL_WIN),
+};
+
+static const struct gs_decon_soc_data zumapro_decon_data = {
+	.modes = tegu_decon_modes,
+	.num_modes = ARRAY_SIZE(tegu_decon_modes),
+	.image_size_reg = 0x001c,
+	.source_offset_reg = 0x0018,
+	.shadow_update_mask = SHD_REG_UP_REQ_FLIP(0x3fff),
+	.separate_source_height = true,
+	.padded_pitch = true,
+	.start_hw_trigger = true,
+};
+
 #define GS_DECON_BOOT_HZ		60
 
 struct gs_decon {
@@ -215,12 +266,15 @@ struct gs_decon {
 	struct drm_connector connector;
 
 	struct device *dev;
+	const struct gs_decon_soc_data *soc;
 	void __iomem *regs;
 	void __iomem *dma;
 	int irq_fs;
 	int irq_fd;
 	u32 int_en_boot;
 	bool irqs_on;
+	u32 trig_con_boot;
+	bool trigger_started;
 
 	/* the bootloader's framebuffer, scanned out when no plane is */
 	struct resource boot_fb;
@@ -307,9 +361,19 @@ static void gs_decon_dump(struct gs_decon *dc)
 	};
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(regs); i++)
+	for (i = 0; i < ARRAY_SIZE(regs); i++) {
+		u32 offset = regs[i].offset;
+
+		if (regs[i].dma && offset == RDMA_IMG_SIZE)
+			offset = dc->soc->image_size_reg;
+		if (regs[i].dma && offset == RDMA_SRC_OFFSET)
+			offset = dc->soc->source_offset_reg;
 		dev_info(dc->dev, "%-15s = 0x%08x\n", regs[i].name,
-			 readl((regs[i].dma ? dc->dma : dc->regs) + regs[i].offset));
+			 readl((regs[i].dma ? dc->dma : dc->regs) + offset));
+	}
+	if (dc->soc->separate_source_height)
+		dev_info(dc->dev, "RDMA_SRC_HEIGHT = 0x%08x\n",
+			 readl(dc->dma + RDMA_SRC_HEIGHT_G4));
 }
 
 /*
@@ -322,9 +386,10 @@ static int gs_decon_check_boot_state(struct gs_decon *dc)
 	const u32 run = GLOBAL_CON_OPERATION_MODE_CMD | GLOBAL_CON_DECON_EN |
 			GLOBAL_CON_DECON_EN_F;
 	u32 global = readl(dc->regs + DECON_GLOBAL_CON);
-	u32 size = readl(dc->dma + RDMA_IMG_SIZE);
+	u32 size = readl(dc->dma + dc->soc->image_size_reg);
 	u32 src = readl(dc->dma + RDMA_SRC_SIZE);
 	u32 addr = readl(dc->dma + RDMA_BASEADDR_Y8);
+	u32 source_width, source_height;
 
 	if ((global & run) != run) {
 		dev_err(dc->dev, "DECON is not running in command mode (GLOBAL_CON 0x%08x)\n",
@@ -334,13 +399,20 @@ static int gs_decon_check_boot_state(struct gs_decon *dc)
 
 	dc->width = size & 0x3fff;
 	dc->height = (size >> 16) & 0x3fff;
+	if (dc->soc->separate_source_height) {
+		source_width = src & 0xffffff;
+		source_height = readl(dc->dma + RDMA_SRC_HEIGHT_G4) & 0xffffff;
+	} else {
+		source_width = src & 0xffff;
+		source_height = src >> 16;
+	}
 	/* the source width is the stride in pixels */
-	dc->pitch = (src & 0xffff) * 4;
-	if (dc->width != gs_decon_modes[0].hdisplay ||
-	    dc->height != gs_decon_modes[0].vdisplay ||
-	    (src >> 16) != dc->height || dc->pitch < dc->width * 4) {
-		dev_err(dc->dev, "unexpected scanout size %ux%u (source 0x%08x)\n",
-			dc->width, dc->height, src);
+	dc->pitch = source_width * 4;
+	if (dc->width != dc->soc->modes[0].hdisplay ||
+	    dc->height != dc->soc->modes[0].vdisplay ||
+	    source_height != dc->height || dc->pitch < dc->width * 4) {
+		dev_err(dc->dev, "unexpected scanout size %ux%u (source %ux%u)\n",
+			dc->width, dc->height, source_width, source_height);
 		return -ENODEV;
 	}
 
@@ -407,10 +479,11 @@ static bool gs_decon_flip_latched(struct gs_decon *dc, unsigned int poll_us)
 	u32 req;
 
 	if (!poll_us)
-		return !(readl(dc->regs + DECON_SHD_REG_UP_REQ) & SHD_REG_UP_REQ_FLIP);
+		return !(readl(dc->regs + DECON_SHD_REG_UP_REQ) &
+			 dc->soc->shadow_update_mask);
 
 	return !readl_poll_timeout_atomic(dc->regs + DECON_SHD_REG_UP_REQ, req,
-					  !(req & SHD_REG_UP_REQ_FLIP), 1, poll_us);
+					  !(req & dc->soc->shadow_update_mask), 1, poll_us);
 }
 
 static irqreturn_t gs_decon_fs_irq(int irq, void *data)
@@ -500,7 +573,8 @@ static void gs_decon_flip_timeout(struct work_struct *work)
  * Points DPP0 at @addr and asks DECON to take it at the next frame start.
  * The caller holds dc->lock.
  */
-static void gs_decon_set_scanout_locked(struct gs_decon *dc, dma_addr_t addr)
+static void gs_decon_set_scanout_locked(struct gs_decon *dc, dma_addr_t addr,
+					u32 pitch)
 {
 	/*
 	 * The bootloader scans out ARGB8888; DRM buffers are XRGB8888, whose
@@ -516,8 +590,11 @@ static void gs_decon_set_scanout_locked(struct gs_decon *dc, dma_addr_t addr)
 		dc->xrgb = true;
 	}
 
+	/* G4's source width includes row padding, in pixels, not bytes. */
+	if (dc->soc->padded_pitch)
+		writel(pitch / 4, dc->dma + RDMA_SRC_SIZE);
 	writel(lower_32_bits(addr), dc->dma + RDMA_BASEADDR_Y8);
-	writel(readl(dc->regs + DECON_SHD_REG_UP_REQ) | SHD_REG_UP_REQ_FLIP,
+	writel(readl(dc->regs + DECON_SHD_REG_UP_REQ) | dc->soc->shadow_update_mask,
 	       dc->regs + DECON_SHD_REG_UP_REQ);
 	dc->scanout = addr;
 	dc->flip_pending = true;
@@ -545,11 +622,11 @@ static void gs_decon_park(struct gs_decon *dc)
 	}
 
 	spin_lock_irqsave(&dc->lock, flags);
-	gs_decon_set_scanout_locked(dc, dc->boot_fb.start);
+	gs_decon_set_scanout_locked(dc, dc->boot_fb.start, dc->pitch);
 	spin_unlock_irqrestore(&dc->lock, flags);
 
 	if (readl_poll_timeout(dc->regs + DECON_SHD_REG_UP_REQ, val,
-			       !(val & SHD_REG_UP_REQ_FLIP), 1000, 40000))
+			       !(val & dc->soc->shadow_update_mask), 1000, 40000))
 		dev_warn(dc->dev, "boot framebuffer not taken yet\n");
 }
 
@@ -628,12 +705,47 @@ static void gs_decon_set_trigger(struct gs_decon *dc, bool run)
 {
 	u32 val = readl(dc->regs + DECON_TRIG_CON);
 
-	if (run)
+	if (run) {
 		val &= ~TRIG_CON_HW_TRIG_MASK_DECON;
-	else
+		if (dc->soc->start_hw_trigger)
+			val |= TRIG_CON_HW_TRIG_EN;
+	} else {
 		val |= TRIG_CON_HW_TRIG_MASK_DECON;
+	}
 	writel(val, dc->regs + DECON_TRIG_CON);
 	dc->trigger_masked = !run;
+}
+
+/* Tensor G4 leaves refresh masked; start it only after the IRQs are ready. */
+static void gs_decon_start_boot_trigger(struct gs_decon *dc)
+{
+	const u32 mask = TRIG_CON_HW_TRIG_MASK_DECON | TRIG_CON_HW_TRIG_EN;
+
+	if (!dc->soc->start_hw_trigger)
+		return;
+
+	dc->trig_con_boot = readl(dc->regs + DECON_TRIG_CON);
+	if ((dc->trig_con_boot & mask) == TRIG_CON_HW_TRIG_EN)
+		return;
+
+	gs_decon_set_trigger(dc, true);
+	dc->trigger_started = true;
+}
+
+/* A measurement-only probe or a failed takeover must leave the handoff intact. */
+static void gs_decon_restore_boot_trigger(struct gs_decon *dc)
+{
+	const u32 mask = TRIG_CON_HW_TRIG_MASK_DECON | TRIG_CON_HW_TRIG_EN;
+	u32 val;
+
+	if (!dc->trigger_started)
+		return;
+
+	val = readl(dc->regs + DECON_TRIG_CON);
+	val = (val & ~mask) | (dc->trig_con_boot & mask);
+	writel(val, dc->regs + DECON_TRIG_CON);
+	dc->trigger_masked = !!(val & TRIG_CON_HW_TRIG_MASK_DECON);
+	dc->trigger_started = false;
 }
 
 /*
@@ -703,10 +815,10 @@ static unsigned int gs_decon_mode_hz(struct gs_decon *dc,
 {
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(gs_decon_modes); i++)
-		if (drm_mode_equal(mode, &gs_decon_modes[i]) &&
-		    drm_mode_vrefresh(&gs_decon_modes[i]) <= dc->max_hz)
-			return drm_mode_vrefresh(&gs_decon_modes[i]);
+	for (i = 0; i < dc->soc->num_modes; i++)
+		if (drm_mode_equal(mode, &dc->soc->modes[i]) &&
+		    drm_mode_vrefresh(&dc->soc->modes[i]) <= dc->max_hz)
+			return drm_mode_vrefresh(&dc->soc->modes[i]);
 
 	return 0;
 }
@@ -737,9 +849,13 @@ static int gs_decon_plane_atomic_check(struct drm_plane *plane,
 	if (ret)
 		return ret;
 
-	/* Only the base address changes: the layout must be the boot one. */
+	/* G4 accepts padded RGB rows; older variants keep the boot layout. */
 	if (fb->width != dc->width || fb->height != dc->height ||
-	    fb->pitches[0] != dc->pitch || new->src_x || new->src_y) {
+	    new->src_x || new->src_y ||
+	    (dc->soc->padded_pitch ?
+	     (fb->pitches[0] < dc->width * 4 || fb->pitches[0] % 4 ||
+	      fb->pitches[0] / 4 > 0xffffff) :
+	     fb->pitches[0] != dc->pitch)) {
 		drm_dbg_kms(plane->dev, "fb %ux%u pitch %u does not match %ux%u pitch %u\n",
 			    fb->width, fb->height, fb->pitches[0],
 			    dc->width, dc->height, dc->pitch);
@@ -765,7 +881,8 @@ static void gs_decon_plane_atomic_update(struct drm_plane *plane,
 		return;
 
 	spin_lock_irqsave(&dc->lock, flags);
-	gs_decon_set_scanout_locked(dc, drm_fb_dma_get_gem_addr(new->fb, new, 0));
+	gs_decon_set_scanout_locked(dc, drm_fb_dma_get_gem_addr(new->fb, new, 0),
+				    new->fb->pitches[0]);
 	spin_unlock_irqrestore(&dc->lock, flags);
 }
 
@@ -934,13 +1051,13 @@ static int gs_decon_connector_get_modes(struct drm_connector *connector)
 	struct gs_decon *dc = drm_to_decon(connector->dev);
 	int i, count = 0;
 
-	for (i = 0; i < ARRAY_SIZE(gs_decon_modes); i++) {
-		unsigned int hz = drm_mode_vrefresh(&gs_decon_modes[i]);
+	for (i = 0; i < dc->soc->num_modes; i++) {
+		unsigned int hz = drm_mode_vrefresh(&dc->soc->modes[i]);
 		struct drm_display_mode *mode;
 
 		if (hz > dc->max_hz)
 			continue;
-		mode = drm_mode_duplicate(connector->dev, &gs_decon_modes[i]);
+		mode = drm_mode_duplicate(connector->dev, &dc->soc->modes[i]);
 		if (!mode)
 			break;
 		if (hz == dc->max_hz)
@@ -949,8 +1066,8 @@ static int gs_decon_connector_get_modes(struct drm_connector *connector)
 		drm_mode_probed_add(connector, mode);
 		count++;
 	}
-	connector->display_info.width_mm = gs_decon_modes[0].width_mm;
-	connector->display_info.height_mm = gs_decon_modes[0].height_mm;
+	connector->display_info.width_mm = dc->soc->modes[0].width_mm;
+	connector->display_info.height_mm = dc->soc->modes[0].height_mm;
 
 	return count;
 }
@@ -1237,6 +1354,9 @@ static int gs_decon_probe(struct platform_device *pdev)
 		return PTR_ERR(dc);
 
 	dc->dev = dev;
+	dc->soc = device_get_match_data(dev);
+	if (!dc->soc)
+		return -ENODEV;
 	dc->hz = GS_DECON_BOOT_HZ;
 	dc->max_hz = GS_DECON_BOOT_HZ;
 	spin_lock_init(&dc->lock);
@@ -1290,7 +1410,8 @@ static int gs_decon_probe(struct platform_device *pdev)
 	 * by our init). The bootloader leaves it masked (0x3070).
 	 */
 	val = readl(dc->regs + DECON_TRIG_CON);
-	if (!(val & TRIG_CON_HW_TRIG_EN) || (val & TRIG_CON_HW_TRIG_MASK_DECON))
+	if (!dc->soc->start_hw_trigger &&
+	    (!(val & TRIG_CON_HW_TRIG_EN) || (val & TRIG_CON_HW_TRIG_MASK_DECON)))
 		dev_warn(dev, "TE trigger is off (TRIG_CON 0x%08x): no frames will be sent\n",
 			 val);
 
@@ -1339,6 +1460,8 @@ static int gs_decon_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
+	gs_decon_start_boot_trigger(dc);
+
 	if (stage < GS_DECON_STAGE_KMS)
 		return 0;
 
@@ -1370,6 +1493,7 @@ err_kms:
 	dc->kms = false;
 err_irqs:
 	gs_decon_irqs_off(dc);
+	gs_decon_restore_boot_trigger(dc);
 	return ret;
 }
 
@@ -1388,6 +1512,8 @@ static void gs_decon_remove(struct platform_device *pdev)
 		gs_decon_screen_on(dc);
 	}
 	gs_decon_irqs_off(dc);
+	if (!dc->kms)
+		gs_decon_restore_boot_trigger(dc);
 }
 
 static void gs_decon_shutdown(struct platform_device *pdev)
@@ -1399,11 +1525,15 @@ static void gs_decon_shutdown(struct platform_device *pdev)
 		drm_atomic_helper_shutdown(&dc->drm);
 		/* a kexec'd kernel expects the boot state: panel lit, frames running */
 		gs_decon_screen_on(dc);
+	} else if (dc->trigger_started) {
+		gs_decon_irqs_off(dc);
+		gs_decon_restore_boot_trigger(dc);
 	}
 }
 
 static const struct of_device_id gs_decon_of_match[] = {
-	{ .compatible = "google,gs201-decon" },
+	{ .compatible = "google,gs201-decon", .data = &gs201_decon_data },
+	{ .compatible = "google,zumapro-decon", .data = &zumapro_decon_data },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, gs_decon_of_match);
@@ -1421,5 +1551,5 @@ static struct platform_driver gs_decon_platform_driver = {
 };
 module_platform_driver(gs_decon_platform_driver);
 
-MODULE_DESCRIPTION("Flip-only KMS driver for the Google gs201 DECON");
+MODULE_DESCRIPTION("Flip-only KMS driver for the Google Tensor DECON");
 MODULE_LICENSE("GPL");
