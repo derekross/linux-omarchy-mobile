@@ -6987,6 +6987,8 @@ static int ath12k_reg_chan_list_event(struct ath12k_base *ab, struct sk_buff *sk
 		 * not going to create new regd for it
 		 */
 		ret = ATH12K_REG_STATUS_VALID;
+		if (reg_info->phy_id < ab->num_radios)
+			pdev_idx = reg_info->phy_id;
 		goto mem_free;
 	}
 
