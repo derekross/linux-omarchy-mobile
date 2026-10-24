@@ -336,9 +336,33 @@ struct clk_hw *samsung_register_auto_gate(struct device *dev,
 }
 
 /* Firmware owns these gates; CCF may observe but must not switch them. */
+static int samsung_clk_ro_gate_is_enabled(struct clk_hw *hw)
+{
+	struct clk_gate *gate = to_clk_gate(hw);
+	u32 value;
+
+	if (gate->flags & CLK_GATE_BIG_ENDIAN)
+		value = ioread32be(gate->reg);
+	else
+		value = readl(gate->reg);
+
+	/*
+	 * CG_VAL controls the clock only in manual mode (bit 20). Otherwise
+	 * hardware may gate it on demand, or bypass automatic gating. Both
+	 * modes make the clock available; an idle clock is not an error.
+	 */
+	if (!(value & BIT(20)))
+		return 1;
+
+	if (gate->flags & CLK_GATE_SET_TO_DISABLE)
+		value ^= BIT(gate->bit_idx);
+
+	return !!(value & BIT(gate->bit_idx));
+}
+
 static int samsung_clk_ro_gate_enable(struct clk_hw *hw)
 {
-	return clk_gate_is_enabled(hw) ? 0 : -EIO;
+	return samsung_clk_ro_gate_is_enabled(hw) ? 0 : -EIO;
 }
 
 static void samsung_clk_ro_gate_disable(struct clk_hw *hw)
@@ -349,7 +373,7 @@ static void samsung_clk_ro_gate_disable(struct clk_hw *hw)
 static const struct clk_ops samsung_clk_ro_gate_ops = {
 	.enable = samsung_clk_ro_gate_enable,
 	.disable = samsung_clk_ro_gate_disable,
-	.is_enabled = clk_gate_is_enabled,
+	.is_enabled = samsung_clk_ro_gate_is_enabled,
 };
 
 static void __init samsung_clk_register_ro_gate(struct samsung_clk_provider *ctx,
