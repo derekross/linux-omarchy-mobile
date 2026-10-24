@@ -16181,6 +16181,13 @@ L:	linux-kernel@vger.kernel.org
 S:	Maintained
 F:	drivers/power/supply/max77759_charger.c
 
+MAXIM MAX77779 FUEL GAUGE DRIVER
+M:	W4HO <87742609+W4HO-ham@users.noreply.github.com>
+L:	linux-pm@vger.kernel.org
+S:	Maintained
+F:	Documentation/devicetree/bindings/power/supply/maxim,max77779-fg.yaml
+F:	drivers/power/supply/max77779_battery.c
+
 MAXIM MAX77802 PMIC REGULATOR DEVICE DRIVER
 M:	Javier Martinez Canillas <javier@dowhile0.org>
 L:	linux-kernel@vger.kernel.org
