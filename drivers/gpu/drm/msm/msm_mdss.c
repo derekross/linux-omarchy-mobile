@@ -26,6 +26,12 @@
 
 struct msm_mdss_data {
 	u32 reg_bus_bw;
+	/*
+	 * Physical address of the display (mdp_hf) QTB500 TBU of the apps
+	 * SMMU, or 0. If set, it is read once on every MDSS enable, before
+	 * any display master issues a memory fetch. See msm_mdss_qtb_sync().
+	 */
+	phys_addr_t hf_qtb_base;
 };
 
 struct msm_mdss {
@@ -43,6 +49,7 @@ struct msm_mdss {
 	u32 reg_bus_bw;
 	struct icc_path *mdp_path[2];
 	u32 num_mdp_paths;
+	void __iomem *hf_qtb;
 	struct icc_path *reg_bus_path;
 };
 
@@ -228,6 +235,21 @@ static void msm_mdss_6x_setup_ubwc(struct msm_mdss *msm_mdss)
 	 (((minor) & 0xfff) << 16) |	\
 	 ((step) & 0xffff))
 
+/*
+ * On SM8750 the first DSI command-mode DMA fetches after a warm reset can
+ * wedge in the display QTB500 (the apps SMMU TBU in front of MDSS): the DSI
+ * engine and xin7 stay busy forever, with no SMMU fault and no DSI error,
+ * after two small fetches have completed. A single CPU read of the QTB's
+ * SWID_LOW register (offset 0, what the downstream qtb500 code uses as its
+ * write_sync) before the first fetch avoids it. Do that read here, after the
+ * MDSS clocks and interconnect votes are up.
+ */
+static void msm_mdss_qtb_sync(struct msm_mdss *msm_mdss)
+{
+	if (msm_mdss->hf_qtb)
+		readl(msm_mdss->hf_qtb);
+}
+
 static int msm_mdss_enable(struct msm_mdss *msm_mdss)
 {
 	int ret, i;
@@ -257,6 +279,8 @@ static int msm_mdss_enable(struct msm_mdss *msm_mdss)
 		dev_err(msm_mdss->dev, "clock enable failed, ret:%d\n", ret);
 		return ret;
 	}
+
+	msm_mdss_qtb_sync(msm_mdss);
 
 	/*
 	 * Register access requires MDSS_MDP_CLK, which is not enabled by the
@@ -393,6 +417,14 @@ static struct msm_mdss *msm_mdss_init(struct platform_device *pdev, bool is_mdp5
 
 	dev_dbg(&pdev->dev, "mapped mdss address space @%p\n", msm_mdss->mmio);
 
+	if (mdss_data->hf_qtb_base) {
+		/* Not a resource of this device: the TBU belongs to the apps SMMU */
+		msm_mdss->hf_qtb = devm_ioremap(&pdev->dev, mdss_data->hf_qtb_base,
+						SZ_4K);
+		if (!msm_mdss->hf_qtb)
+			dev_warn(&pdev->dev, "cannot map the display QTB\n");
+	}
+
 	ret = msm_mdss_parse_data_bus_icc_path(&pdev->dev, msm_mdss);
 	if (ret)
 		return ERR_PTR(ret);
@@ -512,6 +544,11 @@ static const struct msm_mdss_data data_57k = {
 	.reg_bus_bw = 57000,
 };
 
+static const struct msm_mdss_data sm8750_data = {
+	.reg_bus_bw = 57000,
+	.hf_qtb_base = 0x017d0000,	/* mdp_hf_qtb, stock DT apps-smmu */
+};
+
 static const struct msm_mdss_data data_74k = {
 	.reg_bus_bw = 74000,
 };
@@ -553,7 +590,7 @@ static const struct of_device_id mdss_dt_match[] = {
 	{ .compatible = "qcom,sm8450-mdss", .data = &data_74k },
 	{ .compatible = "qcom,sm8550-mdss", .data = &data_57k },
 	{ .compatible = "qcom,sm8650-mdss", .data = &data_57k },
-	{ .compatible = "qcom,sm8750-mdss", .data = &data_57k },
+	{ .compatible = "qcom,sm8750-mdss", .data = &sm8750_data },
 	/* TODO: x1e8: Add reg_bus_bw with real value */
 	{ .compatible = "qcom,x1e80100-mdss", .data = &data_153k6 },
 	{}
