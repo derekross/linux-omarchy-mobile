@@ -19,7 +19,6 @@
 #define MAX77779_DESIGNCAP	0x18
 #define MAX77779_AVGVCELL		0x19
 #define MAX77779_VCELL		0x1a
-#define MAX77779_TEMP		0x1b
 #define MAX77779_DEVNAME		0x21
 #define MAX77779_FSTAT		0x3d
 #define MAX77779_POR		BIT(1)
@@ -44,7 +43,6 @@ static bool max77779_readable(struct device *dev, unsigned int reg)
 	case MAX77779_DESIGNCAP:
 	case MAX77779_AVGVCELL:
 	case MAX77779_VCELL:
-	case MAX77779_TEMP:
 	case MAX77779_DEVNAME:
 	case MAX77779_FSTAT:
 		return true;
@@ -115,9 +113,6 @@ static int max77779_get_property(struct power_supply *supply,
 	case POWER_SUPPLY_PROP_CAPACITY:
 		reg = MAX77779_REPSOC;
 		break;
-	case POWER_SUPPLY_PROP_TEMP:
-		reg = MAX77779_TEMP;
-		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		reg = MAX77779_VCELL;
 		break;
@@ -147,9 +142,6 @@ static int max77779_get_property(struct power_supply *supply,
 			return -ERANGE;
 		value->intval = raw >> 8;
 		break;
-	case POWER_SUPPLY_PROP_TEMP:
-		value->intval = (s16)raw * 10 / 256;
-		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 	case POWER_SUPPLY_PROP_VOLTAGE_AVG:
 		value->intval = div_u64((u64)raw * 78125, 1000);
@@ -171,7 +163,6 @@ static const enum power_supply_property max77779_properties[] = {
 	POWER_SUPPLY_PROP_TECHNOLOGY,
 	POWER_SUPPLY_PROP_MODEL_NAME,
 	POWER_SUPPLY_PROP_CAPACITY,
-	POWER_SUPPLY_PROP_TEMP,
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_VOLTAGE_AVG,
 	POWER_SUPPLY_PROP_CHARGE_NOW,
