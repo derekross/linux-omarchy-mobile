@@ -45,6 +45,7 @@ properties:
           - enum:
               - google,gs201-cheetah
               - google,gs201-felix
+              - google,gs201-lynx
           - const: google,gs201
 
   # Bootloader requires empty ect node to be present

@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Google Pixel 7a (lynx) - M1 bring-up board file.
+ *
+ * First light: USB (NCM + ACM), the cluster watchdogs from gs201.dtsi,
+ * and a simple-framebuffer on the buffer ABL leaves DPP0 scanning out.
+ * UFS, the panel driver, touch and the GPU stay disabled.
+ */
+
+/dts-v1/;
+
+#include "gs201.dtsi"
+
+/ {
+	model = "Google Pixel 7a";
+	compatible = "google,gs201-lynx", "google,gs201";
+
+	/*
+	 * lynx's SoC is the IPOP package (ro.boot.hw.soc.pkg_mode 1). ABL picks
+	 * its base DTB on /soc_compatible, not /soc_id: stock's
+	 * vendor_kernel_boot carries a0 and b0 (soc_id) and b0_v2-ipop, and the
+	 * live tree on this phone is the IPOP one.
+	 */
+	soc_compatible {
+		B0_IPOP {
+			description = "B0,IPOP";
+			product_id = <0x9855>;
+			major = <0x1>;
+			minor = <0x0>;
+			pkg_mode = <0x1>;
+		};
+	};
+
+	chosen {
+		/* ABL requires bootargs to exist; it appends its own after these. */
+		bootargs = "console=tty0 fbcon=font:TER16x32 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init";
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+
+		/*
+		 * ABL leaves DECON0 -> DSIM0 -> panel (sdc-s6e3fc5) running in
+		 * command mode with DPP0 scanning 0xfac00000 (RDMA_BASEADDR_Y8,
+		 * read on this phone). There is no panel driver, so no panel
+		 * phandle; the size comes from this node.
+		 */
+		framebuffer0: framebuffer@fac00000 {
+			compatible = "simple-framebuffer";
+			reg = <0x0 0xfac00000 (1080 * 2400 * 4)>;
+			memory-region = <&cont_splash_mem>;
+			width = <1080>;
+			height = <2400>;
+			stride = <(1080 * 4)>;
+			format = "a8r8g8b8";
+		};
+	};
+
+	/*
+	 * ABL adds sec_dram, sec_pt and pkvm_guest_firmware to this tree
+	 * itself. tui is not added and gs201.dtsi does not cover it: the
+	 * secure world owns it on stock. ramoops keeps stock's layout so a
+	 * log survives a warm reboot into slot A.
+	 */
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+
+		tui@f3200000 { reg = <0x0 0xf3200000 0x3000000>; no-map; };
+
+		ramoops@fd3ff000 {
+			compatible = "ramoops";
+			reg = <0x0 0xfd3ff000 0x400000>;
+			console-size = <0x200000>;
+			pmsg-size = <0x200000>;
+		};
+
+		/* Inside stock's wifi_region CMA pool, which this tree does not have. */
+		cont_splash_mem: splash@fac00000 {
+			reg = <0x0 0xfac00000 (1080 * 2400 * 4)>;
+			no-map;
+		};
+	};
+};
+
+&usbdrd31_phy {
+	status = "okay";
+};
+
+&usb_dwc3 {
+	status = "okay";
+};
