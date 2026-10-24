@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Google Pixel 7a (lynx) - M1 bring-up board file.
+ *
+ * First light only: USB (NCM + ACM) and the cluster watchdogs from
+ * gs201.dtsi. UFS, the panel, touch and the GPU stay disabled, and there
+ * is no simple-framebuffer yet, so the screen keeps the bootloader logo.
+ */
+
+/dts-v1/;
+
+#include "gs201.dtsi"
+
+/ {
+	model = "Google Pixel 7a";
+	compatible = "google,gs201-lynx", "google,gs201";
+
+	/*
+	 * lynx's SoC is the IPOP package (ro.boot.hw.soc.pkg_mode 1). ABL picks
+	 * its base DTB on /soc_compatible, not /soc_id: stock's
+	 * vendor_kernel_boot carries a0 and b0 (soc_id) and b0_v2-ipop, and the
+	 * live tree on this phone is the IPOP one.
+	 */
+	soc_compatible {
+		B0_IPOP {
+			description = "B0,IPOP";
+			product_id = <0x9855>;
+			major = <0x1>;
+			minor = <0x0>;
+			pkg_mode = <0x1>;
+		};
+	};
+
+	chosen {
+		/* ABL requires bootargs to exist; it appends its own after these. */
+		bootargs = "console=tty0 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init";
+	};
+
+	/*
+	 * ABL adds sec_dram, sec_pt and pkvm_guest_firmware to this tree
+	 * itself. Stock's tui, mfc_fw and famodel are pools the kernel
+	 * places at boot (size and alloc-ranges, no fixed address), so
+	 * nothing reserves them here. ramoops keeps stock's layout so a log
+	 * survives a warm reboot into slot A.
+	 */
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+
+		ramoops@fd3ff000 {
+			compatible = "ramoops";
+			reg = <0x0 0xfd3ff000 0x400000>;
+			console-size = <0x200000>;
+			pmsg-size = <0x200000>;
+		};
+	};
+};
+
+&usbdrd31_phy {
+	status = "okay";
+};
+
+&usb_dwc3 {
+	status = "okay";
+};
