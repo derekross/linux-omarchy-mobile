@@ -1143,37 +1143,50 @@ static void qcom_pcie_deinit_2_7_0(struct qcom_pcie *pcie)
 
 static int qcom_pcie_config_sid_1_9_0(struct qcom_pcie *pcie)
 {
-	/* iommu map structure */
-	struct {
-		u32 bdf;
-		u32 phandle;
-		u32 smmu_sid;
-		u32 smmu_sid_len;
-	} *map;
+	/*
+	 * iommu-map entries are <bdf &iommu sid... len>, where the IOMMU
+	 * specifier has #iommu-cells cells (1 or 2). Only the first specifier
+	 * cell (the SID) is used here.
+	 */
 	void __iomem *bdf_to_sid_base = pcie->parf + PARF_BDF_TO_SID_TABLE_N;
 	struct device *dev = pcie->pci->dev;
 	u8 qcom_pcie_crc8_table[CRC8_TABLE_SIZE];
-	int i, nr_map, size = 0;
+	struct device_node *iommu_np;
+	u32 iommu_cells = 1;
+	int i, nr_map, stride, size = 0;
 	u32 smmu_sid_base;
+	u32 *map;
 	u32 val;
 
 	of_get_property(dev->of_node, "iommu-map", &size);
 	if (!size)
 		return 0;
 
-	/* Enable BDF to SID translation by disabling bypass mode (default) */
-	val = readl(pcie->parf + PARF_BDF_TO_SID_CFG);
-	val &= ~BDF_TO_SID_BYPASS;
-	writel(val, pcie->parf + PARF_BDF_TO_SID_CFG);
-
 	map = kzalloc(size, GFP_KERNEL);
 	if (!map)
 		return -ENOMEM;
 
-	of_property_read_u32_array(dev->of_node, "iommu-map", (u32 *)map,
+	of_property_read_u32_array(dev->of_node, "iommu-map", map,
 				   size / sizeof(u32));
 
-	nr_map = size / (sizeof(*map));
+	iommu_np = of_find_node_by_phandle(map[1]);
+	if (iommu_np) {
+		of_property_read_u32(iommu_np, "#iommu-cells", &iommu_cells);
+		of_node_put(iommu_np);
+	}
+	stride = 3 + iommu_cells;
+	if ((size / sizeof(u32)) % stride) {
+		dev_err(dev, "iommu-map: bad length %d for %u iommu cells\n",
+			size, iommu_cells);
+		kfree(map);
+		return -EINVAL;
+	}
+	nr_map = size / sizeof(u32) / stride;
+
+	/* Enable BDF to SID translation by disabling bypass mode (default) */
+	val = readl(pcie->parf + PARF_BDF_TO_SID_CFG);
+	val &= ~BDF_TO_SID_BYPASS;
+	writel(val, pcie->parf + PARF_BDF_TO_SID_CFG);
 
 	crc8_populate_msb(qcom_pcie_crc8_table, QCOM_PCIE_CRC8_POLYNOMIAL);
 
@@ -1181,11 +1194,13 @@ static int qcom_pcie_config_sid_1_9_0(struct qcom_pcie *pcie)
 	memset_io(bdf_to_sid_base, 0, CRC8_TABLE_SIZE * sizeof(u32));
 
 	/* Extract the SMMU SID base from the first entry of iommu-map */
-	smmu_sid_base = map[0].smmu_sid;
+	smmu_sid_base = map[2];
 
 	/* Look for an available entry to hold the mapping */
 	for (i = 0; i < nr_map; i++) {
-		__be16 bdf_be = cpu_to_be16(map[i].bdf);
+		u32 bdf = map[i * stride];
+		u32 sid = map[i * stride + 2];
+		__be16 bdf_be = cpu_to_be16(bdf);
 		u32 val;
 		u8 hash;
 
@@ -1208,7 +1223,7 @@ static int qcom_pcie_config_sid_1_9_0(struct qcom_pcie *pcie)
 		}
 
 		/* BDF [31:16] | SID [15:8] | NEXT [7:0] */
-		val = map[i].bdf << 16 | (map[i].smmu_sid - smmu_sid_base) << 8 | 0;
+		val = bdf << 16 | (sid - smmu_sid_base) << 8 | 0;
 		writel(val, bdf_to_sid_base + hash * sizeof(u32));
 	}
 
