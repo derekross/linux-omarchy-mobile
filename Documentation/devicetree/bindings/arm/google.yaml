@@ -47,6 +47,37 @@ properties:
               - google,gs201-felix
           - const: google,gs201
 
+      - description: Google Pixel 9a (Tegu)
+        items:
+          - const: google,zumapro-tegu
+          - const: google,zumapro
+
+  soc_compatible:
+    type: object
+    description: |
+      Firmware matches a base device tree using the product, silicon revision
+      and package tuples in this node. Child names and underscored field names
+      follow the existing bootloader ABI.
+    patternProperties:
+      '^[A-Z0-9_]+$':
+        type: object
+        properties:
+          product_id:
+            $ref: /schemas/types.yaml#/definitions/uint32
+          major:
+            $ref: /schemas/types.yaml#/definitions/uint32
+          minor:
+            $ref: /schemas/types.yaml#/definitions/uint32
+          pkg_mode:
+            $ref: /schemas/types.yaml#/definitions/uint32
+        required:
+          - product_id
+          - major
+          - minor
+          - pkg_mode
+        additionalProperties: false
+    additionalProperties: false
+
   # Bootloader requires empty ect node to be present
   ect:
     type: object
