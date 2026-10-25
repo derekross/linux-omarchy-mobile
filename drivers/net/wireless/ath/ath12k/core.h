@@ -159,7 +159,11 @@ enum ath12k_hw_rev {
 	ATH12K_HW_IPQ5332_HW10,
 	ATH12K_HW_QCC2072_HW10,
 	ATH12K_HW_IPQ5424_HW10,
+	ATH12K_HW_WCN7860_HW20,
 };
+
+/* WCN7860 (peach); its QMI and DMA setup differ from the other chips */
+#define ATH12K_PCI_DEVICE_ID_WCN7860	0x110e
 
 #define ATH12K_IRQ_NUM_MAX 57
 #define ATH12K_EXT_IRQ_NUM_MAX	16
