@@ -598,6 +598,28 @@ fw_load_ready_state:
 	}
 
 	dev_info(dev, "Wait for device to enter SBL or Mission mode\n");
+	/*
+	 * Opt-in for controllers that lose the EE event (ath12k WCN7860):
+	 * continue from BHI_EXECENV when the register already shows SBL,
+	 * AMSS/WFW or FP. Only read the register when access is valid.
+	 */
+	if (mhi_cntrl->ee_reg_continue &&
+	    MHI_REG_ACCESS_VALID(mhi_cntrl->pm_state)) {
+		enum mhi_ee_type exec = mhi_get_exec_env(mhi_cntrl);
+		enum dev_st_transition st = DEV_ST_TRANSITION_MAX;
+
+		if (exec == MHI_EE_SBL)
+			st = DEV_ST_TRANSITION_SBL;
+		else if (exec == MHI_EE_AMSS || exec == MHI_EE_WFW)
+			st = DEV_ST_TRANSITION_MISSION_MODE;
+		else if (exec == MHI_EE_FP)
+			st = DEV_ST_TRANSITION_FP;
+
+		if (st != DEV_ST_TRANSITION_MAX) {
+			dev_dbg(dev, "EE 0x%x already set, continuing\n", exec);
+			mhi_queue_state_transition(mhi_cntrl, st);
+		}
+	}
 	return;
 
 error_ready_state:

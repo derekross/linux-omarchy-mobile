@@ -813,6 +813,9 @@ void mhi_pm_st_worker(struct work_struct *work)
 			mhi_fw_load_handler(mhi_cntrl);
 			break;
 		case DEV_ST_TRANSITION_SBL:
+			/* The register path and the EE event can both queue this. */
+			if (mhi_cntrl->ee_reg_continue && mhi_cntrl->ee == MHI_EE_SBL)
+				break;
 			write_lock_irq(&mhi_cntrl->pm_lock);
 			mhi_cntrl->ee = MHI_EE_SBL;
 			write_unlock_irq(&mhi_cntrl->pm_lock);
@@ -824,10 +827,36 @@ void mhi_pm_st_worker(struct work_struct *work)
 			mhi_create_devices(mhi_cntrl);
 			if (mhi_cntrl->fbc_download)
 				mhi_download_amss_image(mhi_cntrl);
+			/*
+			 * Opt-in for controllers that lose the EE event
+			 * (ath12k WCN7860): poll BHI_EXECENV for up to 2 s
+			 * (20 x 100 ms). Do not treat FP as mission mode.
+			 */
+			if (mhi_cntrl->ee_reg_continue) {
+				int n;
+
+				for (n = 0; n < 20; n++) {
+					u32 exec = MHI_EE_MAX;
+
+					if (!mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi,
+							  BHI_EXECENV, &exec))
+						dev_dbg(&mhi_cntrl->mhi_dev->dev,
+							"post-AMSS %d ee=0x%x\n", n, exec);
+					if (exec == MHI_EE_AMSS || exec == MHI_EE_WFW) {
+						mhi_queue_state_transition(mhi_cntrl,
+							DEV_ST_TRANSITION_MISSION_MODE);
+						break;
+					}
+					msleep(100);
+				}
+			}
 
 			mhi_uevent_notify(mhi_cntrl, mhi_cntrl->ee);
 			break;
 		case DEV_ST_TRANSITION_MISSION_MODE:
+			if (mhi_cntrl->ee_reg_continue &&
+			    MHI_IN_MISSION_MODE(mhi_cntrl->ee))
+				break;
 			mhi_pm_mission_mode_transition(mhi_cntrl);
 			break;
 		case DEV_ST_TRANSITION_FP:

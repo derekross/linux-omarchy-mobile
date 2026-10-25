@@ -379,6 +379,8 @@ struct mhi_controller_config {
  * @fbc_download: MHI host needs to do complete image transfer (optional)
  * @wake_set: Device wakeup set flag
  * @no_m3: Device doesn't support M3 state
+ * @ee_reg_continue: Continue SBL/AMSS from BHI_EXECENV when the EE event is lost
+ *                   (optional; set by controllers such as ath12k WCN7860)
  * @irq_flags: irq flags passed to request_irq (optional)
  * @mru: the default MRU for the MHI device
  *
@@ -465,6 +467,7 @@ struct mhi_controller {
 	bool fbc_download;
 	bool wake_set;
 	bool no_m3;
+	bool ee_reg_continue;
 	unsigned long irq_flags;
 	u32 mru;
 };

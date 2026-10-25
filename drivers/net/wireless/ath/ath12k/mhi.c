@@ -261,6 +261,9 @@ int ath12k_mhi_register(struct ath12k_pci *ab_pci)
 	mhi_ctrl->status_cb = ath12k_mhi_op_status_cb;
 	mhi_ctrl->read_reg = ath12k_mhi_op_read_reg;
 	mhi_ctrl->write_reg = ath12k_mhi_op_write_reg;
+	/* WCN7860 loses the EE event; continue from BHI_EXECENV instead. */
+	if (ab->id.device == ATH12K_PCI_DEVICE_ID_WCN7860)
+		mhi_ctrl->ee_reg_continue = true;
 
 	ret = mhi_register_controller(mhi_ctrl, ab->hw_params->mhi_config);
 	if (ret) {
