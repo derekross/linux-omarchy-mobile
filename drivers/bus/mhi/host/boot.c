@@ -598,6 +598,27 @@ fw_load_ready_state:
 	}
 
 	dev_info(dev, "Wait for device to enter SBL or Mission mode\n");
+	/*
+	 * Peach sets BHI_EXECENV to SBL before the host has an event
+	 * ring that could carry the EE event, so the event never arrives.
+	 * Continue from the register.
+	 */
+	{
+		enum mhi_ee_type exec = mhi_get_exec_env(mhi_cntrl);
+		enum dev_st_transition st = DEV_ST_TRANSITION_MAX;
+
+		if (exec == MHI_EE_SBL)
+			st = DEV_ST_TRANSITION_SBL;
+		else if (exec == MHI_EE_AMSS || exec == MHI_EE_WFW)
+			st = DEV_ST_TRANSITION_MISSION_MODE;
+		else if (exec == MHI_EE_FP)
+			st = DEV_ST_TRANSITION_FP;
+
+		if (st != DEV_ST_TRANSITION_MAX) {
+			dev_dbg(dev, "EE 0x%x already set, continuing\n", exec);
+			mhi_queue_state_transition(mhi_cntrl, st);
+		}
+	}
 	return;
 
 error_ready_state:
