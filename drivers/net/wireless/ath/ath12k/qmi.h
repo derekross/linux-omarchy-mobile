@@ -30,6 +30,7 @@
 #define QMI_WLFW_REQUEST_MEM_IND_V01		0x0035
 #define QMI_WLFW_FW_MEM_READY_IND_V01		0x0037
 #define QMI_WLFW_FW_READY_IND_V01		0x0038
+#define QMI_WLFW_COLD_BOOT_CAL_DONE_IND_V01	0x003E
 
 #define QMI_WLANFW_MAX_DATA_SIZE_V01		6144
 
@@ -374,6 +375,10 @@ struct qmi_wlanfw_fw_ready_ind_msg_v01 {
 	char placeholder;
 };
 
+struct qmi_wlanfw_cold_boot_cal_done_ind_msg_v01 {
+	char placeholder;
+};
+
 #define QMI_WLANFW_CAP_REQ_MSG_V01_MAX_LEN	0
 #define QMI_WLANFW_CAP_REQ_V01			0x0024
 
@@ -523,6 +528,51 @@ struct qmi_wlanfw_m3_info_req_msg_v01 {
 };
 
 struct qmi_wlanfw_m3_info_resp_msg_v01 {
+	struct qmi_response_type_v01 resp;
+};
+
+#define QMI_WLANFW_QDSS_TRACE_CONFIG_DOWNLOAD_REQ_V01		0x0044
+#define QMI_WLANFW_QDSS_TRACE_CONFIG_DOWNLOAD_REQ_MSG_V01_MAX_LEN 6167
+#define QMI_WLANFW_QDSS_TRACE_CONFIG_DOWNLOAD_RESP_MSG_V01_MAX_LEN 7
+struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01 {
+	u8 total_size_valid;
+	u32 total_size;
+	u8 seg_id_valid;
+	u32 seg_id;
+	u8 data_valid;
+	u32 data_len;
+	u8 data[QMI_WLANFW_MAX_DATA_SIZE_V01];
+	u8 end_valid;
+	u8 end;
+};
+
+struct qmi_wlanfw_qdss_trace_config_download_resp_msg_v01 {
+	struct qmi_response_type_v01 resp;
+};
+
+/* WCN7860 (peach) needs this before board data. Stock cnss sends
+ * tmel_peach_20.elf here. Without it the secured PHY init faults and the
+ * later WLAN mode request times out.
+ */
+#define QMI_WLANFW_TME_LITE_INFO_REQ_MSG_V01_MAX_MSG_LEN	25
+#define QMI_WLANFW_TME_LITE_INFO_RESP_MSG_V01_MAX_MSG_LEN	7
+#define QMI_WLANFW_TME_LITE_INFO_REQ_V01		0x005B
+#define QMI_WLANFW_TME_LITE_INFO_RESP_V01		0x005B
+
+enum qmi_wlanfw_tme_lite_file_type_v01 {
+	WLANFW_TME_LITE_PATCH_FILE_V01 = 0,
+	WLANFW_TME_LITE_OEM_FUSE_FILE_V01 = 1,
+	WLANFW_TME_LITE_RPR_FILE_V01 = 2,
+	WLANFW_TME_LITE_DPR_FILE_V01 = 3,
+};
+
+struct qmi_wlanfw_tme_lite_info_req_msg_v01 {
+	enum qmi_wlanfw_tme_lite_file_type_v01 tme_file;
+	u64 addr;
+	u32 size;
+};
+
+struct qmi_wlanfw_tme_lite_info_resp_msg_v01 {
 	struct qmi_response_type_v01 resp;
 };
 
