@@ -1804,6 +1804,9 @@
 		pmu_system_controller: system-controller@17460000 {
 			compatible = "google,gs101-pmu";
 			reg = <0x17460000 0x10000>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges = <0x0 0x17460000 0x10000>;
 			google,pmu-intr-gen-syscon = <&pmu_intr_gen>;
 
 			poweroff: syscon-poweroff {
