@@ -19,6 +19,12 @@
 	#size-cells = <1>;
 	interrupt-parent = <&gic>;
 
+	/* The pin controllers are numbered as in Tensor G4's driver data. */
+	aliases {
+		pinctrl10 = &pinctrl_hsi2ufs;
+		pinctrl11 = &pinctrl_peric0;
+	};
+
 	/*
 	 * Required by the Pixel bootloader (ABL). zuma's stock base DTB
 	 * carries the ECT location here rather than an empty node.
@@ -221,6 +227,18 @@
 		clock-output-names = "wdt_stub";
 	};
 
+	/*
+	 * Stand-in for the pin controllers' bus clocks (no clock driver yet).
+	 * Stock's pin controllers take no clock: ABL leaves them running. The
+	 * driver only enables it, so its rate is never used.
+	 */
+	clk_gpio_stub: clock-gpio-stub {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <0>;
+		clock-output-names = "gpio_stub";
+	};
+
 	soc: soc@0 {
 		compatible = "simple-bus";
 		#address-cells = <1>;
@@ -260,6 +278,14 @@
 			reg = <0x10400000 0x10000>,	/* GICD */
 			      <0x10440000 0x200000>;	/* GICR, nine CPUs */
 			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		pinctrl_peric0: pinctrl@10840000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x10840000 0x1000>;
+			clocks = <&clk_gpio_stub>;
+			clock-names = "pclk";
+			interrupts = <GIC_SPI 634 IRQ_TYPE_LEVEL_HIGH>;
 		};
 
 		/*
@@ -310,6 +336,14 @@
 			status = "disabled";
 		};
 
+		pinctrl_hsi2ufs: pinctrl@13060000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x13060000 0x1000>;
+			clocks = <&clk_gpio_stub>;
+			clock-names = "pclk";
+			interrupts = <GIC_SPI 433 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
 		/* Writes go through EL3 (SMC), as on gs101. */
 		pmu_system_controller: system-controller@15460000 {
 			compatible = "google,zuma-pmu";
@@ -330,3 +364,5 @@
 		};
 	};
 };
+
+#include "zuma-pinctrl.dtsi"
