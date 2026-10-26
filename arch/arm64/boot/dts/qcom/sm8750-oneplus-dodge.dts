@@ -1035,6 +1035,13 @@
 	};
 };
 
+&ipa {
+	firmware-name = "qcom/sm8750/OnePlus/ipa_fws.mbn";
+	memory-region = <&ipa_fw_mem>;
+
+	status = "okay";
+};
+
 &pm8550_flash {
 	status = "okay";
 	led-0 {
