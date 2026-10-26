@@ -39,6 +39,7 @@ properties:
       - axis,artpec9-pinctrl
       - google,gs101-pinctrl
       - google,gs201-pinctrl
+      - google,zuma-pinctrl
       - google,zumapro-pinctrl
       - samsung,s3c64xx-pinctrl
       - samsung,s5pv210-pinctrl
@@ -142,6 +143,7 @@ allOf:
             enum:
               - google,gs101-pinctrl
               - google,gs201-pinctrl
+              - google,zuma-pinctrl
               - google,zumapro-pinctrl
               - samsung,exynos8890-pinctrl
     then:
