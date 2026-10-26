@@ -150,6 +150,9 @@ struct s6sy761_data {
 	unsigned int read_errors;
 	unsigned int recover_tries;
 	struct delayed_work recover_work;
+	/* the rails are on (ours to turn off); the device is going away */
+	bool powered;
+	bool stopping;
 };
 
 /*
@@ -561,6 +564,7 @@ static int s6sy761_power_on(struct s6sy761_data *sdata)
 				    sdata->regulators);
 	if (ret)
 		return ret;
+	sdata->powered = true;
 
 	/*
 	 * Held in reset while unpowered; once the rails are up, release it,
@@ -674,6 +678,16 @@ static void s6sy761_release_all(struct s6sy761_data *sdata)
 	input_sync(sdata->input);
 }
 
+/* Rails off, once: a power-up that failed to enable them left them off. */
+static void s6sy761_rails_off(struct s6sy761_data *sdata)
+{
+	if (!sdata->powered)
+		return;
+	regulator_bulk_disable(ARRAY_SIZE(sdata->regulators),
+			       sdata->regulators);
+	sdata->powered = false;
+}
+
 /* Power cycle and re-initialise a controller that stopped answering. */
 static void s6sy761_recover(struct work_struct *work)
 {
@@ -689,12 +703,15 @@ static void s6sy761_recover(struct work_struct *work)
 	 */
 	guard(mutex)(&sdata->input->mutex);
 
+	/* scheduled by an open during unbind, after the IRQ was disabled */
+	if (sdata->stopping)
+		return;
+
 	dev_warn(sdata->dev, "controller stopped answering, resetting it\n");
 	disable_irq(sdata->irq);
 	if (sdata->reset)
 		gpiod_set_value_cansleep(sdata->reset, 1);
-	regulator_bulk_disable(ARRAY_SIZE(sdata->regulators),
-			       sdata->regulators);
+	s6sy761_rails_off(sdata);
 	msleep(50);
 
 	ret = s6sy761_power_on(sdata);
@@ -721,8 +738,22 @@ static void s6sy761_power_off(void *data)
 	struct s6sy761_data *sdata = data;
 
 	disable_irq(sdata->irq);
-	regulator_bulk_disable(ARRAY_SIZE(sdata->regulators),
-						sdata->regulators);
+	s6sy761_rails_off(sdata);
+}
+
+/*
+ * On unbind, before the IRQ is freed: with the IRQ disabled its handler
+ * can't schedule a reset, and a reset still running finishes while the
+ * line is still requested.
+ */
+static void s6sy761_stop_recovery(void *data)
+{
+	struct s6sy761_data *sdata = data;
+
+	disable_irq(sdata->irq);
+	scoped_guard(mutex, &sdata->input->mutex)
+		sdata->stopping = true;
+	cancel_delayed_work_sync(&sdata->recover_work);
 }
 
 static int s6sy761_probe_common(struct s6sy761_data *sdata)
@@ -757,8 +788,7 @@ static int s6sy761_probe_common(struct s6sy761_data *sdata)
 		 * controller not answer; a real power cycle brings it up.
 		 */
 		dev_info(dev, "no answer (%d), power cycling\n", err);
-		regulator_bulk_disable(ARRAY_SIZE(sdata->regulators),
-				       sdata->regulators);
+		s6sy761_rails_off(sdata);
 		if (sdata->reset)
 			gpiod_set_value_cansleep(sdata->reset, 1);
 		msleep(100);
@@ -800,8 +830,9 @@ static int s6sy761_probe_common(struct s6sy761_data *sdata)
 
 	/*
 	 * Set up before the device can be opened (an open may schedule a
-	 * reset), and cancelled after the IRQ is freed but before the input
-	 * device goes and the power-off action runs.
+	 * reset). s6sy761_stop_recovery() cancels it before the IRQ is freed;
+	 * this cancels, once more, a reset an open scheduled after that,
+	 * before the input device goes and the power-off action runs.
 	 */
 	err = devm_delayed_work_autocancel(dev, &sdata->recover_work,
 					   s6sy761_recover);
@@ -816,6 +847,10 @@ static int s6sy761_probe_common(struct s6sy761_data *sdata)
 					s6sy761_irq_handler,
 					IRQF_TRIGGER_LOW | IRQF_ONESHOT,
 					"s6sy761_irq", sdata);
+	if (err)
+		return err;
+
+	err = devm_add_action_or_reset(dev, s6sy761_stop_recovery, sdata);
 	if (err)
 		return err;
 
@@ -877,10 +912,14 @@ static int s6sy761_suspend(struct device *dev)
 {
 	struct s6sy761_data *sdata = dev_get_drvdata(dev);
 
-	/* a reset still running would power the controller up again */
+	/*
+	 * The IRQ first: its handler can schedule a reset, and a reset still
+	 * running would power the controller up again.
+	 */
+	disable_irq(sdata->irq);
 	cancel_delayed_work_sync(&sdata->recover_work);
 	sdata->recover_tries = 0;
-	s6sy761_power_off(sdata);
+	s6sy761_rails_off(sdata);
 
 	return 0;
 }
