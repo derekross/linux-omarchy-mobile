@@ -1226,6 +1226,14 @@ static void brcmf_pcie_bus_console_read(struct brcmf_pciedev_info *devinfo,
 		return;
 	addr = console->base_addr + BRCMF_CONSOLE_WRITEIDX_OFFSET;
 	newidx = brcmf_pcie_read_tcm32(devinfo, addr);
+	if (newidx >= console->bufsize) {
+		/* A dead link reads all ones, and read_idx wraps at bufsize,
+		 * so the loop below would never meet it.
+		 */
+		brcmf_err(bus, "console write index %u out of range (%u)\n",
+			  newidx, console->bufsize);
+		return;
+	}
 	while (newidx != console->read_idx) {
 		addr = console->buf_addr + console->read_idx;
 		ch = brcmf_pcie_read_tcm8(devinfo, addr);
