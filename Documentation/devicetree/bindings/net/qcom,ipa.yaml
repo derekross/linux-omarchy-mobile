@@ -62,6 +62,7 @@ properties:
           - enum:
               - qcom,eliza-ipa
               - qcom,sm8650-ipa
+              - qcom,sm8750-ipa
           - const: qcom,sm8550-ipa
 
   reg:
