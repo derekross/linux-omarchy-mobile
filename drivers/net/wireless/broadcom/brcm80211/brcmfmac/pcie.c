@@ -74,6 +74,8 @@ BRCMF_FW_CLM_DEF(4378B1, "brcmfmac4378b1-pcie");
 BRCMF_FW_CLM_DEF(4378B3, "brcmfmac4378b3-pcie");
 BRCMF_FW_CLM_DEF(4387C2, "brcmfmac4387c2-pcie");
 BRCMF_FW_CLM_DEF(4389C1, "brcmfmac4389c1-pcie");
+/* BCM4383 rev 2 (Pixel 9a): the owner's firmware set, with CLM and TXCAP blobs */
+BRCMF_FW_CLM_DEF(4383, "brcmfmac4383-pcie");
 BRCMF_FW_CLM_DEF(54591, "brcmfmac54591-pcie");
 
 /* firmware config files */
@@ -116,6 +118,7 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 	BRCMF_FW_ENTRY(BRCM_CC_4378_CHIP_ID, 0xFFFFFFE0, 4378B3), /* revision ID 5 */
 	BRCMF_FW_ENTRY(BRCM_CC_4387_CHIP_ID, 0xFFFFFFFF, 4387C2), /* revision ID 7 */
 	BRCMF_FW_ENTRY(BRCM_CC_4389_CHIP_ID, 0xFFFFFFFF, 4389C1),
+	BRCMF_FW_ENTRY(BRCM_CC_4383_CHIP_ID, 0xFFFFFFFF, 4383),
 };
 
 #define BRCMF_PCIE_FW_UP_TIMEOUT		5000 /* msec */
@@ -239,8 +242,9 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 						 BRCMF_PCIE_64_MB_INT_D2H7_DB1)
 
 #define BRCMF_PCIE_SHARED_VERSION_7		7
+#define BRCMF_PCIE_SHARED_VERSION_9		9
 #define BRCMF_PCIE_MIN_SHARED_VERSION		5
-#define BRCMF_PCIE_MAX_SHARED_VERSION		BRCMF_PCIE_SHARED_VERSION_7
+#define BRCMF_PCIE_MAX_SHARED_VERSION		BRCMF_PCIE_SHARED_VERSION_9
 #define BRCMF_PCIE_SHARED_VERSION_MASK		0x00FF
 #define BRCMF_PCIE_SHARED_DMA_INDEX		0x10000
 #define BRCMF_PCIE_SHARED_DMA_2B_IDX		0x100000
@@ -264,6 +268,12 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 #define BRCMF_SHARED_DMA_RINGUPD_ADDR_OFFSET	68
 /* shared area revision >= 6: host capabilities, read by the firmware */
 #define BRCMF_SHARED_HOST_CAP_OFFSET		84
+#define BRCMF_SHARED_EWP_INFO_ADDR_OFFSET	128
+#define BRCMF_SHARED_AGGR_HOST_CAP_OFFSET	133
+#define BRCMF_SHARED_VERSION_9_SIZE		140
+
+#define BRCMF_EWP_INFO_VERSION			1
+#define BRCMF_EWP_INIT_END			2
 
 #define BRCMF_HOSTCAP_H2D_ENABLE_HOSTRDY	0x00000400
 #define BRCMF_HOSTCAP_DS_NO_OOB_DW		0x00001000
@@ -1234,6 +1244,14 @@ static void brcmf_pcie_bus_console_read(struct brcmf_pciedev_info *devinfo,
 		return;
 	addr = console->base_addr + BRCMF_CONSOLE_WRITEIDX_OFFSET;
 	newidx = brcmf_pcie_read_tcm32(devinfo, addr);
+	if (newidx >= console->bufsize) {
+		/* A dead link reads all ones, and read_idx wraps at bufsize,
+		 * so the loop below would never meet it.
+		 */
+		brcmf_err(bus, "console write index %u out of range (%u)\n",
+			  newidx, console->bufsize);
+		return;
+	}
 	while (newidx != console->read_idx) {
 		addr = console->buf_addr + console->read_idx;
 		ch = brcmf_pcie_read_tcm8(devinfo, addr);
@@ -1274,6 +1292,14 @@ static void brcmf_pcie_intr_enable(struct brcmf_pciedev_info *devinfo)
 	brcmf_pcie_write_reg32(devinfo, devinfo->reginfo->mailboxmask,
 			       devinfo->reginfo->int_d2h_db |
 			       devinfo->reginfo->int_fn0);
+}
+
+/* API9 firmware defers TX allocation until host ready, as does BCM4389. */
+static bool
+brcmf_pcie_early_hostready(struct brcmf_pciedev_info *devinfo)
+{
+	return devinfo->pdev->device == BRCM_PCIE_4389_DEVICE_ID ||
+	       devinfo->shared.version == BRCMF_PCIE_SHARED_VERSION_9;
 }
 
 static void brcmf_pcie_hostready(struct brcmf_pciedev_info *devinfo)
@@ -1822,6 +1848,56 @@ static void brcmf_pcie_release_ringbuffers(struct brcmf_pciedev_info *devinfo)
 }
 
 
+static bool
+brcmf_pcie_valid_ram_range(struct brcmf_pciedev_info *devinfo, u32 addr,
+			   u32 len)
+{
+	u64 end = (u64)addr + len;
+
+	return len && addr >= devinfo->ci->rambase && end <= BIT_ULL(32) &&
+	       end <= (u64)devinfo->ci->rambase + devinfo->ci->ramsize;
+}
+
+/* API9 must describe every ring and its fallback TCM indices in RAM. */
+static bool
+brcmf_pcie_api9_valid_ringinfo(struct brcmf_pciedev_info *devinfo,
+			       const struct brcmf_pcie_dhi_ringinfo *ringinfo)
+{
+	u32 h2d = le16_to_cpu(ringinfo->max_submissionrings);
+	u32 d2h = le16_to_cpu(ringinfo->max_completionrings);
+	u32 flows = le16_to_cpu(ringinfo->max_flowrings);
+	u32 ptrs[] = {
+		le32_to_cpu(ringinfo->h2d_w_idx_ptr),
+		le32_to_cpu(ringinfo->h2d_r_idx_ptr),
+		le32_to_cpu(ringinfo->d2h_w_idx_ptr),
+		le32_to_cpu(ringinfo->d2h_r_idx_ptr),
+	};
+	u32 ringmem = le32_to_cpu(ringinfo->ringmem);
+	u32 count;
+	u32 i;
+
+	if (!flows || flows > 512 ||
+	    h2d < flows + BRCMF_NROF_H2D_COMMON_MSGRINGS ||
+	    d2h < BRCMF_NROF_D2H_COMMON_MSGRINGS)
+		return false;
+	if (ringmem & 3 ||
+	    !brcmf_pcie_valid_ram_range(devinfo, ringmem,
+				      BRCMF_NROF_COMMON_MSGRINGS *
+				      BRCMF_RING_MEM_SZ))
+		return false;
+
+	/* Allocation failure falls back to four-byte-spaced TCM indices. */
+	for (i = 0; i < ARRAY_SIZE(ptrs); i++) {
+		count = i < 2 ? h2d : d2h;
+		if (ptrs[i] & 3 ||
+		    !brcmf_pcie_valid_ram_range(devinfo, ptrs[i],
+					      count * sizeof(u32)))
+			return false;
+	}
+
+	return true;
+}
+
 static int brcmf_pcie_init_ringbuffers(struct brcmf_pciedev_info *devinfo)
 {
 	struct brcmf_bus *bus = dev_get_drvdata(&devinfo->pdev->dev);
@@ -1841,8 +1917,18 @@ static int brcmf_pcie_init_ringbuffers(struct brcmf_pciedev_info *devinfo)
 	u16 max_submissionrings;
 	u16 max_completionrings;
 
+	if (devinfo->shared.version == BRCMF_PCIE_SHARED_VERSION_9 &&
+	    (devinfo->shared.ring_info_addr & 3 ||
+	     !brcmf_pcie_valid_ram_range(devinfo,
+				       devinfo->shared.ring_info_addr,
+				       sizeof(ringinfo))))
+		return -EINVAL;
+
 	brcmf_pcie_copy_dev_tomem(devinfo, devinfo->shared.ring_info_addr,
 				  &ringinfo, sizeof(ringinfo));
+	if (devinfo->shared.version == BRCMF_PCIE_SHARED_VERSION_9 &&
+	    !brcmf_pcie_api9_valid_ringinfo(devinfo, &ringinfo))
+		return -EINVAL;
 	devinfo->tcm_h2d_w_idx = le32_to_cpu(ringinfo.h2d_w_idx_ptr);
 	devinfo->tcm_h2d_r_idx = le32_to_cpu(ringinfo.h2d_r_idx_ptr);
 	devinfo->tcm_d2h_w_idx = le32_to_cpu(ringinfo.d2h_w_idx_ptr);
@@ -2061,6 +2147,7 @@ static int brcmf_pcie_init_scratchbuffers(struct brcmf_pciedev_info *devinfo)
 	struct brcmf_bus *bus = dev_get_drvdata(&devinfo->pdev->dev);
 	u64 address;
 	u32 addr;
+	u8 aggr_cap = 0;
 
 	devinfo->shared.scratch =
 		dma_alloc_coherent(&devinfo->pdev->dev,
@@ -2079,7 +2166,14 @@ static int brcmf_pcie_init_scratchbuffers(struct brcmf_pciedev_info *devinfo)
 	       BRCMF_SHARED_DMA_SCRATCH_LEN_OFFSET;
 	brcmf_pcie_write_tcm32(devinfo, addr, BRCMF_DMA_D2H_SCRATCH_BUF_LEN);
 
-	if (devinfo->pdev->device == BRCM_PCIE_4389_DEVICE_ID) {
+	if (brcmf_pcie_early_hostready(devinfo)) {
+		/* API9 uses the legacy ring-update slots for host SCB offload. */
+		if (devinfo->shared.version == BRCMF_PCIE_SHARED_VERSION_9) {
+			addr = devinfo->shared.tcm_base_address +
+			       BRCMF_SHARED_AGGR_HOST_CAP_OFFSET;
+			brcmf_pcie_copy_mem_todev(devinfo, addr, &aggr_cap,
+						  sizeof(aggr_cap));
+		}
 		brcmf_pcie_set_host_cap(devinfo);
 		return 0;
 	}
@@ -2126,11 +2220,8 @@ static int brcmf_pcie_preinit(struct device *dev)
 	brcmf_dbg(PCIE, "Enter\n");
 
 	brcmf_pcie_intr_enable(buspub->devinfo);
-	/* The BCM4389 was told host ready right after its rings were set
-	 * up; its firmware traps on a second one (_hnd_die from
-	 * pciedev_handle_hostready_intr), so ring it only once.
-	 */
-	if (buspub->devinfo->pdev->device != BRCM_PCIE_4389_DEVICE_ID)
+	/* The early path already notified firmware after setting up the rings. */
+	if (!brcmf_pcie_early_hostready(buspub->devinfo))
 		brcmf_pcie_hostready(buspub->devinfo);
 
 	return 0;
@@ -2298,6 +2389,30 @@ brcmf_pcie_adjust_ramsize(struct brcmf_pciedev_info *devinfo, u8 *data,
 }
 
 
+/* Check firmware's EWP initialization result before setting up host DMA. */
+static int brcmf_pcie_api9_ready(struct brcmf_pciedev_info *devinfo)
+{
+	u32 addr = devinfo->shared.tcm_base_address;
+	u32 ewp;
+
+	if (!(devinfo->shared.flags & BRCMF_PCIE_SHARED_HOSTRDY_DB1))
+		return -EOPNOTSUPP;
+	if (!brcmf_pcie_valid_ram_range(devinfo, addr,
+					BRCMF_SHARED_VERSION_9_SIZE))
+		return -EINVAL;
+
+	ewp = brcmf_pcie_read_tcm32(devinfo,
+				    addr + BRCMF_SHARED_EWP_INFO_ADDR_OFFSET);
+	if (!ewp || ewp & 3 || !brcmf_pcie_valid_ram_range(devinfo, ewp, 2))
+		return -EINVAL;
+	if (brcmf_pcie_read_tcm8(devinfo, ewp) != BRCMF_EWP_INFO_VERSION)
+		return -EPROTONOSUPPORT;
+	if (brcmf_pcie_read_tcm8(devinfo, ewp + 1) != BRCMF_EWP_INIT_END)
+		return -EIO;
+
+	return 0;
+}
+
 static int
 brcmf_pcie_init_share_ram_info(struct brcmf_pciedev_info *devinfo,
 			       u32 sharedram_addr)
@@ -2305,9 +2420,15 @@ brcmf_pcie_init_share_ram_info(struct brcmf_pciedev_info *devinfo,
 	struct brcmf_bus *bus = dev_get_drvdata(&devinfo->pdev->dev);
 	struct brcmf_pcie_shared_info *shared;
 	u32 addr;
+	int ret;
 
 	shared = &devinfo->shared;
 	shared->tcm_base_address = sharedram_addr;
+
+	/* The version is unknown until this first bounded metadata read. */
+	if (sharedram_addr & 3 ||
+	    !brcmf_pcie_valid_ram_range(devinfo, sharedram_addr, sizeof(u32)))
+		return -EINVAL;
 
 	shared->flags = brcmf_pcie_read_tcm32(devinfo, sharedram_addr);
 	shared->version = (u8)(shared->flags & BRCMF_PCIE_SHARED_VERSION_MASK);
@@ -2329,7 +2450,7 @@ brcmf_pcie_init_share_ram_info(struct brcmf_pciedev_info *devinfo,
 	 * The BCM4389 firmware does not, and ignores the DAR doorbells.
 	 */
 	if (devinfo->reginfo == &brcmf_reginfo_64 &&
-	    devinfo->pdev->device == BRCM_PCIE_4389_DEVICE_ID &&
+	    brcmf_pcie_early_hostready(devinfo) &&
 	    !(shared->flags & BRCMF_PCIE_SHARED_DAR)) {
 		devinfo->reginfo = &brcmf_reginfo_64_nodar;
 		brcmf_dbg(PCIE, "no DAR: doorbells at 0x%x/0x%x\n",
@@ -2338,10 +2459,20 @@ brcmf_pcie_init_share_ram_info(struct brcmf_pciedev_info *devinfo,
 	}
 	brcmf_dbg(PCIE, "PCIe protocol version %d\n", shared->version);
 	if ((shared->version > BRCMF_PCIE_MAX_SHARED_VERSION) ||
-	    (shared->version < BRCMF_PCIE_MIN_SHARED_VERSION)) {
+	    (shared->version < BRCMF_PCIE_MIN_SHARED_VERSION) ||
+	    shared->version == 8) {
 		brcmf_err(bus, "Unsupported PCIE version %d\n",
 			  shared->version);
 		return -EINVAL;
+	}
+
+	if (shared->version == BRCMF_PCIE_SHARED_VERSION_9) {
+		ret = brcmf_pcie_api9_ready(devinfo);
+		if (ret) {
+			brcmf_err(bus, "API9 firmware initialization failed: %d\n",
+				  ret);
+			return ret;
+		}
 	}
 
 	/* check firmware support dma indicies */
@@ -2932,11 +3063,8 @@ static void brcmf_pcie_setup(struct device *dev, int ret,
 	devinfo->poll_enabled = devinfo->pdev->device ==
 				BRCM_PCIE_4389_DEVICE_ID;
 
-	/* Broadcom's driver rings host ready as soon as the common rings
-	 * are set up, before it posts any buffer (bcmdhd dhd_prot_init(),
-	 * hostrdy_after_init), and the BCM4389 was told so in host_cap.
-	 */
-	if (devinfo->pdev->device == BRCM_PCIE_4389_DEVICE_ID)
+	/* Notify early firmware before its deferred TX-buffer allocation. */
+	if (brcmf_pcie_early_hostready(devinfo))
 		brcmf_pcie_hostready(devinfo);
 
 	/* hook the commonrings in the bus structure. */
@@ -3597,6 +3725,7 @@ static const struct pci_device_id brcmf_pcie_devid_table[] = {
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4378_DEVICE_ID, WCC_SEED),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4387_DEVICE_ID, WCC_SEED),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4389_DEVICE_ID, WCC_SEED),
+	BRCMF_PCIE_DEVICE(BRCM_PCIE_4383_DEVICE_ID, WCC_SEED),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_43752_DEVICE_ID, WCC_SEED),
 	BRCMF_PCIE_DEVICE(CY_PCIE_54591_DEVICE_ID, CYW),
 	{ /* end: all zeroes */ }
