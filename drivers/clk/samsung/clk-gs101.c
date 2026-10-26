@@ -1653,7 +1653,7 @@ static const unsigned long apm_clk_regs[] __initconst = {
 PNAME(mout_apm_func_p)		= { "oscclk", "mout_apm_funcsrc",
 				    "pad_clk_apm", "oscclk" };
 PNAME(mout_apm_funcsrc_p)	= { "pll_alv_div2_apm", "pll_alv_div4_apm",
-				    "pll_alv_div16_apm" };
+				    "pll_alv_div16_apm", "pll_alv_div8_apm" };
 
 static const struct samsung_fixed_rate_clock apm_fixed_clks[] __initconst = {
 	FRATE(CLK_APM_PLL_DIV2_APM, "pll_alv_div2_apm", NULL, 0, 393216000),
@@ -1661,11 +1661,15 @@ static const struct samsung_fixed_rate_clock apm_fixed_clks[] __initconst = {
 	FRATE(CLK_APM_PLL_DIV16_APM, "pll_alv_div16_apm", NULL, 0, 49152000),
 };
 
+/*
+ * The ACPM firmware runs its own buses from these muxes and sets them up:
+ * read them, never write them.
+ */
 static const struct samsung_mux_clock apm_mux_clks[] __initconst = {
-	MUX(CLK_MOUT_APM_FUNC, "mout_apm_func", mout_apm_func_p,
-	    CLK_CON_MUX_MUX_CLKCMU_APM_FUNC, 4, 1),
-	MUX(CLK_MOUT_APM_FUNCSRC, "mout_apm_funcsrc", mout_apm_funcsrc_p,
-	    CLK_CON_MUX_MUX_CLKCMU_APM_FUNCSRC, 3, 1),
+	MUX_F(CLK_MOUT_APM_FUNC, "mout_apm_func", mout_apm_func_p,
+	      CLK_CON_MUX_MUX_CLKCMU_APM_FUNC, 0, 2, 0, CLK_MUX_READ_ONLY),
+	MUX_F(CLK_MOUT_APM_FUNCSRC, "mout_apm_funcsrc", mout_apm_funcsrc_p,
+	      CLK_CON_MUX_MUX_CLKCMU_APM_FUNCSRC, 0, 2, 0, CLK_MUX_READ_ONLY),
 };
 
 static const struct samsung_div_clock apm_div_clks[] __initconst = {
