@@ -44,6 +44,7 @@ properties:
   compatible:
     oneOf:
       - enum:
+          - qcom,eliza-ipa
           - qcom,milos-ipa
           - qcom,msm8998-ipa
           - qcom,sc7180-ipa
@@ -54,13 +55,13 @@ properties:
           - qcom,sm6350-ipa
           - qcom,sm8350-ipa
           - qcom,sm8550-ipa
+          - qcom,sm8750-ipa
       - items:
           - enum:
               - qcom,qcm2290-ipa
           - const: qcom,sc7180-ipa
       - items:
           - enum:
-              - qcom,eliza-ipa
               - qcom,sm8650-ipa
           - const: qcom,sm8550-ipa
 
