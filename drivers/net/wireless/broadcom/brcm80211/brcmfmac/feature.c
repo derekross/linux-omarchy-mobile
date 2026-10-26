@@ -161,10 +161,13 @@ static void brcmf_feat_wlc_version_overrides(struct brcmf_pub *drv)
 	 * Versioned "join" parameters (wl_extjoin_params_v1_t), by the
 	 * same WLC version test as Broadcom's driver (bcmdhd
 	 * wl_cfg80211.c, MIN_JOINEXT_V1_*): 14.2 or 14.4, 16.1 and later
-	 * on 16, or 17 and later. Only the BCM4389 for now; its 20.101.90
-	 * firmware reports 14.4 and rejects the unversioned layout.
+	 * on 16, or 17 and later. The BCM4389 (its 20.101.90 firmware
+	 * reports 14.4 and rejects the unversioned layout) and the Pixel
+	 * 9a's BCM4383 (20.123.13: the unversioned "join" and SET_SSID
+	 * both fail with -52).
 	 */
-	if (drv->bus_if->chip == BRCM_CC_4389_CHIP_ID &&
+	if ((drv->bus_if->chip == BRCM_CC_4389_CHIP_ID ||
+	     drv->bus_if->chip == BRCM_CC_4383_CHIP_ID) &&
 	    ((major == 14 && (minor == 2 || minor == 4)) ||
 	     (major == 16 && minor >= 1) || major >= 17))
 		feat_flags |= BIT(BRCMF_FEAT_JOIN_V1);
@@ -362,6 +365,16 @@ void brcmf_feat_attach(struct brcmf_pub *drvr)
 	/* Host-built 802.3 + LLC/SNAP TX headers: only the BCM4389 for now */
 	if (drvr->bus_if->chip != BRCM_CC_4389_CHIP_ID)
 		drvr->feat_flags &= ~BIT(BRCMF_FEAT_HOST_SFHLLC);
+
+	/*
+	 * The BCM4383's firmware (20.123.13 on the Pixel 9a) advertises the
+	 * supplicant offload but refuses the key: brcmf_set_wsec() fails with
+	 * "failed to change PSK in firmware" and the join never gets past
+	 * authentication. Leave the handshakes to the host.
+	 */
+	if (drvr->bus_if->chip == BRCM_CC_4383_CHIP_ID)
+		drvr->feat_flags &= ~(BIT(BRCMF_FEAT_FWSUP) | BIT(BRCMF_FEAT_SAE) |
+				      BIT(BRCMF_FEAT_FWAUTH));
 
 	if (drvr->settings->feature_disable) {
 		brcmf_dbg(INFO, "Features: 0x%02x, disable: 0x%02x\n",
