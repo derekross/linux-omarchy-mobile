@@ -139,6 +139,9 @@ struct gs201_csis_stats {
 	u32 dropped;
 	u32 missed_fe;
 	u32 link_irqs;
+	u32 core_irqs;		/* zumapro: core interrupts this link handled */
+	u32 core_last_agg;
+	u32 core_last_proc;
 	u32 wdma_started_at;	/* the link frame end the WDMA started at */
 	u32 wdma_restarts;	/* wdma_recover restarts */
 	u32 wdma_lines;		/* line ends since the channel's last frame start */
@@ -719,6 +722,21 @@ static void zp_core_set_addr(struct gs201_csis *csis, dma_addr_t addr)
 /* The LoCH takes the link's channel 0 (VC 0) data type, as the HAL routes it. */
 static void zp_core_route(struct gs201_csis *csis)
 {
+	u32 val;
+
+	/* a LoCH a previous stream left running or in error starts clean */
+	img_write(csis, ZP_IMG_WDMA_CONFIG_ENABLE, 0);
+	img_write(csis, ZP_IMG_WDMA_CONTEXT_ENABLE, 0);
+	core_write(csis, ZP_LOCH_EN_CLR, BIT(csis->loch));
+	core_write(csis, ZP_LOCH_ABORT, BIT(csis->loch));
+	if (readl_poll_timeout(csis->core + ZP_IMG(csis->loch, ZP_IMG_ABORT_DONE_ISR),
+			       val, val & ZP_IMG_ABORT_DONE, 100, 20000))
+		dev_dbg(csis->dev, "LoCH %u: no abort-done at start\n", csis->loch);
+	img_write(csis, ZP_IMG_ABORT_DONE_ISR, val);
+	img_write(csis, ZP_IMG_PROC_ISR, img_read(csis, ZP_IMG_PROC_ISR));
+	img_write(csis, ZP_IMG_ERR_ISR, img_read(csis, ZP_IMG_ERR_ISR));
+	core_write(csis, ZP_LOCH_INT_ISR, BIT(csis->loch));
+
 	core_write(csis, ZP_FRAME_ID_CLR, BIT(csis->loch));
 	img_write(csis, ZP_IMG_AUTO_REC_SYNC_INTV0, 0);
 	img_write(csis, ZP_IMG_AUTO_REC_SYNC_INTV1, 0);
@@ -1203,9 +1221,12 @@ static irqreturn_t zp_core_irq(int irq, void *data)
 		return IRQ_NONE;
 
 	agg = core_read(csis, ZP_LOCH_INT_ISR);
+	csis->stats.core_last_agg = agg;
 	if (!(agg & BIT(csis->loch)))
 		return IRQ_NONE;
 	proc = img_read(csis, ZP_IMG_PROC_ISR);
+	csis->stats.core_irqs++;
+	csis->stats.core_last_proc = proc;
 	err = img_read(csis, ZP_IMG_ERR_ISR) & ZP_IMG_ERRORS;
 	img_write(csis, ZP_IMG_PROC_ISR, proc);
 	if (err)
@@ -2035,6 +2056,8 @@ static int gs201_csis_stats_show(struct seq_file *s, void *unused)
 	seq_printf(s, "wdma_done %u\nwdma_errors %u\nlast_wdma_err 0x%08x\ndropped %u\nmissed_fe %u\nlink_irqs %u\n",
 		   st.wdma_done, st.wdma_errors, st.last_wdma_err, st.dropped,
 		   st.missed_fe, st.link_irqs);
+	seq_printf(s, "core_irqs %u\ncore_last_agg 0x%08x\ncore_last_proc 0x%08x\n",
+		   st.core_irqs, st.core_last_agg, st.core_last_proc);
 	gs201_csis_print_bits(s, NULL, "int0", st.int0_bits, 32);
 	gs201_csis_print_bits(s, NULL, "int1", st.int1_bits, 8);
 	gs201_csis_print_bits(s, NULL, "wdma", st.wdma_bits, 32);
