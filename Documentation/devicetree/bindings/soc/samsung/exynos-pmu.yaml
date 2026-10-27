@@ -14,9 +14,6 @@ properties:
     oneOf:
       - const: google,zuma-pmu
       - items:
-          - const: google,gs201-pmu
-          - const: google,gs101-pmu
-      - items:
           - const: google,zumapro-pmu
           - const: google,zuma-pmu
       - items:

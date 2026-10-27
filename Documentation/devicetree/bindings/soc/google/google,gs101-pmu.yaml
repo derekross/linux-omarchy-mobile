@@ -11,7 +11,11 @@ maintainers:
 
 properties:
   compatible:
-    const: google,gs101-pmu
+    oneOf:
+      - const: google,gs101-pmu
+      - items:
+          - const: google,gs201-pmu
+          - const: google,gs101-pmu
 
   reg:
     maxItems: 1
@@ -65,10 +69,19 @@ patternProperties:
 required:
   - compatible
   - reg
-  - "#address-cells"
-  - "#size-cells"
-  - ranges
   - google,pmu-intr-gen-syscon
+
+allOf:
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: google,gs201-pmu
+    else:
+      required:
+        - "#address-cells"
+        - "#size-cells"
+        - ranges
 
 additionalProperties: false
 
