@@ -11,6 +11,7 @@
 #include <dt-bindings/clock/google,zumapro-acpm.h>
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/linux-event-codes.h>
+#include <dt-bindings/leds/common.h>
 #include "../exynos-pinctrl.h"
 #include "zumapro.dtsi"
 #include "zumapro-reserved-memory.dtsi"
@@ -308,6 +309,53 @@
 	status = "okay";
 };
 
+/* The torch: a TI LM3644 flash driver, both LED outputs on one white LED. */
+&hsi2c4 {
+	clock-frequency = <100000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&hsi2c4_bus>;
+	status = "okay";
+
+	led-controller@63 {
+		compatible = "ti,lm3644";
+		reg = <0x63>;
+		enable-gpios = <&gpp24 1 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&torch_enable>;
+
+		led {
+			function = LED_FUNCTION_TORCH;
+			color = <LED_COLOR_ID_WHITE>;
+			led-sources = <1 2>;
+			/* A dim flashlight, far below the part's and the LED's limits. */
+			led-max-microamp = <75000>;
+		};
+	};
+};
+
+/* The haptics: a CS40L26 on the 9a's LRA, with Google's limits for it. */
+&hsi2c9 {
+	clock-frequency = <100000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&hsi2c9_bus>;
+	status = "okay";
+
+	haptic-driver@43 {
+		compatible = "cirrus,cs40l26a";
+		reg = <0x43>;
+		interrupt-parent = <&gpa6>;
+		interrupts = <3 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&gph2 3 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&haptic_reset>;
+		cirrus,boost-peak-microamp = <2500000>;
+		cirrus,boost-ctl-microvolt = <10000000>;
+		cirrus,lra-f0-hz = <162>;
+		cirrus,lra-redc-micro-ohms = <14100007>;
+		cirrus,vpbr-threshold-microvolt = <3008000>;
+	};
+};
+
 &pinctrl_alive {
 	status = "okay";
 };
@@ -322,6 +370,13 @@
 
 &pinctrl_hsi1 {
 	status = "okay";
+
+	haptic_reset: haptic-reset-pins {
+		samsung,pins = "gph2-3";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
 };
 
 &pinctrl_hsi2 {
@@ -335,6 +390,13 @@
 &pinctrl_peric0 {
 	status = "okay";
 
+	hsi2c4_bus: hsi2c4-bus-pins {
+		samsung,pins = "gpp8-0", "gpp8-1";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_3>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
+
 	touch_reset_held: touch-reset-held-pins {
 		samsung,pins = "gpp1-1";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
@@ -344,6 +406,20 @@
 
 &pinctrl_peric1 {
 	status = "okay";
+
+	hsi2c9_bus: hsi2c9-bus-pins {
+		samsung,pins = "gpp19-4", "gpp19-5";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
+
+	torch_enable: torch-enable-pins {
+		samsung,pins = "gpp24-1";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
 };
 
 &pmu_system_controller {
@@ -438,6 +514,14 @@
 &usi2_hsi0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&touch_reset_held>;
+	status = "okay";
+};
+
+&usi4 {
+	status = "okay";
+};
+
+&usi9 {
 	status = "okay";
 };
 
