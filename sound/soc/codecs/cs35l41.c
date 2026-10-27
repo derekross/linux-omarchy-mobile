@@ -1096,6 +1096,18 @@ static bool dsp_rx6_classh;
 module_param(dsp_rx6_classh, bool, 0644);
 MODULE_PARM_DESC(dsp_rx6_classh, "Route the class H target, not VBSTMON, to DSP1 RX6");
 
+/*
+ * Bring-up option (AOC-PLAN C9j): the amplifier's weak-FET output mode
+ * (PWR_CTRL3 bit 24, "WKFET_AMP_EN" in Google's driver, on by default) drives
+ * the load through a reduced output stage at low signal levels. On the Pixel
+ * 7 Pro both speakers distort heavily above a few tens of mA of load current
+ * at the everyday level; this lets the mode be switched off for a comparison.
+ */
+static bool wkfet_amp = true;
+module_param(wkfet_amp, bool, 0644);
+MODULE_PARM_DESC(wkfet_amp, "Weak-FET output mode at low levels (default Y)");
+#define CS35L41_WKFET_AMP_EN_MASK	BIT(24)
+
 static int cs35l41_dsp_init(struct cs35l41_private *cs35l41)
 {
 	struct wm_adsp *dsp;
@@ -1145,6 +1157,13 @@ static int cs35l41_dsp_init(struct cs35l41_private *cs35l41)
 		dev_err(cs35l41->dev, "Write DSP1_RX6_SRC failed: %d\n", ret);
 		goto err_dsp;
 	}
+	ret = regmap_update_bits(cs35l41->regmap, CS35L41_PWR_CTRL3, CS35L41_WKFET_AMP_EN_MASK,
+				 wkfet_amp ? CS35L41_WKFET_AMP_EN_MASK : 0);
+	if (ret < 0) {
+		dev_err(cs35l41->dev, "Write PWR_CTRL3 (WKFET_AMP_EN) failed: %d\n", ret);
+		goto err_dsp;
+	}
+	dev_info(cs35l41->dev, "weak-FET output mode %s\n", wkfet_amp ? "on" : "off");
 	ret = regmap_write(cs35l41->regmap, CS35L41_DSP1_RX7_SRC,
 			   CS35L41_INPUT_SRC_TEMPMON);
 	if (ret < 0) {
