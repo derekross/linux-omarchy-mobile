@@ -49,6 +49,15 @@ properties:
     multipleOf: 50000
     default: 11000000
 
+  cirrus,vpbr-threshold-microvolt:
+    description:
+      Enable hardware attenuation when the amplifier and boost input supply
+      falls below this voltage. The attack, hold and release policy uses the
+      Cirrus default settings. If absent, leave VP brownout prevention unchanged.
+    minimum: 2497000
+    maximum: 3874000
+    multipleOf: 47000
+
   cirrus,lra-f0-hz:
     description: Nominal resonant frequency of the actuator.
     minimum: 50
