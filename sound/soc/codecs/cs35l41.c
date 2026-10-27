@@ -1108,6 +1108,16 @@ module_param(wkfet_amp, bool, 0644);
 MODULE_PARM_DESC(wkfet_amp, "Weak-FET output mode at low levels (default Y)");
 #define CS35L41_WKFET_AMP_EN_MASK	BIT(24)
 
+/*
+ * Bring-up option (AOC-PLAN C9j): run the output stage from VP alone, with
+ * the internal boost converter disabled (PWR_CTRL2 BST_EN = 0, as Google's
+ * driver sets a shared-boost passive amplifier), to tell the converter's
+ * light-load behaviour from the rest of the chain.
+ */
+static bool boost_en = true;
+module_param(boost_en, bool, 0644);
+MODULE_PARM_DESC(boost_en, "Internal boost converter (default Y)");
+
 static int cs35l41_dsp_init(struct cs35l41_private *cs35l41)
 {
 	struct wm_adsp *dsp;
@@ -1164,6 +1174,15 @@ static int cs35l41_dsp_init(struct cs35l41_private *cs35l41)
 		goto err_dsp;
 	}
 	dev_info(cs35l41->dev, "weak-FET output mode %s\n", wkfet_amp ? "on" : "off");
+	if (!boost_en) {
+		ret = regmap_update_bits(cs35l41->regmap, CS35L41_PWR_CTRL2,
+					 CS35L41_BST_EN_MASK, 0);
+		if (ret < 0) {
+			dev_err(cs35l41->dev, "Write PWR_CTRL2 (BST_EN) failed: %d\n", ret);
+			goto err_dsp;
+		}
+		dev_info(cs35l41->dev, "boost converter off: output stage from VP\n");
+	}
 	ret = regmap_write(cs35l41->regmap, CS35L41_DSP1_RX7_SRC,
 			   CS35L41_INPUT_SRC_TEMPMON);
 	if (ret < 0) {
