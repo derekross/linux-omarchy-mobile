@@ -97,6 +97,8 @@ struct gs201_csis_soc {
 	 * zumapro's clears it: its CSIS core unpacks the packed CSI-2 stream.
 	 */
 	bool dbg_bit23;
+	/* PHY_CMN_CTRL lane enables: gs201 sets them; zumapro never writes it */
+	bool phy_cmn_ctrl;
 };
 
 struct gs201_csis_format {
@@ -657,7 +659,8 @@ static void gs201_csis_link_start(struct gs201_csis *csis,
 		   csis->lrte_epd ? CSIS_LRTE_EPD_EN | CSIS_LRTE_SPACERS_RESET :
 		   CSIS_LRTE_DEFAULT);
 	link_write(csis, CSIS_UPD_SDW, CSIS_UPD_SDW_ALL);
-	link_write(csis, CSIS_PHY_CMN_CTRL, CSIS_PHY_CMN_CTRL_ENABLE);
+	if (csis->soc->phy_cmn_ctrl)
+		link_write(csis, CSIS_PHY_CMN_CTRL, CSIS_PHY_CMN_CTRL_ENABLE);
 
 	link_write(csis, CSIS_INT_MSK0, int0_mask & CSIS_INT0_ERRORS);
 	link_write(csis, CSIS_INT_MSK1, CSIS_INT1_FRAME_START |
@@ -826,7 +829,8 @@ static void gs201_csis_link_stop(struct gs201_csis *csis)
 	link_write(csis, CSIS_INT_MSK1, 0);
 	link_write(csis, CSIS_CMN_CTRL,
 		   link_read(csis, CSIS_CMN_CTRL) & ~CSIS_CMN_CTRL_CSI_EN);
-	link_write(csis, CSIS_PHY_CMN_CTRL, 0);
+	if (csis->soc->phy_cmn_ctrl)
+		link_write(csis, CSIS_PHY_CMN_CTRL, 0);
 }
 
 /* -----------------------------------------------------------------------------
@@ -2586,6 +2590,7 @@ static const struct gs201_csis_soc gs201_csis_gs201 = {
 	.pixel_mode = CSIS_ISPCFG_PIXEL_MODE_QUAD,
 	.dma_bits = CSIS_WDMA_ADDR_BITS,
 	.dbg_bit23 = true,
+	.phy_cmn_ctrl = true,
 };
 
 /* Links 0-11 have contexts and interrupts; stock wires sensors to 0-8. */
