@@ -170,11 +170,26 @@ error:
 static int nfc_rfkill_set_block(void *data, bool blocked)
 {
 	struct nfc_dev *dev = data;
+	struct nfc_target *target;
+	u32 target_idx;
 
 	pr_debug("%s blocked %d", dev_name(&dev->dev), blocked);
 
 	if (!blocked)
 		return 0;
+
+	/*
+	 * nfc_dev_down() refuses a device that polls or has an active
+	 * target, so a block during discovery left the radio on: stop both
+	 * first.
+	 */
+	device_lock(&dev->dev);
+	target = dev->active_target;
+	target_idx = target ? target->idx : 0;
+	device_unlock(&dev->dev);
+	if (target)
+		nfc_deactivate_target(dev, target_idx, NFC_TARGET_MODE_IDLE);
+	nfc_stop_poll(dev);
 
 	nfc_dev_down(dev);
 
