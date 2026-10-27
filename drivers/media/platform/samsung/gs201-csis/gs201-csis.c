@@ -165,6 +165,8 @@ struct gs201_csis {
 	unsigned int loch;	/* zumapro: the image LoCH this link writes through */
 	void *sq_buf;		/* zumapro: the LoCH's status queue */
 	dma_addr_t sq_dma;
+	struct clk *fe_clk;	/* zumapro: the ISP front end's NOC clock */
+	unsigned long fe_rate_old;
 	void *scratch;		/* zumapro: frames with no buffer go here */
 	dma_addr_t scratch_dma;
 	size_t scratch_size;
@@ -344,6 +346,20 @@ MODULE_PARM_DESC(wdma_line_irq, "Count WDMA line ends per channel (bring-up; man
 static int zp_mem_fmt = -1;
 module_param(zp_mem_fmt, int, 0644);
 MODULE_PARM_DESC(zp_mem_fmt, "zumapro Bayer WDMA memory format (bring-up; default RAW10 packed 4, 2 RAW16)");
+
+/*
+ * zumapro: ABL leaves the front end's NOC clock at a sixth of SHARED3
+ * (111 MHz); the main camera's C-PHY link (18.8 Gbps) then overruns the
+ * front end (link ERR_DESKEW_OVER, short frames). While a link streams, the
+ * INT DVFS domain (the clock's rail) goes up first, then the clock.
+ */
+static unsigned int fe_khz = 331776;
+module_param(fe_khz, uint, 0644);
+MODULE_PARM_DESC(fe_khz, "zumapro ISP-FE NOC clock in kHz while streaming (0: leave it)");
+
+static unsigned int fe_int_khz = 533000;
+module_param(fe_int_khz, uint, 0644);
+MODULE_PARM_DESC(fe_int_khz, "zumapro INT DVFS rate in kHz while streaming, before the ISP-FE clock (0: leave it)");
 
 static int cmn_ctrl_extra = -1;
 module_param(cmn_ctrl_extra, int, 0644);
@@ -1911,10 +1927,16 @@ static int gs201_csis_start_streaming(struct vb2_queue *vq, unsigned int count)
 	spin_unlock_irqrestore(&csis->slock, flags);
 
 	if (csis->dma_on && csis->core) {
+		gs201_csis_dvfs_vote(csis, csis->int_clk, "INT", fe_int_khz,
+				     &csis->int_rate_old);
+		gs201_csis_dvfs_vote(csis, csis->fe_clk, "ISP-FE", fe_khz,
+				     &csis->fe_rate_old);
 		csis->scratch_size = csis->pix.sizeimage;
 		csis->scratch = dma_alloc_coherent(csis->dev, csis->scratch_size,
 						   &csis->scratch_dma, GFP_KERNEL);
 		if (!csis->scratch) {
+			gs201_csis_dvfs_restore(csis->fe_clk, &csis->fe_rate_old);
+			gs201_csis_dvfs_restore(csis->int_clk, &csis->int_rate_old);
 			ret = -ENOMEM;
 			goto err_pipeline;
 		}
@@ -1945,6 +1967,8 @@ err_wdma:
 		dma_free_coherent(csis->dev, csis->scratch_size, csis->scratch,
 				  csis->scratch_dma);
 		csis->scratch = NULL;
+		gs201_csis_dvfs_restore(csis->fe_clk, &csis->fe_rate_old);
+		gs201_csis_dvfs_restore(csis->int_clk, &csis->int_rate_old);
 	} else if (csis->dma_on) {
 		gs201_csis_wdma_stop(csis);
 		gs201_csis_dvfs_restore(csis->int_clk, &csis->int_rate_old);
@@ -2001,6 +2025,8 @@ static void gs201_csis_stop_streaming(struct vb2_queue *vq)
 		dma_free_coherent(csis->dev, csis->scratch_size, csis->scratch,
 				  csis->scratch_dma);
 		csis->scratch = NULL;
+		gs201_csis_dvfs_restore(csis->fe_clk, &csis->fe_rate_old);
+		gs201_csis_dvfs_restore(csis->int_clk, &csis->int_rate_old);
 	} else if (csis->dma_on) {
 		gs201_csis_wdma_stop(csis);
 		gs201_csis_dvfs_restore(csis->int_clk, &csis->int_rate_old);
@@ -2424,6 +2450,9 @@ static int gs201_csis_probe(struct platform_device *pdev)
 				return -ENOMEM;
 		}
 		device_property_read_u32(dev, "google,image-loch", &csis->loch);
+		csis->fe_clk = devm_clk_get_optional(dev, "fe");
+		if (IS_ERR(csis->fe_clk))
+			return dev_err_probe(dev, PTR_ERR(csis->fe_clk), "ISP-FE clock\n");
 		if (csis->loch > 6)
 			return dev_err_probe(dev, -EINVAL, "bad google,image-loch\n");
 		goto no_wdma;
