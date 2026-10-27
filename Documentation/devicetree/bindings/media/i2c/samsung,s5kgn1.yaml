@@ -13,7 +13,8 @@ description:
   Samsung Bayer CMOS sensors with a MIPI CSI-2 C-PHY or D-PHY output,
   controlled over I2C - the S5KGN1 (ISOCELL GN1, 50 MP, dual-pixel phase
   detection), the S5K3J1 (10.5 MP, dual-pixel phase detection) and the
-  S5KGM5 (ISOCELL GM5, 48 MP). Their initialisation and readout modes are
+  S5KGM5 (ISOCELL GM5, 48 MP), and the S5KGN8 (model 0x08e8, the Pixel 9a
+  main camera). Their initialisation and readout modes are
   loaded from a data file named by firmware-name.
 
 allOf:
@@ -21,7 +22,9 @@ allOf:
   - if:
       properties:
         compatible:
-          const: samsung,s5kgn1
+          enum:
+            - samsung,s5kgn1
+            - samsung,s5kgn8
     then:
       required:
         - vaux-supply
@@ -29,6 +32,19 @@ allOf:
     else:
       properties:
         vaux-supply: false
+  - if:
+      properties:
+        compatible:
+          const: samsung,s5kgn8
+    then:
+      required:
+        - vaux2-supply
+        - vdig-supply
+      properties:
+        vsw-supply: false
+    else:
+      properties:
+        vaux2-supply: false
   - if:
       properties:
         compatible:
@@ -52,6 +68,7 @@ properties:
       - samsung,s5k3j1
       - samsung,s5kgm5
       - samsung,s5kgn1
+      - samsung,s5kgn8
 
   reg:
     maxItems: 1
@@ -70,6 +87,11 @@ properties:
     description:
       The module's auxiliary supply (2.9 V on the Pixel 7 Pro, shared with
       its focus actuator), switched on right after the interface supply.
+
+  vaux2-supply:
+    description:
+      A second auxiliary supply (2.9 V on the Pixel 9a, shared with the
+      module's focus actuator and EEPROM), switched on after vaux-supply.
 
   vsw-supply:
     description:
