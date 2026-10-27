@@ -1118,6 +1118,15 @@ static bool boost_en = true;
 module_param(boost_en, bool, 0644);
 MODULE_PARM_DESC(boost_en, "Internal boost converter (default Y)");
 
+/*
+ * Bring-up option (AOC-PLAN C9j): a fixed boost target instead of class H
+ * tracking: BSTCVRT_VCTRL1 BST_CTL = bst_ctl (1 = 2.55 V ... 0xAA = 11 V) and
+ * BST_CTL_SEL = register. 0 (default) leaves the chip as the driver set it.
+ */
+static unsigned int bst_ctl;
+module_param(bst_ctl, uint, 0644);
+MODULE_PARM_DESC(bst_ctl, "Fixed boost target, BST_CTL code 1-0xAA (default 0: class H)");
+
 static int cs35l41_dsp_init(struct cs35l41_private *cs35l41)
 {
 	struct wm_adsp *dsp;
@@ -1182,6 +1191,19 @@ static int cs35l41_dsp_init(struct cs35l41_private *cs35l41)
 			goto err_dsp;
 		}
 		dev_info(cs35l41->dev, "boost converter off: output stage from VP\n");
+	}
+	if (bst_ctl && bst_ctl <= 0xAA) {
+		ret = regmap_update_bits(cs35l41->regmap, CS35L41_BSTCVRT_VCTRL1,
+					 CS35L41_BST_CTL_MASK, bst_ctl);
+		if (!ret)
+			ret = regmap_update_bits(cs35l41->regmap, CS35L41_BSTCVRT_VCTRL2,
+						 CS35L41_BST_CTL_SEL_MASK, CS35L41_BST_CTL_SEL_REG);
+		if (ret < 0) {
+			dev_err(cs35l41->dev, "Write fixed boost target failed: %d\n", ret);
+			goto err_dsp;
+		}
+		dev_info(cs35l41->dev, "fixed boost target: BST_CTL 0x%02x (%u mV)\n",
+			 bst_ctl, 2550 + (bst_ctl - 1) * 50);
 	}
 	ret = regmap_write(cs35l41->regmap, CS35L41_DSP1_RX7_SRC,
 			   CS35L41_INPUT_SRC_TEMPMON);
