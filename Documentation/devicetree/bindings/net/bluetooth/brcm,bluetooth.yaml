@@ -31,6 +31,7 @@ properties:
           - brcm,bcm43540-bt
           - brcm,bcm4335a0
           - brcm,bcm4349-bt
+          - brcm,bcm4383-bt
           - brcm,bcm4389-bt
           - cypress,cyw4373a0-bt
           - infineon,cyw55572-bt
@@ -51,6 +52,12 @@ properties:
     description: GPIO specifier for the line BT_WAKE used to
       wakeup the controller. This is using the BT_GPIO_0
       pin on the chip when in use.
+
+  brcm,ble-dbo-gpios:
+    maxItems: 1
+    description: GPIO specifier for the clock of the flip-flop that holds
+      BT_REG_ON on boards that latch it (the BCM4383 on the Google Pixel
+      9a). BT_REG_ON only reaches the chip on a rising edge of this line.
 
   host-wakeup-gpios:
     maxItems: 1
@@ -125,6 +132,7 @@ required:
 
 dependencies:
   brcm,requires-autobaud-mode: [ shutdown-gpios ]
+  brcm,ble-dbo-gpios: [ shutdown-gpios, device-wakeup-gpios ]
 
 allOf:
   - $ref: /schemas/serial/serial-peripheral-props.yaml#
