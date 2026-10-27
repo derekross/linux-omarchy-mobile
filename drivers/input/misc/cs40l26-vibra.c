@@ -13,7 +13,7 @@
  * part as shipped in Google's Pixel kernels (google-modules/amplifiers/cs40l26).
  * Not supported yet: hibernation (the DSP is kept out of hibernate while the
  * driver is bound), the IRQ (mailbox writes are polled; amplifier errors are
- * not released), RAM/OWT waveforms, gain, brownout prevention and calibration.
+ * not released), RAM/OWT waveforms, gain, VBST brownout prevention and calibration.
  */
 
 #include <linux/bitfield.h>
@@ -37,6 +37,7 @@
 #define CS40L26_REVID			0x0004
 #define CS40L26_TEST_KEY_CTRL		0x0040
 #define CS40L26_GLOBAL_ENABLES		0x2014
+#define CS40L26_BLOCK_ENABLES2		0x201c
 #define CS40L26_ERROR_RELEASE		0x2034
 #define CS40L26_PWRMGT_CTL		0x2900
 #define CS40L26_REFCLK_INPUT		0x2c04
@@ -46,6 +47,7 @@
 #define CS40L26_BST_IPK_CTL		0x3808
 #define CS40L26_TEST_LBST		0x391c
 #define CS40L26_TST_DAC_MSM_CONFIG	0x7404
+#define CS40L26_VPBR_CONFIG		0x6404
 #define CS40L26_VIRTUAL1_MBOX_1		0x13020
 
 /* DSP memory and core */
@@ -98,6 +100,16 @@
 #define CS40L26_BST_UV_MIN		2500000
 #define CS40L26_BST_UV_MAX		11000000
 #define CS40L26_BST_UV_STEP		50000
+
+/* VP input brownout prevention: Cirrus GPL reset-policy defaults. */
+#define CS40L26_VPBR_ENABLE		BIT(12)
+#define CS40L26_VPBR_DEFAULT_MASK	GENMASK(31, 24)
+#define CS40L26_VPBR_THRESHOLD_MIN_UV	2497000
+#define CS40L26_VPBR_THRESHOLD_MAX_UV	3874000
+#define CS40L26_VPBR_THRESHOLD_STEP_UV	47000
+#define CS40L26_VPBR_THRESHOLD_OFFSET	51
+#define CS40L26_VPBR_POLICY		((9 << 8) | (1 << 12) | (2 << 16) | \
+					 (1 << 19) | (5 << 21))
 
 /* Mailbox */
 #define CS40L26_MBOX_PREVENT_HIBER	0x02000003
@@ -159,6 +171,7 @@ struct cs40l26 {
 	u32 bst_uv;
 	u32 f0_hz;
 	u32 redc_uohm;
+	u32 vpbr_uv;
 };
 
 static const struct regmap_config cs40l26_regmap = {
@@ -445,6 +458,47 @@ static int cs40l26_boost_config(struct cs40l26 *cs40l26)
 				     ctl2 | CS40L26_BST_CTL_LIM_EN, CS_DSP_WSEQ_FULL);
 }
 
+/* Interrupt notifications remain masked: attenuation is hardware-controlled. */
+static int cs40l26_vpbr_config(struct cs40l26 *cs40l26)
+{
+	struct regmap *regmap = cs40l26->regmap;
+	u32 config, enables, value;
+	int ret;
+
+	if (!cs40l26->vpbr_uv)
+		return 0;
+
+	ret = regmap_read(regmap, CS40L26_VPBR_CONFIG, &value);
+	if (ret)
+		return ret;
+	config = (value & CS40L26_VPBR_DEFAULT_MASK) | CS40L26_VPBR_POLICY |
+		 (cs40l26->vpbr_uv / CS40L26_VPBR_THRESHOLD_STEP_UV -
+		  CS40L26_VPBR_THRESHOLD_OFFSET);
+	ret = cs40l26_write_and_seq(cs40l26, CS40L26_VPBR_CONFIG, config,
+				    CS_DSP_WSEQ_FULL);
+	if (ret)
+		return ret;
+
+	ret = regmap_read(regmap, CS40L26_BLOCK_ENABLES2, &enables);
+	if (ret)
+		return ret;
+	enables |= CS40L26_VPBR_ENABLE;
+	ret = cs40l26_write_and_seq(cs40l26, CS40L26_BLOCK_ENABLES2, enables,
+				    CS_DSP_WSEQ_FULL);
+	if (ret)
+		return ret;
+
+	ret = regmap_read(regmap, CS40L26_VPBR_CONFIG, &value);
+	if (ret)
+		return ret;
+	if (value != config)
+		return -EIO;
+	ret = regmap_read(regmap, CS40L26_BLOCK_ENABLES2, &value);
+	if (ret)
+		return ret;
+	return value == enables ? 0 : -EIO;
+}
+
 /* Runs under dsp.pwr_lock once cs_dsp has loaded the RAM firmware */
 static int cs40l26_dsp_post_run(struct cs_dsp *dsp)
 {
@@ -514,6 +568,10 @@ static int cs40l26_dsp_post_run(struct cs_dsp *dsp)
 		dev_err(cs40l26->dev, "RAM firmware not running (%#x)\n", val);
 		return -EIO;
 	}
+
+	ret = cs40l26_vpbr_config(cs40l26);
+	if (ret)
+		return ret;
 
 	ret = cs40l26_boost_config(cs40l26);
 	if (ret)
@@ -776,6 +834,17 @@ static int cs40l26_probe(struct i2c_client *client)
 	device_property_read_u32(dev, "cirrus,boost-ctl-microvolt", &cs40l26->bst_uv);
 	device_property_read_u32(dev, "cirrus,lra-f0-hz", &cs40l26->f0_hz);
 	device_property_read_u32(dev, "cirrus,lra-redc-micro-ohms", &cs40l26->redc_uohm);
+
+	if (device_property_present(dev, "cirrus,vpbr-threshold-microvolt")) {
+		ret = device_property_read_u32(dev, "cirrus,vpbr-threshold-microvolt",
+					       &cs40l26->vpbr_uv);
+		if (ret)
+			return dev_err_probe(dev, ret, "Invalid VP brownout threshold\n");
+		if (cs40l26->vpbr_uv < CS40L26_VPBR_THRESHOLD_MIN_UV ||
+		    cs40l26->vpbr_uv > CS40L26_VPBR_THRESHOLD_MAX_UV ||
+		    cs40l26->vpbr_uv % CS40L26_VPBR_THRESHOLD_STEP_UV)
+			return dev_err_probe(dev, -EINVAL, "Invalid VP brownout threshold\n");
+	}
 
 	ret = devm_regulator_bulk_get_enable(dev, ARRAY_SIZE(supplies), supplies);
 	if (ret)
