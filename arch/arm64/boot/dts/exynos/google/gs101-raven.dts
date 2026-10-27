@@ -327,3 +327,18 @@
 		};
 	};
 };
+
+/*
+ * Haptics: a Cirrus Logic CS40L25A at 0x43 (Google's gs101-raviole-audio.dtsi),
+ * reset on gpp24-0, active low. Its interrupt (gpa6-5) isn't used yet.
+ */
+&hsi2c_8 {
+	haptics@43 {
+		compatible = "cirrus,cs40l25a";
+		reg = <0x43>;
+		reset-gpios = <&gpp24 0 GPIO_ACTIVE_LOW>;
+		/* stock's boost: 4.5 A peak, 7.5 V (CLAB) */
+		cirrus,boost-peak-microamp = <4500000>;
+		cirrus,boost-ctl-microvolt = <7500000>;
+	};
+};
