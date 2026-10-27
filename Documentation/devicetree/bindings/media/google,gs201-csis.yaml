@@ -24,33 +24,19 @@ properties:
 
   reg:
     minItems: 1
-    items:
-      - description: the CSIS link registers
-      - description: the CSIS DMA block's common page (shared by all links)
-      - description: the CSIS WDMA context (links may share one; they then
-          stream one at a time)
-      - description: the EBUF control (shared by all links), bypassed on the
-          way to the WDMA
+    maxItems: 4
 
   reg-names:
     minItems: 1
-    items:
-      - const: link
-      - const: dma
-      - const: wdma
-      - const: ebuf
+    maxItems: 4
 
   interrupts:
     minItems: 1
-    items:
-      - description: link interrupt
-      - description: WDMA context interrupt
+    maxItems: 2
 
   interrupt-names:
     minItems: 1
-    items:
-      - const: link
-      - const: wdma
+    maxItems: 2
 
   clocks:
     items:
@@ -87,6 +73,13 @@ properties:
     maximum: 3
     description:
       WDMA input slot the link is routed to; defaults to the context index.
+
+  google,image-loch:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    maximum: 6
+    description:
+      zumapro only. The CSIS core's image logical channel the link writes
+      its frames through; defaults to 0.
 
   google,lrte-packet-delimiters:
     type: boolean
@@ -149,27 +142,57 @@ allOf:
       properties:
         reg:
           minItems: 3
+          items:
+            - description: the CSIS link registers
+            - description: the CSIS DMA block's common page (shared by all links)
+            - description: the CSIS WDMA context (links may share one; they
+                then stream one at a time)
+            - description: the EBUF control (shared by all links), bypassed on
+                the way to the WDMA
         reg-names:
           minItems: 3
+          items:
+            - const: link
+            - const: dma
+            - const: wdma
+            - const: ebuf
         interrupts:
-          minItems: 2
+          items:
+            - description: link interrupt
+            - description: WDMA context interrupt
         interrupt-names:
-          minItems: 2
+          items:
+            - const: link
+            - const: wdma
         google,csis-link:
           maximum: 7
+        google,image-loch: false
       required:
         - google,wdma-context
         - google,csis-sysreg
     else:
       properties:
         reg:
-          maxItems: 1
+          minItems: 1
+          items:
+            - description: the CSIS link registers
+            - description: the ISP front end's CSIS core page, shared by all
+                links; without it the link runs without DMA
         reg-names:
-          maxItems: 1
+          minItems: 1
+          items:
+            - const: link
+            - const: core
         interrupts:
-          maxItems: 1
+          minItems: 1
+          items:
+            - description: link interrupt
+            - description: CSIS core interrupt, shared by all links
         interrupt-names:
-          maxItems: 1
+          minItems: 1
+          items:
+            - const: link
+            - const: core
         google,wdma-context: false
         google,csis-sysreg: false
         google,ebuf: false
