@@ -210,24 +210,26 @@ static const struct drm_display_mode gs_decon_modes[] = {
 };
 
 /*
- * TG4B/TG4C 60 Hz timings from panel-gs-tg4b.c and panel-gs-tg4c.c.
- * TG4A uses different porches; only the active size is consumed here.
- * Keep the inherited 60 Hz configuration.
+ * TG4B/TG4C timings from panel-gs-tg4b.c and panel-gs-tg4c.c, at 60 Hz (the
+ * bootloader's) and 120 Hz. TG4A uses different porches; DECON only needs
+ * the active size and the totals.
  */
+#define TEGU_DECON_MODE(hz) {						\
+	.clock = (1080 + 32 + 12 + 16) * (2424 + 12 + 4 + 15) * (hz) / 1000, \
+	.hdisplay = 1080,						\
+	.hsync_start = 1080 + 32,					\
+	.hsync_end = 1080 + 32 + 12,					\
+	.htotal = 1080 + 32 + 12 + 16,					\
+	.vdisplay = 2424,						\
+	.vsync_start = 2424 + 12,					\
+	.vsync_end = 2424 + 12 + 4,					\
+	.vtotal = 2424 + 12 + 4 + 15,					\
+	.type = DRM_MODE_TYPE_DRIVER,					\
+}
+
 static const struct drm_display_mode tegu_decon_modes[] = {
-	{
-		.clock = (1080 + 32 + 12 + 16) * (2424 + 12 + 4 + 15) * 60 / 1000,
-		.hdisplay = 1080,
-		.hsync_start = 1080 + 32,
-		.hsync_end = 1080 + 32 + 12,
-		.htotal = 1080 + 32 + 12 + 16,
-		.vdisplay = 2424,
-		.vsync_start = 2424 + 12,
-		.vsync_end = 2424 + 12 + 4,
-		.vtotal = 2424 + 12 + 4 + 15,
-		/* Physical size depends on the panel variant, not yet selected. */
-		.type = DRM_MODE_TYPE_DRIVER,
-	},
+	TEGU_DECON_MODE(60),
+	TEGU_DECON_MODE(120),
 };
 
 struct gs_decon_soc_data {
@@ -239,6 +241,8 @@ struct gs_decon_soc_data {
 	bool separate_source_height;
 	bool padded_pitch;
 	bool start_hw_trigger;
+	/* the bootloader leaves MIF and DISP above the 120 Hz floors */
+	bool floors_optional;
 };
 
 static const struct gs_decon_soc_data gs201_decon_data = {
@@ -258,6 +262,7 @@ static const struct gs_decon_soc_data zumapro_decon_data = {
 	.separate_source_height = true,
 	.padded_pitch = true,
 	.start_hw_trigger = true,
+	.floors_optional = true,
 };
 
 #define GS_DECON_BOOT_HZ		60
@@ -1332,7 +1337,7 @@ static int gs_decon_get_dsim(struct gs_decon *dc)
 	}
 	dc->hz = hz;
 
-	if (max_refresh >= 120 && dc->mif &&
+	if (max_refresh >= 120 && (dc->mif || dc->soc->floors_optional) &&
 	    gs_dsim_can_set_refresh_rate(dc->dsim, 120))
 		dc->max_hz = 120;
 	else if (max_refresh >= 120)
