@@ -158,6 +158,15 @@
 		reg = <0x0 0xfac00000 0x009fc900>;
 		no-map;
 	};
+
+	/* DECON's scanout buffers, below 4 GiB for its 32-bit DMA. */
+	display_pool: display-pool {
+		compatible = "shared-dma-pool";
+		reusable;
+		size = <0x04000000>;
+		alignment = <0x0 0x00200000>;
+		alloc-ranges = <0x0 0x98000000 0x06000000>;
+	};
 };
 
 &acpm_ipc {
@@ -228,6 +237,37 @@
 
 &cmu_top {
 	status = "okay";
+};
+
+/*
+ * DECON0 scans out to DSIM0, so gs-decon can switch the link and the
+ * panel between 60 and 120 Hz.
+ */
+&decon0 {
+	memory-region = <&display_pool>, <&cont_splash_mem>;
+	memory-region-names = "pool", "boot-framebuffer";
+	status = "okay";
+
+	port {
+		decon0_out: endpoint {
+			remote-endpoint = <&dsi0_in>;
+		};
+	};
+};
+
+&dsi0 {
+	status = "okay";
+
+	panel@0 {
+		compatible = "google,tg4c";
+		reg = <0>;
+	};
+
+	port {
+		dsi0_in: endpoint {
+			remote-endpoint = <&decon0_out>;
+		};
+	};
 };
 
 /* The keys' banks and the touchscreen's raise their own interrupts. */
