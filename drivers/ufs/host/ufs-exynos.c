@@ -278,6 +278,18 @@ static int zuma_ufs_drv_init(struct exynos_ufs *ufs)
 	return exynos_ufs_shareability(ufs);
 }
 
+static int zumapro_ufs_drv_init(struct exynos_ufs *ufs)
+{
+	/*
+	 * Idle clock gating with the link in Hibern8, as on gs101 and gs201:
+	 * it also drops the CPU latency request the core holds while the
+	 * clocks are on.
+	 */
+	ufs->hba->caps |= UFSHCD_CAP_CLK_GATING | UFSHCD_CAP_HIBERN8_WITH_CLK_GATING;
+
+	return zuma_ufs_drv_init(ufs);
+}
+
 static int exynosauto_ufs_drv_init(struct exynos_ufs *ufs)
 {
 	return exynos_ufs_shareability(ufs);
@@ -2578,7 +2590,7 @@ static const struct exynos_ufs_drv_data zumapro_ufs_drvs = {
 				  EXYNOS_UFS_OPT_CLKSTOP_PRE_CHANGE |
 				  EXYNOS_UFS_OPT_UNGATE_POST_CHANGE,
 	.iocc_mask		= UFS_GS101_SHARABLE,
-	.drv_init		= zuma_ufs_drv_init,
+	.drv_init		= zumapro_ufs_drv_init,
 	.suspend		= gs101_ufs_suspend,
 	.pre_link		= zumapro_ufs_pre_link,
 	.post_link		= zumapro_ufs_post_link,
