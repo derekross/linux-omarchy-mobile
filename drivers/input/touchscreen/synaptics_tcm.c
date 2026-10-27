@@ -831,6 +831,29 @@ static int tcm_probe(struct spi_device *spi)
 	return 0;
 }
 
+/*
+ * Keep the attention interrupt off across system sleep: it can fire after
+ * the SPI controller has suspended, and a read then fails part way and
+ * leaves the message stream out of step.
+ */
+static int tcm_suspend(struct device *dev)
+{
+	struct tcm_ts *ts = dev_get_drvdata(dev);
+
+	disable_irq(ts->spi->irq);
+	return 0;
+}
+
+static int tcm_resume(struct device *dev)
+{
+	struct tcm_ts *ts = dev_get_drvdata(dev);
+
+	enable_irq(ts->spi->irq);
+	return 0;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(tcm_pm_ops, tcm_suspend, tcm_resume);
+
 static const struct of_device_id tcm_of_match[] = {
 	{ .compatible = "syna,s3908" },
 	{ }
@@ -847,6 +870,7 @@ static struct spi_driver tcm_driver = {
 	.driver = {
 		.name = "synaptics-tcm",
 		.of_match_table = tcm_of_match,
+		.pm = pm_sleep_ptr(&tcm_pm_ops),
 	},
 	.id_table = tcm_spi_ids,
 	.probe = tcm_probe,
