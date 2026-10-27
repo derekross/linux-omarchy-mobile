@@ -39,14 +39,10 @@ properties:
     maxItems: 2
 
   clocks:
-    items:
-      - description: the camera block's DVFS domain
-      - description: the bus (INT) DVFS domain
+    maxItems: 2
 
   clock-names:
-    items:
-      - const: cam
-      - const: int
+    maxItems: 2
 
   phys:
     maxItems: 1
@@ -164,6 +160,14 @@ allOf:
           items:
             - const: link
             - const: wdma
+        clocks:
+          items:
+            - description: the camera block's DVFS domain
+            - description: the bus (INT) DVFS domain
+        clock-names:
+          items:
+            - const: cam
+            - const: int
         google,csis-link:
           maximum: 7
         google,image-loch: false
@@ -193,6 +197,14 @@ allOf:
           items:
             - const: link
             - const: core
+        clocks:
+          items:
+            - description: the INT DVFS domain, the ISP front end clock's rail
+            - description: the ISP front end's NOC clock
+        clock-names:
+          items:
+            - const: int
+            - const: fe
         google,wdma-context: false
         google,csis-sysreg: false
         google,ebuf: false
