@@ -295,6 +295,18 @@ static int s6sy761_spi_read_once(struct s6sy761_data *sdata, u8 reg, u8 *buf,
 			return ret;
 	}
 
+	/*
+	 * A reply to an earlier request still queued (the right sync code, the
+	 * wrong register): read once more, so it can't put every later reply
+	 * one command behind.
+	 */
+	if (rx[0] == S6SY761_SPI_SYNC && rx[S6SY761_SPI_HDR] != reg) {
+		fsleep(delay);
+		ret = spi_read(sdata->spi, rx, ALIGN(rlen + 1, 4));
+		if (ret)
+			return ret;
+	}
+
 	if (rx[0] != S6SY761_SPI_SYNC || rx[S6SY761_SPI_HDR] != reg ||
 	    rx[rlen] != s6sy761_spi_sum(rx, rlen)) {
 		dev_dbg(sdata->dev, "bad SPI reply to %#x: %*ph\n", reg, 16, rx);
@@ -443,6 +455,9 @@ static void s6sy761_handle_events(struct s6sy761_data *sdata, u8 n_events)
  */
 #define S6SY761_MAX_READ_ERRORS		5
 #define S6SY761_MAX_RECOVER_TRIES	5
+
+/* rails off for a power cycle: longer on each try */
+static const unsigned int s6sy761_off_ms[] = { 100, 500, 1500 };
 
 static void s6sy761_read_failed(struct s6sy761_data *sdata)
 {
@@ -694,6 +709,7 @@ static void s6sy761_recover(struct work_struct *work)
 	struct s6sy761_data *sdata = container_of(to_delayed_work(work),
 						  struct s6sy761_data,
 						  recover_work);
+	unsigned int max_x, max_y;
 	int ret;
 
 	/*
@@ -712,9 +728,16 @@ static void s6sy761_recover(struct work_struct *work)
 	if (sdata->reset)
 		gpiod_set_value_cansleep(sdata->reset, 1);
 	s6sy761_rails_off(sdata);
-	msleep(50);
+	/*
+	 * Off long enough for a real power cycle, longer on each try: 50 ms
+	 * could leave the controller half-reset, failing again sooner. Then the
+	 * same bring-up as probe, so a recovered controller is set up as a
+	 * freshly probed one.
+	 */
+	msleep(s6sy761_off_ms[min_t(unsigned int, sdata->recover_tries,
+				    ARRAY_SIZE(s6sy761_off_ms) - 1)]);
 
-	ret = s6sy761_power_on(sdata);
+	ret = s6sy761_hw_init(sdata, &max_x, &max_y);
 	if (!ret && input_device_enabled(sdata->input))
 		ret = s6sy761_sense_on(sdata);
 	if (ret)
@@ -760,7 +783,7 @@ static int s6sy761_probe_common(struct s6sy761_data *sdata)
 {
 	struct device *dev = sdata->dev;
 	unsigned int max_x, max_y;
-	int err;
+	int err, i;
 
 	dev_set_drvdata(dev, sdata);
 
@@ -782,16 +805,19 @@ static int s6sy761_probe_common(struct s6sy761_data *sdata)
 		return err;
 
 	err = s6sy761_hw_init(sdata, &max_x, &max_y);
-	if (err && sdata->bus->bustype == BUS_SPI) {
-		/*
-		 * At boot the rails can still be on from the bootloader and the
-		 * controller not answer; a real power cycle brings it up.
-		 */
-		dev_info(dev, "no answer (%d), power cycling\n", err);
+	/*
+	 * At boot the rails can still be on from the bootloader and the
+	 * controller not answer; a real power cycle brings it up. After a warm
+	 * reset 100 ms off wasn't always enough, so lengthen it on each try.
+	 */
+	for (i = 0; err && sdata->bus->bustype == BUS_SPI &&
+	     i < ARRAY_SIZE(s6sy761_off_ms); i++) {
+		dev_info(dev, "no answer (%d), power cycling (%u ms off)\n",
+			 err, s6sy761_off_ms[i]);
 		s6sy761_rails_off(sdata);
 		if (sdata->reset)
 			gpiod_set_value_cansleep(sdata->reset, 1);
-		msleep(100);
+		msleep(s6sy761_off_ms[i]);
 		err = s6sy761_hw_init(sdata, &max_x, &max_y);
 	}
 	if (err)
