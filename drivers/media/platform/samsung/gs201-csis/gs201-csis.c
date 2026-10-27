@@ -76,6 +76,17 @@
 #define CSIS_MIN_LANE_RATE	80000000ULL
 #define CSIS_MAX_LANE_RATE	6500000000ULL
 
+/*
+ * zumapro (Tensor G4) has the same CSI-2 link (version 0x08010000 against
+ * gs201's 0x05040000, same layout) but a different DMA path, which this
+ * driver doesn't drive yet: there it runs the PHY, the link and the sensor
+ * only (as link_only), to count frames.
+ */
+struct gs201_csis_soc {
+	bool wdma;		/* gs201's CSIS WDMA, routing and CSIS sysreg */
+	unsigned int num_links;
+};
+
 struct gs201_csis_format {
 	u32 code;
 	u32 fourcc;
@@ -132,6 +143,7 @@ struct gs201_csis_stats {
 };
 
 struct gs201_csis {
+	const struct gs201_csis_soc *soc;
 	struct device *dev;
 	void __iomem *link;
 	void __iomem *dma;
@@ -1087,7 +1099,7 @@ static int gs201_csis_enable_streams(struct v4l2_subdev *sd,
 	if (lanes < 0)
 		return lanes;
 
-	{
+	if (csis->sysreg) {
 		unsigned int sel = 0, rst = 0;
 
 		regmap_read(csis->sysreg, CSIS_SYSREG_LINK_SEL, &sel);
@@ -1122,7 +1134,7 @@ static int gs201_csis_enable_streams(struct v4l2_subdev *sd,
 		goto err_link;
 
 	/* Bring-up: what each part looks like right after the start. */
-	{
+	if (csis->sysreg) {
 		unsigned int sel = 0, rst = 0;
 
 		regmap_read(csis->sysreg, CSIS_SYSREG_LINK_SEL, &sel);
@@ -1165,7 +1177,7 @@ static int gs201_csis_disable_streams(struct v4l2_subdev *sd,
 
 	v4l2_subdev_disable_streams(csis->source.sd, csis->source.pad->index,
 				    BIT(0));
-	if (link_sel_bits)
+	if (link_sel_bits && csis->sysreg)
 		regmap_write(csis->sysreg, CSIS_SYSREG_LINK_SEL, csis->link_sel_saved);
 	gs201_csis_link_stop(csis);
 	phy_power_off(csis->phy);
@@ -1588,7 +1600,7 @@ static int gs201_csis_start_streaming(struct vb2_queue *vq, unsigned int count)
 	csis->sequence = 0;
 	memset(&csis->stats, 0, sizeof(csis->stats));
 	csis->wdma_err_logged = false;
-	csis->dma_on = !link_only;
+	csis->dma_on = !link_only && csis->soc->wdma;
 
 	spin_lock_irqsave(&csis->slock, flags);
 	if (!csis->next)
@@ -1758,10 +1770,10 @@ static int gs201_csis_regs_show(struct seq_file *s, void *unused)
 	for (i = 0; i < ARRAY_SIZE(link_regs); i++)
 		seq_printf(s, "link 0x%03x = 0x%08x\n", link_regs[i],
 			   link_read(csis, link_regs[i]));
-	for (i = 0; i < ARRAY_SIZE(wdma_regs); i++)
+	for (i = 0; csis->wdma && i < ARRAY_SIZE(wdma_regs); i++)
 		seq_printf(s, "wdma 0x%03x = 0x%08x\n", wdma_regs[i],
 			   wdma_read(csis, wdma_regs[i]));
-	for (i = 0; i < ARRAY_SIZE(ch_regs); i++) {
+	for (i = 0; csis->wdma && i < ARRAY_SIZE(ch_regs); i++) {
 		u32 r = CSIS_WDMA_CH(csis->wdma_ch, ch_regs[i]);
 
 		seq_printf(s, "wdma 0x%03x = 0x%08x\n", r, wdma_read(csis, r));
@@ -1806,7 +1818,7 @@ static int gs201_csis_scan_show(struct seq_file *s, void *unused)
 			seq_printf(s, "link%u+0x%03x = 0x%08x\n", csis->link_id,
 				   off, link_read(csis, off));
 
-	for (i = 0; i < ARRAY_SIZE(sysreg_regs); i++) {
+	for (i = 0; csis->sysreg && i < ARRAY_SIZE(sysreg_regs); i++) {
 		if (regmap_read(csis->sysreg, sysreg_regs[i], &val))
 			continue;
 		seq_printf(s, "sysreg+0x%03x = 0x%08x\n", sysreg_regs[i], val);
@@ -2060,9 +2072,16 @@ static int gs201_csis_probe(struct platform_device *pdev)
 	INIT_LIST_HEAD(&csis->pending);
 	platform_set_drvdata(pdev, csis);
 
+	csis->soc = of_device_get_match_data(dev);
+	if (!csis->soc)
+		return -ENODEV;
+
 	csis->link = devm_platform_ioremap_resource_byname(pdev, "link");
 	if (IS_ERR(csis->link))
 		return PTR_ERR(csis->link);
+
+	if (!csis->soc->wdma)
+		goto no_wdma;
 
 	/* The DMA common page is shared by all instances: map, don't claim. */
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dma");
@@ -2088,6 +2107,7 @@ static int gs201_csis_probe(struct platform_device *pdev)
 			return -ENOMEM;
 	}
 
+no_wdma:
 	csis->cam_clk = devm_clk_get_optional(dev, "cam");
 	if (IS_ERR(csis->cam_clk))
 		return dev_err_probe(dev, PTR_ERR(csis->cam_clk), "CAM clock\n");
@@ -2096,10 +2116,10 @@ static int gs201_csis_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, PTR_ERR(csis->int_clk), "INT clock\n");
 
 	ret = device_property_read_u32(dev, "google,csis-link", &csis->link_id);
-	if (ret || csis->link_id > 7)
+	if (ret || csis->link_id >= csis->soc->num_links)
 		return dev_err_probe(dev, -EINVAL, "bad google,csis-link\n");
 	ret = device_property_read_u32(dev, "google,wdma-context", &csis->ctx_id);
-	if (ret || csis->ctx_id > 3)
+	if (csis->soc->wdma && (ret || csis->ctx_id > 3))
 		return dev_err_probe(dev, -EINVAL, "bad google,wdma-context\n");
 
 	csis->ebuf = csis->ctx_id;
@@ -2110,10 +2130,13 @@ static int gs201_csis_probe(struct platform_device *pdev)
 	csis->lrte_epd = device_property_read_bool(dev,
 						   "google,lrte-packet-delimiters");
 
-	csis->sysreg = syscon_regmap_lookup_by_phandle(dev->of_node,
-						       "google,csis-sysreg");
-	if (IS_ERR(csis->sysreg))
-		return dev_err_probe(dev, PTR_ERR(csis->sysreg), "no CSIS sysreg\n");
+	if (csis->soc->wdma) {
+		csis->sysreg = syscon_regmap_lookup_by_phandle(dev->of_node,
+							       "google,csis-sysreg");
+		if (IS_ERR(csis->sysreg))
+			return dev_err_probe(dev, PTR_ERR(csis->sysreg),
+					     "no CSIS sysreg\n");
+	}
 
 	csis->phy = devm_phy_get(dev, NULL);
 	if (IS_ERR(csis->phy))
@@ -2137,15 +2160,17 @@ static int gs201_csis_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_mem;
 
-	irq = platform_get_irq_byname(pdev, "wdma");
-	if (irq < 0) {
-		ret = irq;
-		goto err_mem;
+	if (csis->soc->wdma) {
+		irq = platform_get_irq_byname(pdev, "wdma");
+		if (irq < 0) {
+			ret = irq;
+			goto err_mem;
+		}
+		ret = devm_request_irq(dev, irq, gs201_csis_wdma_irq, IRQF_SHARED,
+				       dev_name(dev), csis);
+		if (ret)
+			goto err_mem;
 	}
-	ret = devm_request_irq(dev, irq, gs201_csis_wdma_irq, IRQF_SHARED,
-			       dev_name(dev), csis);
-	if (ret)
-		goto err_mem;
 
 	csis->fmt = &gs201_csis_formats[0];
 	csis->pix.width = CSIS_DEF_WIDTH;
@@ -2194,8 +2219,19 @@ static void gs201_csis_remove(struct platform_device *pdev)
 	of_reserved_mem_device_release(&pdev->dev);
 }
 
+static const struct gs201_csis_soc gs201_csis_gs201 = {
+	.wdma = true,
+	.num_links = 8,
+};
+
+/* Links 0-11 have contexts and interrupts; stock wires sensors to 0-8. */
+static const struct gs201_csis_soc gs201_csis_zumapro = {
+	.num_links = 12,
+};
+
 static const struct of_device_id gs201_csis_of_match[] = {
-	{ .compatible = "google,gs201-csis" },
+	{ .compatible = "google,gs201-csis", .data = &gs201_csis_gs201 },
+	{ .compatible = "google,zumapro-csis", .data = &gs201_csis_zumapro },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, gs201_csis_of_match);
