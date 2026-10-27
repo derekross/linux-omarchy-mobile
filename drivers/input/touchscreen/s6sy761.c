@@ -339,7 +339,7 @@ static int s6sy761_spi_read(struct s6sy761_data *sdata, u8 reg, u8 *buf, u16 len
 		ret = s6sy761_spi_read_once(sdata, reg, buf, len);
 		if (!ret)
 			break;
-		usleep_range(1000, 1100);
+		usleep_range(3000, 3100);
 	}
 	return ret;
 }
