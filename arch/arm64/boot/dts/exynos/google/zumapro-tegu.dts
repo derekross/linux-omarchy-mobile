@@ -76,8 +76,9 @@
 
 	/*
 	 * The GPU's levels: the shader rates of the Pixel 9a's GPU DVFS table
-	 * up to 649 MHz, each with its paired L2 rate through the ACPM "gpu"
-	 * clock. The levels above, to 940 MHz, wait for a GPU thermal zone.
+	 * up to 890 MHz, each with its paired L2 rate through the ACPM "gpu"
+	 * clock; gpu-thermal throttles them from 85 C. 940 MHz, the table's
+	 * top, is left out until it has run on the 9a.
 	 */
 	gpu_opp: opp-table-gpu {
 		compatible = "operating-points-v2";
@@ -116,6 +117,22 @@
 
 		opp-649000000 {
 			opp-hz = /bits/ 64 <649000000>;
+		};
+
+		opp-723000000 {
+			opp-hz = /bits/ 64 <723000000>;
+		};
+
+		opp-807000000 {
+			opp-hz = /bits/ 64 <807000000>;
+		};
+
+		opp-850000000 {
+			opp-hz = /bits/ 64 <850000000>;
+		};
+
+		opp-890000000 {
+			opp-hz = /bits/ 64 <890000000>;
 		};
 	};
 
