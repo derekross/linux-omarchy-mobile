@@ -46,6 +46,7 @@ properties:
               - google,gs201-cheetah
               - google,gs201-felix
               - google,gs201-lynx
+              - google,gs201-panther
           - const: google,gs201
       - description: Google Tensor G3 (zuma) boards
         items:
