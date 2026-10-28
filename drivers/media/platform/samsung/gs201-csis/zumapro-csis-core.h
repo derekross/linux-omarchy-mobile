@@ -4,8 +4,10 @@
  * writes a CSI-2 link's frames to memory. Offsets are from the ISP front
  * end's CSIS core page (isp-fe 0x1c300000 + 0x20000). Names follow the
  * Pixel 9a camera HAL's register table; the fields come from the HAL's own
- * value packers and, for the interrupt bits, Google's GPL
- * zuma-isp-event-info.dtsi and dt-bindings/lwis/platform/zuma/isp_fe.h.
+ * value packers. The interrupt registers (image processing, error, abort
+ * done, the aggregate, and LoCH 1 at 0x20824) are also in Google's GPL
+ * zuma-isp-event-info.dtsi, and their bits in
+ * dt-bindings/lwis/platform/zuma/isp_fe.h.
  */
 #ifndef ZUMAPRO_CSIS_CORE_H
 #define ZUMAPRO_CSIS_CORE_H
@@ -84,7 +86,6 @@
 #define ZP_MEM_FMT_RAW12_PACKED		5
 
 #define ZP_ADDR_BITS			36
-#define ZP_STRIDE_ALIGN			32
 
 /* the link's CMN_CTRL bits 15:12, as the zumapro HAL writes them */
 #define ZP_LINK_CMN_CTRL_F12		BIT(12)
