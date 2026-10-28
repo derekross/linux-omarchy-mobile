@@ -4,8 +4,8 @@
  *
  * USB (NCM + ACM), the cluster watchdogs from gs201.dtsi, a
  * simple-framebuffer on the buffer ABL leaves DPP0 scanning out, UFS, the
- * three keys, and the touch rails on the main PMIC. The panel driver,
- * touch and the GPU stay disabled.
+ * three keys, the touch rails on the main PMIC, and the GPU. The panel
+ * driver and touch stay disabled.
  */
 
 /dts-v1/;
@@ -147,6 +147,11 @@
 			};
 		};
 	};
+};
+
+&gpu {
+	/* No mali-supply: the G3D rails follow the PMU power domain and ACPM. */
+	status = "okay";
 };
 
 &usbdrd31_phy {
