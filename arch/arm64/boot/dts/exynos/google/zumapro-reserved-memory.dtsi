@@ -176,10 +176,17 @@
 			no-map;
 		};
 
-		/* Reserve only; the pstore consumer is not enabled yet. */
+		/*
+		 * Stock's ramoops region. zumapro's bootloader keeps it across
+		 * a watchdog reset (it also writes its own log at the start of
+		 * the console zone).
+		 */
 		ramoops_reserved: ramoops@fd3ff000 {
+			compatible = "ramoops";
 			reg = <0x0 0xfd3ff000 0x00400000>;
 			no-map;
+			console-size = <0x200000>;
+			pmsg-size = <0x200000>;
 		};
 
 		/* Not in Google's list; kept reserved until shown unused. */
