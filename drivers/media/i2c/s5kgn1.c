@@ -247,17 +247,19 @@ static const struct s5kgn1_variant s5kgm5_variant = {
 };
 
 /*
- * GN8, the Pixel 9a main camera, in stock's power-up order: pp3200_bb,
- * pp1350, s2mpg15_ldo12 (I/O), slg51002 ldo5 (2.9 V), ldo4 (2.9 V), ldo1
- * (2.25 V, analog), the digital supply's enable, reset released, the clock;
- * 1 ms after each, 10 ms after the clock. Its soft reset goes through the
+ * GN8, the Pixel 9a main camera, in stock's power-up order
+ * (rear_main_camera_power_seq in Google's GPL zuma-tegu-camera.dtsi):
+ * pp3200_bb, pp1350, s2mpg15_ldo12 (I/O), slg51002 ldo5 (2.9 V), ldo4
+ * (2.9 V), ldo1 (2.25 V, analog), the digital supply's enable, reset
+ * released, the clock; 1 ms after each, 10 ms after the clock. Its soft reset goes through the
  * direct page (0xfcfc = 0x4000, 0x6010 = 1), 10 ms, and nothing enables a
  * clock after it; standard registers in the direct page. Horizontal
  * addresses count pixels, one per column (80..8142 for a 2x2-binned 4000).
  *
- * [I] ldo5/ldo4 roles: both 2.9 V and shared by the sensor, EEPROM, AF and
- * OIS nodes, so which one the sensor itself needs isn't known; both stay
- * required here. The driver has one supply delay (after delay_supply), so
+ * ldo5 and ldo4 are the actuator's and OIS's supplies (that sequence names
+ * them AVDD and AF_VM; the sensor's own are ldo1, VDDA, and vdig), but the
+ * module's sequence powers them before the sensor, so both stay required
+ * here. The driver has one supply delay (after delay_supply), so
  * stock's 1 ms between ldo5, ldo4, ldo1 and vdig is left out unless the
  * driver grows a per-supply step.
  */
