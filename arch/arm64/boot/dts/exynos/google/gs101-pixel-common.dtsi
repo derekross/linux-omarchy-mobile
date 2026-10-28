@@ -750,7 +750,7 @@
 		shunt-resistor-micro-ohms = <5000>;
 	};
 
-	pmic@66 {
+	pmic: pmic@66 {
 		compatible = "maxim,max77759";
 		reg = <0x66>;
 
