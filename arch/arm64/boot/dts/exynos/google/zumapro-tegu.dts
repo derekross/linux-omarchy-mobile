@@ -279,6 +279,20 @@
 		     <GIC_SPI 29 IRQ_TYPE_LEVEL_HIGH>;
 };
 
+/* Bluetooth's host wake (gpa5-6). */
+&gpa5 {
+	interrupt-controller;
+	#interrupt-cells = <2>;
+	interrupts = <GIC_SPI 60 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 61 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 62 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 63 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 64 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 65 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 66 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 67 IRQ_TYPE_LEVEL_HIGH>;
+};
+
 &gpa6 {
 	interrupt-controller;
 	#interrupt-cells = <2>;
@@ -362,10 +376,23 @@
 
 &pinctrl_custom_alive {
 	status = "okay";
+
+	bt_power: bt-power-pins {
+		samsung,pins = "gpn8-0", "gpn9-0";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
 };
 
 &pinctrl_far_alive {
 	status = "okay";
+
+	bt_host_wake: bt-host-wake-pins {
+		samsung,pins = "gpa5-6";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_DOWN>;
+	};
 };
 
 &pinctrl_hsi1 {
@@ -406,6 +433,13 @@
 
 &pinctrl_peric1 {
 	status = "okay";
+
+	bt_ble_dbo: bt-ble-dbo-pins {
+		samsung,pins = "gpp24-3";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_INPUT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
 
 	hsi2c9_bus: hsi2c9-bus-pins {
 		samsung,pins = "gpp19-4", "gpp19-5";
@@ -467,6 +501,28 @@
 };
 
 /*
+ * Bluetooth: the BCM4383 on the APM's UART at 3 Mbaud, powered through
+ * BT_REG_ON (gpn8-0) behind its latch (ble-dbo on gpp24-3), with device wake
+ * on gpn9-0 and host wake on gpa5-6, as Google's GPL zumapro Bluetooth DT.
+ */
+&uart18 {
+	status = "okay";
+
+	bluetooth {
+		compatible = "brcm,bcm4383-bt";
+		pinctrl-names = "default";
+		pinctrl-0 = <&bt_power &bt_ble_dbo &bt_host_wake>;
+		max-speed = <3000000>;
+		shutdown-gpios = <&gpn8 0 GPIO_ACTIVE_HIGH>;
+		device-wakeup-gpios = <&gpn9 0 GPIO_ACTIVE_HIGH>;
+		brcm,ble-dbo-gpios = <&gpp24 3 GPIO_ACTIVE_HIGH>;
+		interrupt-parent = <&gpa5>;
+		interrupts = <6 IRQ_TYPE_EDGE_RISING>;
+		interrupt-names = "host-wakeup";
+	};
+};
+
+/*
  * Behind the init's storage guard (only slot B's boot images and userdata
  * writable), which runs before the disks appear.
  */
@@ -522,6 +578,10 @@
 };
 
 &usi9 {
+	status = "okay";
+};
+
+&usi_apm1 {
 	status = "okay";
 };
 
