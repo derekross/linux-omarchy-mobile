@@ -161,6 +161,17 @@ config PHY_SNPS_EUSB2
 	  Enable support for the USB high-speed SNPS eUSB2 phy on select
 	  SoCs. The PHY is usually paired with a Synopsys DWC3 USB controller.
 
+config PHY_TI_TUSB2E11
+	tristate "TI TUSB2E11 eUSB2 to USB 2.0 repeater"
+	depends on I2C
+	depends on OF
+	select GENERIC_PHY
+	select REGMAP_I2C
+	help
+	  Enable this to support the TI TUSB2E11 eUSB2 to USB 2.0 repeater,
+	  as on the Google Pixel 9a. It powers the repeater, enables its port
+	  and writes the board's signal tuning.
+
 config PHY_XGENE
 	tristate "APM X-Gene 15Gbps PHY support"
 	depends on HAS_IOMEM && OF && (ARCH_XGENE || COMPILE_TEST)
