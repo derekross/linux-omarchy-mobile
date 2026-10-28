@@ -4,13 +4,14 @@
  *
  * USB (NCM + ACM), the cluster watchdogs from gs201.dtsi, a
  * simple-framebuffer on the buffer ABL leaves DPP0 scanning out, UFS, the
- * three keys, the touch rails on the main PMIC, and the GPU. The panel
- * driver and touch stay disabled.
+ * three keys, the touch rails on the main PMIC, the GPU and the haptics.
+ * The panel driver and touch stay disabled.
  */
 
 /dts-v1/;
 
 #include <dt-bindings/input/input.h>
+#include <dt-bindings/soc/samsung,exynos-usi.h>
 #include "gs201.dtsi"
 
 / {
@@ -169,4 +170,56 @@
 
 &ufs_0_phy {
 	status = "okay";
+};
+
+/*
+ * Haptics: Cirrus Logic CS40L26A at 0x43 on PERIC0 USI8 (Google's I2C bus
+ * 8), INTb on gpa8-1, RESET on gpp24-3, as on the Pixel 7 Pro. Boost and
+ * actuator values are the stock ones, the same as the Pixel 7 Pro's
+ * (bst-ipk 2.5 A, bst-ctl 11 V, f0 145 Hz, ReDC 13 ohm in the live tree).
+ * The bus pins are on PERIC0 (gpp16-0/1).
+ */
+&pinctrl_far_alive {
+	hapt_amp_irq: hapt-amp-irq-pins {
+		samsung,pins = "gpa8-1";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+};
+
+&pinctrl_peric0 {
+	status = "okay";
+};
+
+&pinctrl_peric1 {
+	hapt_amp_rst: hapt-amp-rst-pins {
+		samsung,pins = "gpp24-3";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+};
+
+&usi8 {
+	samsung,mode = <USI_MODE_I2C>;
+	status = "okay";
+};
+
+&hsi2c_8 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	haptics: haptic-driver@43 {
+		compatible = "cirrus,cs40l26a";
+		reg = <0x43>;
+		interrupts-extended = <&gpa8 1 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&gpp24 3 GPIO_ACTIVE_LOW>;
+		pinctrl-0 = <&hapt_amp_irq &hapt_amp_rst>;
+		pinctrl-names = "default";
+		cirrus,boost-peak-microamp = <2500000>;
+		cirrus,boost-ctl-microvolt = <11000000>;
+		cirrus,lra-f0-hz = <145>;
+		cirrus,lra-redc-micro-ohms = <13000000>;
+	};
 };
