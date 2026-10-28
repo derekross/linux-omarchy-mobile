@@ -74,6 +74,18 @@ properties:
         $ref: /schemas/types.yaml#/definitions/uint32
         description: Size of the ECT in bytes.
 
+  soc_id:
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    description:
+      Bootloaders that match on this property rather than /soc_compatible
+      (gs101's and gs201's) pick the base DTB whose first cell equals the
+      SoC's product id combined with its major revision.
+    items:
+      - description:
+          The SoC's product id ORed with its major revision, for example
+          0x09855001 for gs201 B0.
+      - description: Reserved, zero in the vendor's device trees.
+
   soc_compatible:
     type: object
     description:
