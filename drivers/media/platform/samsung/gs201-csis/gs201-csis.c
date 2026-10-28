@@ -448,14 +448,17 @@ module_param(link_rmw, bool, 0644);
 MODULE_PARM_DESC(link_rmw, "Keep unnamed link control bits as the soft reset left them (bring-up)");
 
 /*
- * Bring-up: the link's INT0 (error) interrupt mask. The main camera's
- * second stream raises ERR_WRONG_CONFIG for every VC 1 packet (about 200
- * interrupts a frame), each one a read and two writes of the link's
- * interrupt registers between its VC 0 lines; 0 takes no error interrupt.
+ * The link's INT0 (error) interrupt mask. ERR_WRONG_CONFIG is left out:
+ * it flags a packet no channel takes, which the sensors send by design:
+ * on the Pixel 9a an embedded-data line a frame from the front and
+ * ultrawide IMX712s and about 500 PDAF packets a frame from the main
+ * S5KGN8 (some 16,000 interrupts a second at 30 fps), on the Pixel 7 Pro
+ * the main GN1's VC 1 lines (about 180 to 200 a frame). Bring-up:
+ * CSIS_INT0_ERRORS takes all.
  */
-static unsigned int int0_mask = CSIS_INT0_ERRORS;
+static unsigned int int0_mask = CSIS_INT0_ERRORS & ~CSIS_INT0_ERR_WRONG_CONFIG;
 module_param(int0_mask, uint, 0644);
-MODULE_PARM_DESC(int0_mask, "Link INT0 (error) interrupt mask (bring-up; default all errors)");
+MODULE_PARM_DESC(int0_mask, "Link INT0 (error) interrupt mask (bring-up; default all errors but WRONG_CONFIG)");
 
 /*
  * Bring-up: hand buffers that a WDMA error ended (wdma_recover) or that
