@@ -173,6 +173,20 @@ config INPUT_CS40L26_VIBRA
 	  To compile this driver as a module, choose M here: the
 	  module will be called cs40l26-vibra.
 
+config INPUT_CS40L25_VIBRA
+	tristate "Cirrus Logic CS40L25A haptic driver"
+	depends on I2C
+	select REGMAP_I2C
+	select FW_CS_DSP
+	select INPUT_FF_MEMLESS
+	help
+	  Say Y here to enable force feedback (FF_RUMBLE) on the Cirrus Logic
+	  CS40L25A boosted haptic driver, as in the Pixel 6 Pro. Needs the
+	  RAM firmware cs40l25a_clab.wmfw and the wavetable cs40l20.bin.
+
+	  To compile this driver as a module, choose M here: the module will
+	  be called cs40l25-vibra.
+
 config INPUT_CS40L50_VIBRA
 	tristate "CS40L50 Haptic Driver support"
 	depends on MFD_CS40L50_CORE
