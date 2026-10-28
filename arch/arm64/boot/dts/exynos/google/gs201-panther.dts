@@ -1,0 +1,78 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Google Pixel 7 (panther) - first-light board file.
+ *
+ * USB (NCM + ACM), the cluster watchdogs from gs201.dtsi and a
+ * simple-framebuffer on the buffer ABL leaves DPP0 scanning out. The panel
+ * driver, touch, the GPU and UFS stay disabled.
+ */
+
+/dts-v1/;
+
+#include "gs201.dtsi"
+
+/ {
+	model = "Google Pixel 7";
+	compatible = "google,gs201-panther", "google,gs201";
+
+	/*
+	 * ABL's base-DTB match: product id 0x09855000 | major revision (B0 is
+	 * 1). Stock reports pkg_mode 0 and soc_id 0x09855001 in its live tree.
+	 */
+	soc_id = <0x09855001 0x0>;
+
+	chosen {
+		/* ABL requires bootargs to exist; it appends its own after these. */
+		bootargs = "console=tty0 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init";
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+
+		/*
+		 * ABL leaves DECON0 -> DSIM0 -> panel (sdc-s6e3fc3) running in
+		 * command mode with DPP0 scanning 0xfac00000 (RDMA_BASEADDR_Y8,
+		 * read on this phone). There is no panel driver, so no panel
+		 * phandle; the size comes from this node.
+		 */
+		framebuffer0: framebuffer@fac00000 {
+			compatible = "simple-framebuffer";
+			reg = <0x0 0xfac00000 (1080 * 2400 * 4)>;
+			memory-region = <&cont_splash_mem>;
+			width = <1080>;
+			height = <2400>;
+			stride = <(1080 * 4)>;
+			format = "a8r8g8b8";
+		};
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+
+		/*
+		 * Stock's region and layout (ramoops_mem@fd3ff000 in its live
+		 * tree), so a log from this kernel can be read after a warm
+		 * reboot into slot A.
+		 */
+		ramoops@fd3ff000 {
+			compatible = "ramoops";
+			reg = <0x0 0xfd3ff000 0x400000>;
+			console-size = <0x200000>;
+			pmsg-size = <0x200000>;
+		};
+
+		cont_splash_mem: splash@fac00000 {
+			reg = <0x0 0xfac00000 (1080 * 2400 * 4)>;
+			no-map;
+		};
+	};
+};
+
+&usbdrd31_phy {
+	status = "okay";
+};
+
+&usb_dwc3 {
+	status = "okay";
+};
