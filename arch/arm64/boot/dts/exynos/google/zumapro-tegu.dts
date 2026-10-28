@@ -12,6 +12,7 @@
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/linux-event-codes.h>
 #include <dt-bindings/leds/common.h>
+#include <dt-bindings/usb/pd.h>
 #include "../exynos-pinctrl.h"
 #include "zumapro.dtsi"
 #include "zumapro-reserved-memory.dtsi"
@@ -290,6 +291,16 @@
 		     <GIC_SPI 35 IRQ_TYPE_LEVEL_HIGH>;
 };
 
+/* The USB-C port controller's interrupt (gpa8-3). */
+&gpa8 {
+	interrupt-controller;
+	#interrupt-cells = <2>;
+	interrupts = <GIC_SPI 44 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 45 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 46 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 47 IRQ_TYPE_LEVEL_HIGH>;
+};
+
 &gpn0 {
 	interrupt-controller;
 	#interrupt-cells = <2>;
@@ -333,6 +344,42 @@
 	};
 };
 
+/*
+ * The MAX77779's bus: its fuel gauge and its USB-C port controller, a sink
+ * with no link to the USB controller's role yet.
+ */
+&hsi2c6 {
+	clock-frequency = <950000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&hsi2c6_bus>;
+	status = "okay";
+
+	usb_tcpc: tcpc@25 {
+		compatible = "maxim,max77779-tcpc";
+		reg = <0x25>;
+		interrupt-parent = <&gpa8>;
+		interrupts = <3 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb_pd_irq>;
+
+		connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			data-role = "dual";
+			power-role = "sink";
+			self-powered;
+			op-sink-microwatt = <2600000>;
+			sink-pdos = <PDO_FIXED(5000, 3000, PDO_FIXED_USB_COMM)>;
+		};
+	};
+
+	fuel_gauge: fuel-gauge@36 {
+		compatible = "maxim,max77779-fg";
+		reg = <0x36>;
+		shunt-resistor-micro-ohms = <2000>;
+	};
+};
+
 /* The haptics: a CS40L26 on the 9a's LRA, with Google's limits for it. */
 &hsi2c9 {
 	clock-frequency = <100000>;
@@ -358,6 +405,13 @@
 
 &pinctrl_alive {
 	status = "okay";
+
+	usb_pd_irq: usb-pd-irq-pins {
+		samsung,pins = "gpa8-3";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
+		samsung,pin-drv = <0>;
+	};
 };
 
 &pinctrl_custom_alive {
@@ -392,6 +446,13 @@
 
 	hsi2c4_bus: hsi2c4-bus-pins {
 		samsung,pins = "gpp8-0", "gpp8-1";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_3>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
+
+	hsi2c6_bus: hsi2c6-bus-pins {
+		samsung,pins = "gpp12-0", "gpp12-1";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_3>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 		samsung,pin-drv = <0>;
@@ -518,6 +579,10 @@
 };
 
 &usi4 {
+	status = "okay";
+};
+
+&usi6 {
 	status = "okay";
 };
 
