@@ -3,8 +3,9 @@
  * Google Pixel 7 (panther) - first-light board file.
  *
  * USB (NCM + ACM), the cluster watchdogs from gs201.dtsi, a
- * simple-framebuffer on the buffer ABL leaves DPP0 scanning out, UFS and
- * the three keys. The panel driver, touch and the GPU stay disabled.
+ * simple-framebuffer on the buffer ABL leaves DPP0 scanning out, UFS, the
+ * three keys, and the touch rails on the main PMIC. The panel driver,
+ * touch and the GPU stay disabled.
  */
 
 /dts-v1/;
@@ -110,6 +111,40 @@
 		cont_splash_mem: splash@fac00000 {
 			reg = <0x0 0xfac00000 (1080 * 2400 * 4)>;
 			no-map;
+		};
+	};
+};
+
+&acpm_ipc {
+	/*
+	 * Main PMIC, touch rails only. LDO25M is the touch controller's VDD
+	 * and LDO26M its AVDD; nothing else on the stock board consumes
+	 * them. Stock constrains them to 1.6-1.95 V and 2.5-3.0 V. The sub-PMIC
+	 * is not described.
+	 */
+	pmic-1 {
+		compatible = "samsung,s2mpg12-pmic";
+		interrupts = <GIC_SPI 72 IRQ_TYPE_LEVEL_HIGH>;
+		google,vgpio2ap-sysreg = <&sysreg_vgpio2ap>;
+		wakeup-source;
+		status = "disabled";
+
+		regulators {
+			/* No voltage: the PMIC keeps the 1.8 V it holds. */
+			ldo25m: ldo25m {
+				regulator-name = "vdd-ts";
+			};
+
+			/*
+			 * ABL leaves 3.3 V programmed, above stock's range;
+			 * stock's regulator core lowers it to 3.0 V before
+			 * the touch driver switches it on.
+			 */
+			ldo26m: ldo26m {
+				regulator-name = "avdd-ts";
+				regulator-min-microvolt = <3000000>;
+				regulator-max-microvolt = <3000000>;
+			};
 		};
 	};
 };
