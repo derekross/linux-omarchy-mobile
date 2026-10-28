@@ -343,14 +343,27 @@ static int s5m_rtc_read_time(struct device *dev, struct rtc_time *tm)
 	int ret;
 
 	if (info->regs->read_time_udr_mask) {
+		/*
+		 * The S2MPG10 copies the counters into the time registers on a
+		 * rising edge of RUDR, and the copy takes time: with the bit
+		 * only set (a no-op while it still reads 1) and the registers
+		 * read at once, a read could return a time seconds old, and
+		 * an alarm set from it fired early or not at all. Clear it
+		 * first and wait for the copy, as Google's s2mpg10 driver does.
+		 */
+		if (info->device_type == S2MPG10) {
+			ret = regmap_clear_bits(info->regmap, info->regs->udr_update,
+						info->regs->read_time_udr_mask);
+			if (ret)
+				goto udr_fail;
+			usleep_range(50, 100);
+		}
 		ret = regmap_set_bits(info->regmap, info->regs->udr_update,
 				      info->regs->read_time_udr_mask);
-		if (ret) {
-			dev_err(dev,
-				"Failed to prepare registers for time reading: %d\n",
-				ret);
-			return ret;
-		}
+		if (ret)
+			goto udr_fail;
+		if (info->device_type == S2MPG10)
+			usleep_range(1000, 1100);
 	}
 	ret = regmap_bulk_read(info->regmap, info->regs->time, data,
 			info->regs->regs_count);
@@ -374,6 +387,10 @@ static int s5m_rtc_read_time(struct device *dev, struct rtc_time *tm)
 	dev_dbg(dev, "%s: %ptR(%d)\n", __func__, tm, tm->tm_wday);
 
 	return 0;
+
+udr_fail:
+	dev_err(dev, "Failed to prepare registers for time reading: %d\n", ret);
+	return ret;
 }
 
 static int s5m_rtc_set_time(struct device *dev, struct rtc_time *tm)
