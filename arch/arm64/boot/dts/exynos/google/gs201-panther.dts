@@ -3,12 +3,13 @@
  * Google Pixel 7 (panther) - first-light board file.
  *
  * USB (NCM + ACM), the cluster watchdogs from gs201.dtsi, a
- * simple-framebuffer on the buffer ABL leaves DPP0 scanning out, and UFS.
- * The panel driver, touch and the GPU stay disabled.
+ * simple-framebuffer on the buffer ABL leaves DPP0 scanning out, UFS and
+ * the three keys. The panel driver, touch and the GPU stay disabled.
  */
 
 /dts-v1/;
 
+#include <dt-bindings/input/input.h>
 #include "gs201.dtsi"
 
 / {
@@ -42,6 +43,38 @@
 			height = <2400>;
 			stride = <(1080 * 4)>;
 			format = "a8r8g8b8";
+		};
+	};
+
+	/* The same pins as cheetah's (Google's gs201-common.dtsi). */
+	gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-0 = <&key_voldown>, <&key_volup>, <&key_power>;
+		pinctrl-names = "default";
+
+		button-vol-down {
+			label = "KEY_VOLUMEDOWN";
+			linux,code = <KEY_VOLUMEDOWN>;
+			gpios = <&gpa10 1 GPIO_ACTIVE_LOW>;
+			wakeup-source;
+		};
+
+		button-vol-up {
+			label = "KEY_VOLUMEUP";
+			linux,code = <KEY_VOLUMEUP>;
+			gpios = <&gpa8 5 GPIO_ACTIVE_LOW>;
+			wakeup-source;
+		};
+
+		/*
+		 * PMIC_PWRON_OD_L: the S2MPG12 PWRONB line, also wired to the
+		 * SoC. The PMIC's own long-press reset is unaffected.
+		 */
+		button-power {
+			label = "KEY_POWER";
+			linux,code = <KEY_POWER>;
+			gpios = <&gpa10 0 GPIO_ACTIVE_LOW>;
+			wakeup-source;
 		};
 	};
 
