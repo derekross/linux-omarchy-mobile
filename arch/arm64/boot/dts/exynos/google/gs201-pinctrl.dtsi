@@ -497,3 +497,19 @@
 		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
 	};
 };
+
+&pinctrl_hsi2 {
+	gph2: gph2-gpio-bank {
+		gpio-controller;
+		#gpio-cells = <2>;
+		interrupt-controller;
+		#interrupt-cells = <2>;
+	};
+
+	gph4: gph4-gpio-bank {
+		gpio-controller;
+		#gpio-cells = <2>;
+		interrupt-controller;
+		#interrupt-cells = <2>;
+	};
+};

@@ -21,6 +21,7 @@
 		pinctrl1 = &pinctrl_far_alive;
 		pinctrl4 = &pinctrl_peric0;
 		pinctrl5 = &pinctrl_peric1;
+		pinctrl7 = &pinctrl_hsi2;
 	};
 
 	/* Required by the Pixel bootloader (ABL). */
@@ -866,6 +867,15 @@
 			compatible = "google,gs201-hsi2-sysreg", "syscon";
 			reg = <0x14420000 0x10000>;
 			clocks = <&cmu_hsi2 CLK_GOUT_HSI2_SYSREG_HSI2_PCLK>;
+		};
+
+		pinctrl_hsi2: pinctrl@14440000 {
+			compatible = "google,gs201-pinctrl";
+			reg = <0x14440000 0x1000>;
+			clocks = <&cmu_hsi2 CLK_GOUT_HSI2_GPIO_HSI2_PCLK>;
+			clock-names = "pclk";
+			interrupts = <GIC_SPI 421 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
 		};
 
 		/*
