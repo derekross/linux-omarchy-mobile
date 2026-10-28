@@ -28,6 +28,21 @@
 		 */
 		bootargs = "console=tty0 panic=10 clk_ignore_unused rdinit=/init";
 	};
+
+	battery: battery {
+		compatible = "simple-battery";
+		/* google,chg-battery-capacity */
+		charge-full-design-microamp-hours = <4905000>;
+		/*
+		 * Charger limits without Google's step charging: the float
+		 * voltage is google,fv-max-uv, the top of google,chg-cv-limits
+		 * (4.2/4.3/4.45 V). The fast charge current is 0.3 C, the
+		 * lowest google,chg-cc-limits entry at any voltage tier from
+		 * 10 to 46 degC, rounded down to a charger selector (0x16).
+		 */
+		constant-charge-voltage-max-microvolt = <4450000>;
+		constant-charge-current-max-microamp = <1466730>;
+	};
 };
 
 &acpm_ipc {
@@ -276,4 +291,9 @@
 		console-size = <0x200000>;
 		pmsg-size = <0x200000>;
 	};
+};
+
+&pmic {
+	/* for the charger cell */
+	monitored-battery = <&battery>;
 };
