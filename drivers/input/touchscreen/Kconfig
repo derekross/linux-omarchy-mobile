@@ -1318,6 +1318,20 @@ config TOUCHSCREEN_SURFACE3_SPI
 	  To compile this driver as a module, choose M here: the
 	  module will be called surface3_spi.
 
+config TOUCHSCREEN_FOCALTECH_FT3658
+	tristate "FocalTech FT3658 SPI touchscreen"
+	depends on SPI
+	depends on GPIOLIB || COMPILE_TEST
+	select CRC_CCITT
+	help
+	  Say Y here if you have a FocalTech FT3658 touchscreen controller
+	  on SPI, such as the one in the Google Pixel 7.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called focaltech_ft3658.
+
 config TOUCHSCREEN_SYNAPTICS_TCM_SPI
 	tristate "Synaptics TouchComm SPI touchscreen"
 	depends on SPI
