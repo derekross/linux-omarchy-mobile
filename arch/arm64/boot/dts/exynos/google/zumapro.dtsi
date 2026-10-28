@@ -1315,6 +1315,7 @@
 		pmu_system_controller: system-controller@15460000 {
 			compatible = "google,zumapro-pmu", "google,zuma-pmu";
 			reg = <0x0 0x15460000 0x10000>;
+			#clock-cells = <1>;
 			status = "disabled";
 
 			reboot_mode: reboot-mode {
