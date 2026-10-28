@@ -746,11 +746,19 @@ static void zp_core_route(struct gs201_csis *csis)
 	/* a LoCH a previous stream left running or in error starts clean */
 	img_write(csis, ZP_IMG_WDMA_CONFIG_ENABLE, 0);
 	img_write(csis, ZP_IMG_WDMA_CONTEXT_ENABLE, 0);
-	core_write(csis, ZP_LOCH_EN_CLR, BIT(csis->loch));
+	/*
+	 * A stream that stopped cleanly leaves the LoCH bound to its link
+	 * (EN_STATUS active), and a disabled LoCH ignores the abort, so the
+	 * next stream on another link got no interrupt at all. Abort it
+	 * enabled, with its DMA off.
+	 */
+	if (img_read(csis, ZP_IMG_LOCH_EN_STATUS) & ZP_IMG_LOCH_EN_STATUS_ACTIVE)
+		core_write(csis, ZP_LOCH_EN_SET, BIT(csis->loch));
 	core_write(csis, ZP_LOCH_ABORT, BIT(csis->loch));
 	if (readl_poll_timeout(csis->core + ZP_IMG(csis->loch, ZP_IMG_ABORT_DONE_ISR),
 			       val, val & ZP_IMG_ABORT_DONE, 100, 20000))
 		dev_dbg(csis->dev, "LoCH %u: no abort-done at start\n", csis->loch);
+	core_write(csis, ZP_LOCH_EN_CLR, BIT(csis->loch));
 	img_write(csis, ZP_IMG_ABORT_DONE_ISR, val);
 	img_write(csis, ZP_IMG_PROC_ISR, img_read(csis, ZP_IMG_PROC_ISR));
 	img_write(csis, ZP_IMG_ERR_ISR, img_read(csis, ZP_IMG_ERR_ISR));
