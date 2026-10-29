@@ -110,7 +110,7 @@ static int ft3658_read(struct ft3658 *ts, u8 addr, u8 *data, size_t len)
 	xfer.len = xfer_len;
 
 	ret = spi_sync_transfer(ts->spi, &xfer, 1);
-	udelay(FT3658_CS_HIGH_US);
+	fsleep(FT3658_CS_HIGH_US);
 	if (ret)
 		return ret;
 
