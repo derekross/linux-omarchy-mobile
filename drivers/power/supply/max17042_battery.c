@@ -1254,6 +1254,12 @@ static irqreturn_t max17042_thread_handler(int id, void *dev)
 	if (ret)
 		return IRQ_HANDLED;
 
+	/* Nothing latched: not our interrupt, or ALRT not released yet */
+	if (!val) {
+		max17042_alert_holdoff(chip);
+		return IRQ_NONE;
+	}
+
 	if ((val & STATUS_SMN_BIT) || (val & STATUS_SMX_BIT) ||
 	    (val & STATUS_DSOCI_BIT)) {
 		dev_dbg(chip->dev, "SOC threshold INTR\n");
