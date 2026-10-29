@@ -4,8 +4,8 @@
  *
  * USB (NCM + ACM), the cluster watchdogs from gs201.dtsi, a
  * simple-framebuffer on the buffer ABL leaves DPP0 scanning out, UFS, the
- * three keys, the touch rails on the main PMIC, the GPU and the haptics.
- * The panel driver and touch stay disabled.
+ * three keys, the touchscreen with its rails on the main PMIC, the GPU and
+ * the haptics. The panel driver stays disabled.
  */
 
 /dts-v1/;
@@ -128,7 +128,6 @@
 		interrupts = <GIC_SPI 72 IRQ_TYPE_LEVEL_HIGH>;
 		google,vgpio2ap-sysreg = <&sysreg_vgpio2ap>;
 		wakeup-source;
-		status = "disabled";
 
 		regulators {
 			/* Stock's 1.8 V, which ABL leaves programmed */
@@ -223,5 +222,36 @@
 		cirrus,boost-ctl-microvolt = <11000000>;
 		cirrus,lra-f0-hz = <145>;
 		cirrus,lra-redc-micro-ohms = <13000000>;
+	};
+};
+
+/*
+ * Touchscreen: a FocalTech FT3658 on USI0 SPI, wired as the Pixel 7 Pro's
+ * S3908 (chip select gpp20-3, interrupt gpa7-0, reset gpp23-2).
+ */
+&usi0 {
+	samsung,mode = <USI_MODE_SPI>;
+	status = "okay";
+};
+
+&spi_0 {
+	pinctrl-0 = <&spi0_bus &spi0_miso &spi0_cs_gpio>;
+	cs-gpios = <&gpp20 3 GPIO_ACTIVE_LOW>;
+	num-cs = <1>;
+	status = "okay";
+
+	touchscreen@0 {
+		compatible = "focaltech,ft3658";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+		interrupt-parent = <&gpa7>;
+		interrupts = <0 IRQ_TYPE_EDGE_FALLING>;
+		reset-gpios = <&gpp23 2 GPIO_ACTIVE_LOW>;
+		vdd-supply = <&ldo25m>;
+		avdd-supply = <&ldo26m>;
+		pinctrl-0 = <&ts_irq &ts_reset>;
+		pinctrl-names = "default";
+		touchscreen-size-x = <1080>;
+		touchscreen-size-y = <2400>;
 	};
 };
