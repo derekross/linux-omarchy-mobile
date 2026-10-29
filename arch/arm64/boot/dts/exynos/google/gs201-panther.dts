@@ -131,9 +131,11 @@
 		status = "disabled";
 
 		regulators {
-			/* No voltage: the PMIC keeps the 1.8 V it holds. */
+			/* Stock's 1.8 V, which ABL leaves programmed */
 			ldo25m: ldo25m {
 				regulator-name = "vdd-ts";
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
 			};
 
 			/*
