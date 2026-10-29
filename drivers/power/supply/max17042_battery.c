@@ -1226,6 +1226,24 @@ static void max17042_suspend_soc_alerts(struct max17042_chip *chip)
 	max17042_set_critical_soc_threshold(chip);
 }
 
+/*
+ * The MAX77759 releases ALRT only at a fuel-gauge update after Status was
+ * cleared, up to one task period later. The interrupt is level-triggered and
+ * oneshot, so it would be taken again every few milliseconds until then, each
+ * time with Status already clear. Keep it masked until the gauge has updated.
+ */
+static void max17042_alert_holdoff(struct max17042_chip *chip)
+{
+	unsigned int period_ms;
+
+	if (chip->chip_type != MAXIM_DEVICE_TYPE_MAX77759)
+		return;
+
+	/* TaskPeriod counts 1/32768 s; allow half a period of margin */
+	period_ms = DIV_ROUND_UP(READ_ONCE(chip->task_period) * 1000, 32768);
+	msleep(period_ms + period_ms / 2);
+}
+
 static irqreturn_t max17042_thread_handler(int id, void *dev)
 {
 	struct max17042_chip *chip = dev;
@@ -1247,6 +1265,7 @@ static irqreturn_t max17042_thread_handler(int id, void *dev)
 			  0xFFFF & ~(STATUS_POR_BIT | STATUS_BST_BIT));
 
 	power_supply_changed(chip->battery);
+	max17042_alert_holdoff(chip);
 	return IRQ_HANDLED;
 }
 
