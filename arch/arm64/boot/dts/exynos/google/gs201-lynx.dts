@@ -167,3 +167,141 @@
 	samsung,mode = <USI_MODE_SPI>;
 	status = "okay";
 };
+
+/*
+ * Bluetooth: the WCN6855 BT core on the APM USI1 UART (ttySAC18 in Google's
+ * kernel), as on cheetah. Its power is the qcom,wcn6855-pmu sequencer below:
+ * the shared 0.95 V buck on gph2-5 comes up first with its 7 ms ramp, then
+ * BT_EN (gpp16-2), then 50 ms. Off is BT_EN low and then the buck, so
+ * Bluetooth owns gph2-5 and drops it on power-off until a Wi-Fi node takes
+ * the sequencer's wlan target. WLAN_EN (gph2-4) is left out until there is
+ * a PCIe node. 3.2 Mbaud garbles every frame on this UART; 3 Mbaud works.
+ */
+/ {
+	lynx_wcn_buck: regulator-wcn-buck {
+		compatible = "regulator-fixed";
+		regulator-name = "lynx-wcn-0p95-buck";
+		regulator-min-microvolt = <950000>;
+		regulator-max-microvolt = <950000>;
+		gpio = <&gph2 5 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <7000>;
+	};
+
+	/*
+	 * Stand-in for the PMIC rails behind the chip's I/O, 1.3 V and 1.9 V
+	 * inputs. Stock's device tree names no supply on its cnss2 or btpower
+	 * node (only the three GPIOs), so which PMIC regulators feed them is
+	 * unknown; they are on at boot and the host never switches them.
+	 */
+	lynx_wcn_pmic: regulator-wcn-pmic {
+		compatible = "regulator-fixed";
+		regulator-name = "lynx-wcn-pmic-rails";
+		regulator-always-on;
+	};
+
+	wcn6855-pmu {
+		compatible = "qcom,wcn6855-pmu";
+		pinctrl-0 = <&bt_reg_on>;
+		pinctrl-names = "default";
+
+		bt-enable-gpios = <&gpp16 2 GPIO_ACTIVE_HIGH>;
+
+		vddaon-supply = <&lynx_wcn_buck>;
+		vddpmu-supply = <&lynx_wcn_buck>;
+		vddpmumx-supply = <&lynx_wcn_buck>;
+		vddpmucx-supply = <&lynx_wcn_buck>;
+		vddrfa0p95-supply = <&lynx_wcn_buck>;
+		vddio-supply = <&lynx_wcn_pmic>;
+		vddrfa1p3-supply = <&lynx_wcn_pmic>;
+		vddrfa1p9-supply = <&lynx_wcn_pmic>;
+		vddpcie1p3-supply = <&lynx_wcn_pmic>;
+		vddpcie1p9-supply = <&lynx_wcn_pmic>;
+
+		regulators {
+			vreg_pmu_rfa_cmn_0p8: ldo0 {
+				regulator-name = "vreg_pmu_rfa_cmn_0p8";
+			};
+
+			vreg_pmu_aon_0p8: ldo1 {
+				regulator-name = "vreg_pmu_aon_0p8";
+			};
+
+			vreg_pmu_wlcx_0p8: ldo2 {
+				regulator-name = "vreg_pmu_wlcx_0p8";
+			};
+
+			vreg_pmu_wlmx_0p8: ldo3 {
+				regulator-name = "vreg_pmu_wlmx_0p8";
+			};
+
+			vreg_pmu_btcmx_0p8: ldo4 {
+				regulator-name = "vreg_pmu_btcmx_0p8";
+			};
+
+			vreg_pmu_pcie_1p8: ldo5 {
+				regulator-name = "vreg_pmu_pcie_1p8";
+			};
+
+			vreg_pmu_pcie_0p9: ldo6 {
+				regulator-name = "vreg_pmu_pcie_0p9";
+			};
+
+			vreg_pmu_rfa_0p8: ldo7 {
+				regulator-name = "vreg_pmu_rfa_0p8";
+			};
+
+			vreg_pmu_rfa_1p2: ldo8 {
+				regulator-name = "vreg_pmu_rfa_1p2";
+			};
+
+			vreg_pmu_rfa_1p7: ldo9 {
+				regulator-name = "vreg_pmu_rfa_1p7";
+			};
+		};
+	};
+};
+
+&cmu_apm {
+	status = "okay";
+};
+
+/* gph2 (the buck's GPIO) is on HSI2, disabled in gs201.dtsi. */
+&pinctrl_hsi2 {
+	status = "okay";
+};
+
+&pinctrl_peric0 {
+	status = "okay";
+
+	bt_reg_on: bt-reg-on-pins {
+		samsung,pins = "gpp16-2";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+};
+
+&serial_apm1 {
+	status = "okay";
+
+	bluetooth {
+		compatible = "qcom,wcn6855-bt";
+
+		vddrfacmn-supply = <&vreg_pmu_rfa_cmn_0p8>;
+		vddaon-supply = <&vreg_pmu_aon_0p8>;
+		vddwlcx-supply = <&vreg_pmu_wlcx_0p8>;
+		vddwlmx-supply = <&vreg_pmu_wlmx_0p8>;
+		vddbtcmx-supply = <&vreg_pmu_btcmx_0p8>;
+		vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
+		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
+		vddrfa1p7-supply = <&vreg_pmu_rfa_1p7>;
+
+		/* 3.2 Mbaud garbles every frame on this UART; 1, 2 and 3 Mbaud work. */
+		max-speed = <3000000>;
+	};
+};
+
+&usi_apm1 {
+	status = "okay";
+};
