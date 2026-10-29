@@ -33,8 +33,9 @@
  *
  * Register layout from Google's GPL display driver
  * (google-modules/display/samsung/cal_9845/regs-decon.h and regs-dpp.h),
- * which gs201 shares with gs101. G4 offsets and the fourteen-window mask
- * follow cal_9865/regs-decon.h and regs-dpp.h in the same GPL driver.
+ * which gs201 shares with gs101. On gs101 only DECON0's address and the
+ * interrupt numbers differ (device tree). G4 offsets and the fourteen-window
+ * mask follow cal_9865/regs-decon.h and regs-dpp.h in the same GPL driver.
  */
 
 #include <linux/aperture.h>
@@ -242,6 +243,18 @@ struct gs_decon_soc_data {
 };
 
 static const struct gs_decon_soc_data gs201_decon_data = {
+	.modes = gs_decon_modes,
+	.num_modes = ARRAY_SIZE(gs_decon_modes),
+	.image_size_reg = RDMA_IMG_SIZE,
+	.source_offset_reg = RDMA_SRC_OFFSET,
+	.shadow_update_mask = SHD_REG_UP_REQ_FLIP(SHD_REG_UP_REQ_ALL_WIN),
+};
+
+/*
+ * gs101 is gs201's DECON; the boot framebuffer and sleep handling below were
+ * found and tested on raven only, so they stay off for gs201.
+ */
+static const struct gs_decon_soc_data gs101_decon_data = {
 	.modes = gs_decon_modes,
 	.num_modes = ARRAY_SIZE(gs_decon_modes),
 	.image_size_reg = RDMA_IMG_SIZE,
@@ -1536,6 +1549,7 @@ static void gs_decon_shutdown(struct platform_device *pdev)
 }
 
 static const struct of_device_id gs_decon_of_match[] = {
+	{ .compatible = "google,gs101-decon", .data = &gs101_decon_data },
 	{ .compatible = "google,gs201-decon", .data = &gs201_decon_data },
 	{ .compatible = "google,zumapro-decon", .data = &zumapro_decon_data },
 	{ /* sentinel */ }
