@@ -654,6 +654,16 @@ static int max77759_charger_init(struct max77759_charger *chg)
 	if (ret)
 		goto relock;
 
+	/*
+	 * Disable the fast-charge safety timer. At a low input limit a full
+	 * charge outlasts it, and the charger then stops in a timer fault
+	 * with the cable still in, until it is replugged or reset.
+	 */
+	ret = regmap_update_bits(chg->regmap, MAX77759_CHGR_REG_CHG_CNFG_01,
+				 MAX77759_CHGR_REG_CHG_CNFG_01_FCHGTIME, 0);
+	if (ret)
+		goto relock;
+
 	return unlock_prot_regs(chg, false);
 
 relock:
