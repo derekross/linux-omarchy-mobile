@@ -91,6 +91,7 @@
 #define MAX77759_CHGR_REG_CHG_CNFG_00                  0xb9
 #define   MAX77759_CHGR_REG_CHG_CNFG_00_MODE           GENMASK(3, 0)
 #define MAX77759_CHGR_REG_CHG_CNFG_01                  0xba
+#define   MAX77759_CHGR_REG_CHG_CNFG_01_FCHGTIME       GENMASK(2, 0)
 #define MAX77759_CHGR_REG_CHG_CNFG_02                  0xbb
 #define   MAX77759_CHGR_REG_CHG_CNFG_02_CHGCC          GENMASK(5, 0)
 #define MAX77759_CHGR_REG_CHG_CNFG_03                  0xbc
