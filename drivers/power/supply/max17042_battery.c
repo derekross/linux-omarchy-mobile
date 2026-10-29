@@ -1193,9 +1193,19 @@ static void max17042_set_critical_soc_threshold(struct max17042_chip *chip)
 		     0xff00 + MAX17042_CRITICAL_SOC : 0xff00);
 }
 
+/*
+ * The MAX17055 and the MAX77759 raise Status.dSOCi on every whole-percent
+ * change of the SOC, so they don't need a SALRT window around the current SOC.
+ */
+static bool max17042_has_dsoci(struct max17042_chip *chip)
+{
+	return chip->chip_type == MAXIM_DEVICE_TYPE_MAX17055 ||
+	       chip->chip_type == MAXIM_DEVICE_TYPE_MAX77759;
+}
+
 static void max17042_enable_soc_alerts(struct max17042_chip *chip)
 {
-	if (chip->chip_type == MAXIM_DEVICE_TYPE_MAX17055) {
+	if (max17042_has_dsoci(chip)) {
 		regmap_update_bits(chip->regmap, MAX17055_Config2,
 				   CFG2_DSOCI_BIT_ENBL,
 				   CFG2_DSOCI_BIT_ENBL);
@@ -1208,7 +1218,7 @@ static void max17042_enable_soc_alerts(struct max17042_chip *chip)
 
 static void max17042_suspend_soc_alerts(struct max17042_chip *chip)
 {
-	if (chip->chip_type != MAXIM_DEVICE_TYPE_MAX17055)
+	if (!max17042_has_dsoci(chip))
 		return;
 
 	regmap_update_bits(chip->regmap, MAX17055_Config2,
