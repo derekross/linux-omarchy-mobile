@@ -33,8 +33,9 @@
  *
  * Register layout from Google's GPL display driver
  * (google-modules/display/samsung/cal_9845/regs-decon.h and regs-dpp.h),
- * which gs201 shares with gs101. G4 offsets and the fourteen-window mask
- * follow cal_9865/regs-decon.h and regs-dpp.h in the same GPL driver.
+ * which gs201 shares with gs101. On gs101 only DECON0's address and the
+ * interrupt numbers differ (device tree). G4 offsets and the fourteen-window
+ * mask follow cal_9865/regs-decon.h and regs-dpp.h in the same GPL driver.
  */
 
 #include <linux/aperture.h>
@@ -52,6 +53,7 @@
 #include <linux/of_graph.h>
 #include <linux/of_reserved_mem.h>
 #include <linux/platform_device.h>
+#include <linux/pm.h>
 #include <linux/property.h>
 #include <linux/spinlock.h>
 #include <linux/wait.h>
@@ -239,6 +241,10 @@ struct gs_decon_soc_data {
 	bool separate_source_height;
 	bool padded_pitch;
 	bool start_hw_trigger;
+	/* hold the boot framebuffer's aperture after evicting simpledrm */
+	bool hold_boot_fb;
+	/* a VT switch around system sleep only with the fbdev console */
+	bool vt_switch_fbdev_only;
 };
 
 static const struct gs_decon_soc_data gs201_decon_data = {
@@ -247,6 +253,20 @@ static const struct gs_decon_soc_data gs201_decon_data = {
 	.image_size_reg = RDMA_IMG_SIZE,
 	.source_offset_reg = RDMA_SRC_OFFSET,
 	.shadow_update_mask = SHD_REG_UP_REQ_FLIP(SHD_REG_UP_REQ_ALL_WIN),
+};
+
+/*
+ * gs101 is gs201's DECON; the boot framebuffer and sleep handling below were
+ * found and tested on raven only, so they stay off for gs201.
+ */
+static const struct gs_decon_soc_data gs101_decon_data = {
+	.modes = gs_decon_modes,
+	.num_modes = ARRAY_SIZE(gs_decon_modes),
+	.image_size_reg = RDMA_IMG_SIZE,
+	.source_offset_reg = RDMA_SRC_OFFSET,
+	.shadow_update_mask = SHD_REG_UP_REQ_FLIP(SHD_REG_UP_REQ_ALL_WIN),
+	.hold_boot_fb = true,
+	.vt_switch_fbdev_only = true,
 };
 
 static const struct gs_decon_soc_data zumapro_decon_data = {
@@ -288,6 +308,8 @@ struct gs_decon {
 
 	/* optional ACPM DVFS domains, floors at 120 Hz */
 	struct clk *mif;
+	/* MIF before any 120 Hz floor, put back when the floor goes */
+	unsigned long mif_rest;
 	struct clk *disp;
 
 	/* the link and panel, for rate switching; NULL: 60 Hz only */
@@ -662,6 +684,17 @@ static void gs_decon_set_floors(struct gs_decon *dc, unsigned int hz)
 	ret = clk_set_min_rate(dc->disp, high ? GS_DECON_DISP_FLOOR_HZ : 0);
 	if (ret)
 		dev_warn(dc->dev, "DISP floor for %u Hz: %d\n", hz, ret);
+
+	/*
+	 * Nothing else votes on MIF yet, so without this it would stay at the
+	 * 120 Hz floor after every 120 Hz stint, screen off included.
+	 */
+	if (!high && dc->mif_rest && clk_get_rate(dc->mif) > dc->mif_rest) {
+		ret = clk_set_rate(dc->mif, dc->mif_rest);
+		if (ret)
+			dev_warn(dc->dev, "MIF back to %lu Hz: %d\n",
+				 dc->mif_rest, ret);
+	}
 
 	if (high)
 		dev_dbg(dc->dev, "MIF %lu Hz, DISP %lu Hz\n",
@@ -1426,6 +1459,8 @@ static int gs_decon_probe(struct platform_device *pdev)
 	if (IS_ERR(dc->disp))
 		return dev_err_probe(dev, PTR_ERR(dc->disp), "disp clock\n");
 	if (dc->mif)
+		dc->mif_rest = clk_get_rate(dc->mif);
+	if (dc->mif)
 		dev_info(dev, "MIF at %lu Hz\n", clk_get_rate(dc->mif));
 	if (dc->disp)
 		dev_info(dev, "DISP at %lu Hz\n", clk_get_rate(dc->disp));
@@ -1475,6 +1510,17 @@ static int gs_decon_probe(struct platform_device *pdev)
 						  gs_decon_driver.name);
 	if (ret)
 		goto err_irqs;
+	/*
+	 * and keep it: on raven simpledrm probed 30 ms after us, found the
+	 * aperture free and stayed as a second, phantom output. Holding the
+	 * range makes its own acquire fail with -EBUSY.
+	 */
+	if (dc->soc->hold_boot_fb) {
+		ret = devm_aperture_acquire_for_platform_device(pdev,
+				dc->boot_fb.start, resource_size(&dc->boot_fb));
+		if (ret)
+			goto err_irqs;
+	}
 
 	dc->kms = true;
 	ret = drm_dev_register(&dc->drm, 0);
@@ -1488,6 +1534,15 @@ static int gs_decon_probe(struct platform_device *pdev)
 	 */
 	if (fbdev)
 		drm_client_setup(&dc->drm, NULL);
+
+	/*
+	 * Without an fbdev console, a VT switch around system sleep has
+	 * nothing to show, and it costs the compositor its input devices:
+	 * logind takes the session away and gives it back, and the key press
+	 * that woke the phone is lost with the device it was queued on.
+	 */
+	if (dc->soc->vt_switch_fbdev_only)
+		pm_vt_switch_required(dev, fbdev);
 	dev_info(dev, "flip-only KMS on DECON0, %ux%u, up to %u Hz (at %u Hz)\n",
 		 dc->width, dc->height, dc->max_hz, dc->hz);
 
@@ -1506,6 +1561,8 @@ static void gs_decon_remove(struct platform_device *pdev)
 	struct gs_decon *dc = platform_get_drvdata(pdev);
 
 	if (dc->kms) {
+		if (dc->soc->vt_switch_fbdev_only)
+			pm_vt_switch_unregister(&pdev->dev);
 		dc->going_down = true;
 		drm_dev_unplug(&dc->drm);
 		drm_atomic_helper_shutdown(&dc->drm);
@@ -1536,6 +1593,7 @@ static void gs_decon_shutdown(struct platform_device *pdev)
 }
 
 static const struct of_device_id gs_decon_of_match[] = {
+	{ .compatible = "google,gs101-decon", .data = &gs101_decon_data },
 	{ .compatible = "google,gs201-decon", .data = &gs201_decon_data },
 	{ .compatible = "google,zumapro-decon", .data = &zumapro_decon_data },
 	{ /* sentinel */ }
