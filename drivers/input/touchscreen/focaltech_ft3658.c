@@ -77,9 +77,10 @@ struct ft3658 {
 	struct regulator *vdd;
 	struct regulator *avdd;
 	struct touchscreen_properties prop;
-	u8 tx[FT3658_BUF_LEN];
-	u8 rx[FT3658_BUF_LEN];
 	u8 report[FT3658_REPORT_LEN];
+	/* SPI buffers, DMA-safe: each starts its own cache line */
+	u8 tx[FT3658_BUF_LEN] ____cacheline_aligned;
+	u8 rx[FT3658_BUF_LEN] ____cacheline_aligned;
 };
 
 static int ft3658_read(struct ft3658 *ts, u8 addr, u8 *data, size_t len)
