@@ -1174,19 +1174,20 @@
 };
 
 /*
- * The CDSP and the modem stay disabled, as in sm8750.dtsi, until their
- * firmware, memory carve-outs and power handling work on this phone:
- * probing the modem hands its memory to the modem VM. The firmware names
- * are kept so that enabling one is a status change.
+ * Probing the modem hands its memory to the modem VM. Firmware names,
+ * carve-outs and power handling are in place on this phone; keep the
+ * risk in mind if either status is flipped back to disabled.
  */
 &remoteproc_cdsp {
 	firmware-name = "qcom/sm8750/OnePlus/cdsp.mbn",
 			"qcom/sm8750/OnePlus/cdsp_dtb.mbn";
+	status = "okay";
 };
 
 &remoteproc_mpss {
 	firmware-name = "qcom/sm8750/OnePlus/modem.mbn",
 			"qcom/sm8750/OnePlus/modem_dtb.mbn";
+	status = "okay";
 };
 
 &gpu {
