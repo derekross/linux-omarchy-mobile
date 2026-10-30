@@ -25,6 +25,7 @@ properties:
     enum:
       - google,gs101-acpm-ipc
       - google,gs201-acpm-ipc
+      - google,zuma-acpm-ipc
       - google,zumapro-acpm-ipc
 
   "#clock-cells":
@@ -111,7 +112,9 @@ allOf:
   - if:
       properties:
         compatible:
-          const: google,zumapro-acpm-ipc
+          enum:
+            - google,zuma-acpm-ipc
+            - google,zumapro-acpm-ipc
     then:
       properties:
         pmic: false
