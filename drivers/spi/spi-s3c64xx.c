@@ -1676,6 +1676,9 @@ static const struct platform_device_id s3c64xx_spi_driver_ids[] = {
 MODULE_DEVICE_TABLE(platform, s3c64xx_spi_driver_ids);
 
 static const struct of_device_id s3c64xx_spi_dt_match[] = {
+	{ .compatible = "google,zuma-spi",
+			.data = &zumapro_spi_port_config,
+	},
 	{ .compatible = "google,zumapro-spi",
 			.data = &zumapro_spi_port_config,
 	},
