@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/input/touchscreen/synaptics,tcm-spi-hbp.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Synaptics TouchComm SPI HBP touchscreen (S3910 and similar)
+
+maintainers:
+  - Martin Lund <mrlund@hotmail.com>
+
+description: |
+  Synaptics touchscreen controllers that use the TouchComm host-based
+  protocol over SPI. Bound by drivers/input/touchscreen/syna_tcm2_spi.c
+  as compatible "synaptics,tcm-spi-hbp" (OnePlus 13 S3910).
+
+  Panel size and TX/RX counts stay as vendor properties because the
+  carried Synaptics driver reads them via of_property_read_u32_array
+  rather than touchscreen_parse_properties(). Reset/AVDD/IRQ similarly
+  use the driver's own GPIO helpers.
+
+allOf:
+  - $ref: touchscreen.yaml#
+  - $ref: /schemas/spi/spi-peripheral-props.yaml#
+
+properties:
+  compatible:
+    const: synaptics,tcm-spi-hbp
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+
+  vdd-supply: true
+
+  synaptics,irq-gpio:
+    $ref: /schemas/types.yaml#/definitions/phandle-array
+    description: ATTN GPIO (duplicates interrupts for the vendor driver)
+    maxItems: 1
+
+  synaptics,reset-gpio:
+    $ref: /schemas/types.yaml#/definitions/phandle-array
+    description: Reset GPIO
+    maxItems: 1
+
+  synaptics,avdd-gpio:
+    $ref: /schemas/types.yaml#/definitions/phandle-array
+    description: AVDD enable GPIO
+    maxItems: 1
+
+  synaptics,panel-coords:
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    description: Panel max X and Y coordinates in firmware units
+    minItems: 2
+    maxItems: 2
+
+  synaptics,tx-rx-num:
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    description: TX and RX channel counts
+    minItems: 2
+    maxItems: 2
+
+required:
+  - compatible
+  - reg
+  - interrupts
+
+unevaluatedProperties: false
+
+...
