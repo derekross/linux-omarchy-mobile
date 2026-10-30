@@ -24,8 +24,10 @@
 	/* The pin controllers are numbered as in Tensor G4's driver data. */
 	aliases {
 		pinctrl0 = &pinctrl_gpio_alive;
+		pinctrl1 = &pinctrl_custom_alive;
 		pinctrl10 = &pinctrl_hsi2ufs;
 		pinctrl11 = &pinctrl_peric0;
+		pinctrl12 = &pinctrl_peric1;
 	};
 
 	/*
@@ -344,6 +346,14 @@
 			interrupts = <GIC_SPI 634 IRQ_TYPE_LEVEL_HIGH>;
 		};
 
+		pinctrl_peric1: pinctrl@10c40000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x10c40000 0x1000>;
+			clocks = <&clk_gpio_stub>;
+			clock-names = "pclk";
+			interrupts = <GIC_SPI 649 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
 		cmu_hsi0: clock-controller@11000000 {
 			compatible = "google,zuma-cmu-hsi0";
 			reg = <0x11000000 0x8000>;
@@ -446,6 +456,18 @@
 			clocks = <&clk_ufs_ref_stub>;
 			clock-names = "ref_clk";
 			status = "disabled";
+		};
+
+		pinctrl_custom_alive: pinctrl@15060000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x15060000 0x1000>;
+			clocks = <&cmu_apm CLK_GOUT_APM_GPIO_CUSTOM_ALIVE>;
+			clock-names = "pclk";
+
+			wakeup-interrupt-controller {
+				compatible = "google,zuma-wakeup-eint",
+					     "google,zumapro-wakeup-eint";
+			};
 		};
 
 		ap2apm_mailbox: mailbox@15110000 {
