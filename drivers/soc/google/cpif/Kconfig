@@ -1,0 +1,105 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Google's modem interface driver (CPIF) for the Samsung S5300 on gs201,
+# ported. The symbol names are Google's, because the sources test them.
+
+menuconfig EXYNOS_MODEM_IF
+	tristate "Samsung S5300 modem interface (Google's CPIF, bring-up)"
+	depends on PCIE_GS201_CP && NET && INET && OF
+	help
+	  Google's modem interface driver, ported: boots the Samsung S5300
+	  modem of Pixel 7 phones over PCIe, then carries its IPC, RFS and
+	  packet channels in shared memory as character and network devices
+	  (/dev/umts_boot0, /dev/umts_ipc0, /dev/umts_rfs0, rmnet*).
+
+	  For bring-up: DIT, the PCIe IOMMU and S2MPU, BTL, the throughput
+	  monitor and the thermal zones are not built, and the packet
+	  processor is optional.
+
+if EXYNOS_MODEM_IF
+
+config SEC_MODEM_S5100
+	bool "S5100-family modem over PCIe (S5300)"
+	default y
+	select LINK_DEVICE_PCIE
+	help
+	  The modem control (power, reset, boot, crash dump) for Samsung's
+	  S5100 family, which includes the S5300 of gs201 phones.
+
+config LINK_DEVICE_PCIE
+	bool
+
+config CPIF_AP_SUSPEND_DURING_VOICE_CALL
+	bool
+	default y
+	help
+	  The modem control code stock builds (pantah_defconfig): the AP may
+	  suspend while a call's audio runs over the AoC, as notified by the
+	  voice call events. Without it the S5100 control code does not build.
+
+config CH_EXTENSION
+	bool "Extended packet data channels"
+	default y
+	help
+	  The S5300 firmware of gs201 phones carries packet data on the
+	  extended channel range (181 and up, SIPC_CH_EX_ID_PDP_*), which
+	  the device tree's rmnet I/O devices use, and the AP advertises
+	  that range in its capability word at boot. Without it only
+	  channels 10-24 are treated as packet data, and the rmnet
+	  interfaces carry nothing. Stock builds it (pantah_defconfig).
+
+	  If unsure, say Y.
+
+config LINK_DEVICE_PCIE_IOCC
+	def_bool y
+	depends on LINK_DEVICE_PCIE
+	help
+	  The gs201 modem link driver turns IO coherency on for the link at
+	  every link-up, before the modem may DMA, so the packet processor
+	  treats its cacheable regions as coherent, as stock does
+	  (pantah_defconfig: CONFIG_LINK_DEVICE_PCIE_IOCC=y).
+
+config CP_PKTPROC
+	bool "Packet processor, downlink (bring-up)"
+	depends on LINK_DEVICE_PCIE
+	help
+	  The modem's downlink packet processor: descriptor rings in the
+	  PKTPROC shared-memory region that the S5300 fills, read out with
+	  NAPI, one MSI vector per queue when the device tree asks for
+	  exclusive interrupts. Stock gs201 runs four downlink queues. Used
+	  only when the modem node sets pktproc_dl_support; the AP then
+	  advertises it in its capability word at boot.
+
+	  Not yet tested on hardware here. If unsure, say N.
+
+config CP_PKTPROC_UL
+	bool "Packet processor, uplink (bring-up)"
+	depends on CP_PKTPROC
+	help
+	  The modem's uplink packet processor in the PKTPROC_UL region.
+	  Stock gs201 runs two uplink queues, one of them for TCP ACKs
+	  only. Used only when the modem node sets pktproc_ul_support.
+
+	  Not yet tested on hardware here. If unsure, say N.
+
+config MODEM_IF_QOS
+	bool "Uplink priority queue for TCP ACKs (bring-up)"
+	depends on CP_PKTPROC_UL
+	help
+	  Gives the rmnet devices one transmit queue per uplink packet
+	  processor queue and sends TCP ACKs on the first, the modem's
+	  high-priority queue, as stock does (pantah_defconfig:
+	  CONFIG_MODEM_IF_QOS=m). Without it every packet goes to the
+	  normal-priority queue.
+
+	  If unsure, say N.
+
+config SHM_IPC
+	tristate "Shared-memory regions for the modem"
+	default EXYNOS_MODEM_IF
+	help
+	  Maps the modem's reserved-memory regions (IPC, MSI, packet
+	  buffers) for the modem interface driver, from a
+	  "samsung,exynos-cp-shmem" device tree node.
+
+endif

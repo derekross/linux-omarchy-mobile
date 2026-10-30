@@ -21,6 +21,7 @@
 		pinctrl1 = &pinctrl_far_alive;
 		pinctrl4 = &pinctrl_peric0;
 		pinctrl5 = &pinctrl_peric1;
+		pinctrl6 = &pinctrl_hsi1;
 		pinctrl7 = &pinctrl_hsi2;
 	};
 
@@ -290,6 +291,8 @@
 		dss@d8100000 { reg = <0x0 0xd8100000 0x5f20000>; no-map; };
 		cp-rmem1@e8000000 { reg = <0x0 0xe8000000 0x2000000>; no-map; };
 		cp-rmem@ea400000 { reg = <0x0 0xea400000 0x800000>; no-map; };
+		/* The modem's MSI target (stock cp_msi_rmem) */
+		cp_msi_mem: cp-msi@f6200000 { reg = <0x0 0xf6200000 0x1000>; no-map; };
 		abl@f8800000 { reg = <0x0 0xf8800000 0x2000000>; no-map; };
 		/* ABL adds debug_kinfo_reserved@fd3fe000 (one page) after this. */
 		debug@fd3f0000 { reg = <0x0 0xfd3f0000 0xe000>; no-map; };
@@ -912,6 +915,76 @@
 			snps,dis_u2_susphy_quirk;
 			snps,dis_u3_susphy_quirk;
 			snps,has-lpm-erratum;
+			status = "disabled";
+		};
+
+		/*
+		 * HSI1 pins: the modem's PCIe GEN4A_0 (CLKREQ#, PERST#), its control
+		 * lines and the NFC controller's reset and power-idle lines.
+		 */
+		pinctrl_hsi1: pinctrl@11840000 {
+			compatible = "google,gs201-pinctrl";
+			reg = <0x11840000 0x1000>;
+			/* TODO: update once support for this CMU exists */
+			clocks = <0>;
+			clock-names = "pclk";
+			interrupts = <GIC_SPI 387 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+
+		/* No CMU_HSI1 driver yet: the bus clock is not described. */
+		sysreg_hsi1: syscon@11820000 {
+			compatible = "google,gs201-hsi1-sysreg", "syscon";
+			reg = <0x11820000 0x1000>;
+		};
+
+		/*
+		 * PCIe GEN4A_0 in HSI1, the link to the S5300 modem (Google's
+		 * pcie_0, ch-num 0). Two lanes; the outbound iATU belongs to the
+		 * secure monitor. Bring-up driver only (pcie-gs201-cp).
+		 */
+		pcie_0: pcie@11920000 {
+			compatible = "google,gs201-pcie-cp";
+			reg = <0x11920000 0x1400>,
+			      <0x11c00000 0x301000>,
+			      <0x40ffe000 0x2000>,
+			      <0x11900000 0x1000>;
+			reg-names = "elbi", "dbi", "config", "ia";
+			#address-cells = <3>;
+			#size-cells = <2>;
+			device_type = "pci";
+			/* PCI 0x14e00000 = CPU 0x40000000, set up by the secure monitor */
+			ranges = <0x82000000 0x0 0x14e00000 0x40000000 0x0 0xff0000>;
+			bus-range = <0x00 0xff>;
+			interrupts = <GIC_SPI 388 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 389 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 390 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 391 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 392 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 393 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "ctrl", "msi0", "msi1", "msi2", "msi3", "msi4";
+			phys = <&pcie_0_phy>;
+			phy-names = "pcie";
+			memory-region = <&cp_msi_mem>;
+			pinctrl-0 = <&pcie0_clkreq>, <&pcie0_perst>;
+			pinctrl-names = "active";
+			reset-gpios = <&gph0 0 GPIO_ACTIVE_LOW>;
+			samsung,pmu-syscon = <&pmu_system_controller 0x3ec0>;
+			samsung,sysreg = <&sysreg_hsi1 0x704>;
+			num-lanes = <2>;
+			max-link-speed = <3>;
+			status = "disabled";
+		};
+
+		pcie_0_phy: phy@11950000 {
+			compatible = "google,gs201-pcie-phy";
+			reg = <0x11950000 0x2000>,
+			      <0x11940000 0x1000>,
+			      <0x11921400 0x10>,
+			      <0x11960000 0xd000>;
+			reg-names = "pma", "pcs", "rst", "udbg";
+			samsung,pmu-syscon = <&pmu_system_controller 0x3ec0>;
+			#phy-cells = <0>;
 			status = "disabled";
 		};
 
