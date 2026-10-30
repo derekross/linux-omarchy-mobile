@@ -2658,7 +2658,6 @@ static const struct samsung_pin_ctrl zuma_pin_ctrl[] __initconst = {
 		/* Controller 0: ALIVE */
 		.pin_banks	= zuma_pin_alive,
 		.nr_banks	= ARRAY_SIZE(zuma_pin_alive),
-		.eint_gpio_init	= exynos_eint_gpio_init,
 		.eint_wkup_init	= exynos_eint_wkup_init,
 	}, {
 		/* Controller 1: CUSTOM */
