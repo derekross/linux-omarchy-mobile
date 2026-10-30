@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/misc/goodix,g7-udfps.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Goodix optical under-display fingerprint sensor (secure world bus)
+
+maintainers:
+  - Derek Ross <derekross@gmail.com>
+
+description:
+  Goodix optical fingerprint sensor under an OLED panel, as in the Google
+  Pixel 7 Pro. Its SPI bus is owned by a trusted application in the secure
+  world, so the node is not on an SPI controller; it describes only the
+  lines the application processor drives.
+
+properties:
+  compatible:
+    const: goodix,g7-udfps
+
+  interrupts:
+    maxItems: 1
+    description: Sensor event line (rising edge).
+
+  reset-gpios:
+    maxItems: 1
+
+  vdd-supply:
+    description: Sensor analog supply.
+
+required:
+  - compatible
+  - interrupts
+  - reset-gpios
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/gpio/gpio.h>
+    #include <dt-bindings/interrupt-controller/irq.h>
+
+    fingerprint {
+        compatible = "goodix,g7-udfps";
+        interrupt-parent = <&gpa9>;
+        interrupts = <2 IRQ_TYPE_EDGE_RISING>;
+        reset-gpios = <&gpp1 1 GPIO_ACTIVE_LOW>;
+    };
