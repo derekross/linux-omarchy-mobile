@@ -304,6 +304,30 @@
 		log_slcdump: log-slcdump { status = "disabled"; };
 	};
 
+	/*
+	 * Trusty, the secure OS that runs from the bootloader's tzsw image.
+	 * Disabled until the fingerprint bring-up gates (it talks to the
+	 * secure world at probe).
+	 */
+	trusty: trusty {
+		compatible = "android,trusty-smc-v1";
+		status = "disabled";
+
+		irq {
+			compatible = "android,trusty-irq-v1";
+			/* Trusty IPIs 8-15 are GIC SGIs 8-15 */
+			ipi-range = <8 15 8>;
+		};
+
+		log {
+			compatible = "android,trusty-log-v1";
+		};
+
+		virtio {
+			compatible = "android,trusty-virtio-v1";
+		};
+	};
+
 	soc: soc@0 {
 		compatible = "simple-bus";
 		#address-cells = <1>;
@@ -498,6 +522,33 @@
 				clock-names = "spi", "spi_busclk0";
 				interrupts = <GIC_SPI 679 IRQ_TYPE_LEVEL_HIGH>;
 				pinctrl-0 = <&spi6_bus>;
+				pinctrl-names = "default";
+				status = "disabled";
+			};
+		};
+
+		usi7: usi@109600c0 {
+			compatible = "google,gs201-usi", "samsung,exynos850-usi";
+			reg = <0x109600c0 0x20>;
+			ranges;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			clocks = <&cmu_peric0 CLK_GOUT_PERIC0_USI7_USI_PCLK>,
+				 <&cmu_peric0 CLK_GOUT_PERIC0_USI7_USI_IPCLK>;
+			clock-names = "pclk", "ipclk";
+			samsung,sysreg = <&sysreg_peric0 0x1018>;
+			status = "disabled";
+
+			spi_7: spi@10960000 {
+				compatible = "google,gs201-spi", "google,gs101-spi";
+				reg = <0x10960000 0x30>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+				clocks = <&cmu_peric0 CLK_GOUT_PERIC0_USI7_USI_PCLK>,
+					 <&cmu_peric0 CLK_GOUT_PERIC0_USI7_USI_IPCLK>;
+				clock-names = "spi", "spi_busclk0";
+				interrupts = <GIC_SPI 680 IRQ_TYPE_LEVEL_HIGH>;
+				pinctrl-0 = <&spi7_bus &spi7_miso>;
 				pinctrl-names = "default";
 				status = "disabled";
 			};
@@ -915,6 +966,70 @@
 			#phy-cells = <0>;
 			clocks = <&oscclk>;
 			clock-names = "ref_clk";
+			status = "disabled";
+		};
+
+		gsa: gsa@17c90000 {
+			compatible = "google,gs201-gsa";
+			reg = <0x17c90000 0x1000>, <0x17c60000 0x10000>;
+			reg-names = "mbox", "s2mpu";
+			interrupts = <GIC_SPI 363 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+
+		aoc_sysmmu: sysmmu@1a090000 {
+			compatible = "google,gs201-aoc-sysmmu";
+			reg = <0x1a090000 0x10000>;
+			interrupts = <GIC_SPI 118 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+
+		aoc: aoc@181d0000 {
+			compatible = "google,gs201-aoc";
+			reg = <0x181d0000 0x1000>, <0x1a0b0000 0x1000>,
+			      <0x10000000 0x100>, <0x19a00000 0x10000>;
+			reg-names = "aoc_req", "s2mpu", "chipid", "pcu";
+			interrupts = <GIC_SPI 116 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "watchdog";
+			memory-region = <&{/reserved-memory/aoc@94000000}>;
+			google,gsa = <&gsa>;
+			google,sysmmu = <&aoc_sysmmu>;
+			mboxes = <&aoc_mbox_a32 0>, <&aoc_mbox_a32 1>, <&aoc_mbox_a32 2>, <&aoc_mbox_a32 3>,
+				 <&aoc_mbox_a32 4>, <&aoc_mbox_a32 5>, <&aoc_mbox_a32 6>, <&aoc_mbox_a32 7>,
+				 <&aoc_mbox_a32 8>, <&aoc_mbox_a32 9>, <&aoc_mbox_a32 10>, <&aoc_mbox_a32 11>,
+				 <&aoc_mbox_a32 12>, <&aoc_mbox_a32 13>, <&aoc_mbox_a32 14>, <&aoc_mbox_a32 15>,
+				 <&aoc_mbox_f1 0>, <&aoc_mbox_f1 1>, <&aoc_mbox_f1 2>, <&aoc_mbox_f1 3>,
+				 <&aoc_mbox_f1 4>, <&aoc_mbox_f1 5>, <&aoc_mbox_f1 6>, <&aoc_mbox_f1 7>,
+				 <&aoc_mbox_f1 8>, <&aoc_mbox_f1 9>, <&aoc_mbox_f1 10>, <&aoc_mbox_f1 11>,
+				 <&aoc_mbox_f1 12>, <&aoc_mbox_f1 13>, <&aoc_mbox_f1 14>, <&aoc_mbox_f1 15>,
+				 <&aoc_mbox_p6 0>, <&aoc_mbox_p6 1>, <&aoc_mbox_p6 2>, <&aoc_mbox_p6 3>,
+				 <&aoc_mbox_p6 4>, <&aoc_mbox_p6 5>, <&aoc_mbox_p6 6>, <&aoc_mbox_p6 7>,
+				 <&aoc_mbox_p6 8>, <&aoc_mbox_p6 9>, <&aoc_mbox_p6 10>, <&aoc_mbox_p6 11>,
+				 <&aoc_mbox_p6 12>, <&aoc_mbox_p6 13>, <&aoc_mbox_p6 14>, <&aoc_mbox_p6 15>;
+			status = "disabled";
+		};
+
+		aoc_mbox_a32: mailbox@18300000 {
+			compatible = "google,gs201-aoc-mbox";
+			reg = <0x18300000 0x1000>;
+			interrupts = <GIC_SPI 75 IRQ_TYPE_LEVEL_HIGH>;
+			#mbox-cells = <1>;
+			status = "disabled";
+		};
+
+		aoc_mbox_f1: mailbox@18320000 {
+			compatible = "google,gs201-aoc-mbox";
+			reg = <0x18320000 0x1000>;
+			interrupts = <GIC_SPI 76 IRQ_TYPE_LEVEL_HIGH>;
+			#mbox-cells = <1>;
+			status = "disabled";
+		};
+
+		aoc_mbox_p6: mailbox@18340000 {
+			compatible = "google,gs201-aoc-mbox";
+			reg = <0x18340000 0x1000>;
+			interrupts = <GIC_SPI 77 IRQ_TYPE_LEVEL_HIGH>;
+			#mbox-cells = <1>;
 			status = "disabled";
 		};
 

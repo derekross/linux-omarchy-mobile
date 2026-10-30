@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+if ARCH_EXYNOS || COMPILE_TEST
+
+menu "Google SoC drivers"
+
+config GOOGLE_GSA
+	tristate "Google GSA mailbox"
+	depends on DEBUG_FS
+	help
+	  The GSA is the security core of Google Tensor SoCs. It authenticates
+	  and loads the firmware of other cores, such as the AoC (the audio
+	  and sensor DSP), and is reached through a mailbox of command and
+	  response registers.
+
+	  This driver gives the AoC driver the GSA's firmware loading and
+	  exposes status queries in debugfs, for bring-up.
+
+config GOOGLE_GSA_TRUSTY
+	bool "AoC state commands through Trusty"
+	depends on GOOGLE_GSA && TRUSTY_VIRTIO_IPC
+	depends on TRUSTY_VIRTIO_IPC=y || GOOGLE_GSA=m
+	help
+	  Send AoC state commands (start, reset, get state) to the GSA's
+	  hwmgr.aoc service in Trusty, as Google's kernels do. Without it,
+	  only the mailbox command can be tried (aoc_cmd_mbox=1), which no
+	  Google kernel uses.
+
+config GS201_AOC_SYSMMU
+	tristate "gs201 AoC System MMU static windows"
+	help
+	  Programs the AoC's System MMU with the fixed windows its firmware
+	  expects (from the firmware image header), as 1 MiB sections. Used by
+	  the AoC driver.
+
+config GS201_AOC_BOOT
+	tristate "gs201 AoC firmware boot (bring-up)"
+	depends on GOOGLE_GSA && GS201_AOC_SYSMMU && DEBUG_FS
+	help
+	  Boots the AoC firmware step by step from debugfs: power request,
+	  System MMU windows, GSA authentication, start. It does not run the
+	  AoC's services; it only checks that the firmware comes up. For
+	  bring-up only.
+
+config GS201_AOC_RAILS
+	tristate "gs201 AoC microphone and sensor supplies over ACPM (bring-up)"
+	depends on EXYNOS_ACPM_PROTOCOL
+	help
+	  Reads, and with enable=1 turns on, the five S2MPG12/S2MPG13 LDOs that
+	  feed the AoC's digital microphones and sensors, until there is an
+	  S2MPG12/13 regulator driver. For bring-up only.
+
+config GS201_AOC_MBOX
+	tristate "gs201 AoC mailboxes"
+	depends on MAILBOX
+	help
+	  The doorbell and shared-register mailboxes between the AP and the
+	  AoC (Google's whitechapel mailbox driver).
+
+config GS201_AOC
+	tristate "gs201 AoC core (Google's driver)"
+	depends on GOOGLE_GSA && GS201_AOC_SYSMMU && GS201_AOC_MBOX
+	help
+	  Google's AoC core driver, ported: loads and authenticates the AoC
+	  firmware through the GSA, starts it, and exposes its services on the
+	  AoC bus. Firmware loading is triggered from sysfs (firmware), not at
+	  probe.
+
+config GS201_AOC_CHAR
+	tristate "gs201 AoC service character devices"
+	depends on GS201_AOC
+	help
+	  /dev/acd-<service> character devices for AoC services
+	  (aoc_char_dev), and channelized ones for services such as the
+	  sensor framework (aoc_channel_dev).
+
+config GS201_AOC_ALSA
+	tristate "gs201 AoC sound card (Google's driver)"
+	depends on GS201_AOC && SND_SOC
+	select SND_COMPRESS_OFFLOAD
+	help
+	  Google's AoC ALSA/ASoC driver, ported: the AoC's playback and
+	  capture endpoints, its audio routing controls, and a sound card with
+	  the speaker amplifiers on TDM 0. The card enforces the speaker
+	  limits in device/cheetah/AUDIO-PLAN.md.
+
+endmenu
+
+endif
