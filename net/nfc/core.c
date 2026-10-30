@@ -117,8 +117,10 @@ int nfc_dev_up(struct nfc_dev *dev)
 	if (dev->ops->dev_up)
 		rc = dev->ops->dev_up(dev);
 
-	if (!rc)
-		dev->dev_up = true;
+	if (rc)
+		goto error;
+
+	dev->dev_up = true;
 
 	/* We have to enable the device before discovering SEs */
 	if (dev->ops->discover_se && dev->ops->discover_se(dev))

@@ -45,9 +45,21 @@ do {                                                             \
 
 int ndlc_open(struct llt_ndlc *ndlc)
 {
-	/* toggle reset pin */
-	ndlc->ops->enable(ndlc->phy_id);
+	int r;
+
+	ndlc->hard_fault = 0;
+	/*
+	 * Powered before the reset is released: a controller that sends a
+	 * frame right after reset (CORE_RESET_NTF) must find the link up.
+	 */
 	ndlc->powered = 1;
+
+	/* toggle reset pin */
+	r = ndlc->ops->enable(ndlc->phy_id);
+	if (r) {
+		ndlc->powered = 0;
+		return r;
+	}
 	return 0;
 }
 EXPORT_SYMBOL(ndlc_open);
@@ -62,8 +74,9 @@ void ndlc_close(struct llt_ndlc *ndlc)
 	/* toggle reset pin */
 	ndlc->ops->enable(ndlc->phy_id);
 
-	nci_prop_cmd(ndlc->ndev, ST_NCI_CORE_PROP,
-		     sizeof(struct nci_mode_set_cmd), (__u8 *)&cmd);
+	if (!ndlc->raw)
+		nci_prop_cmd(ndlc->ndev, ST_NCI_CORE_PROP,
+			     sizeof(struct nci_mode_set_cmd), (__u8 *)&cmd);
 
 	ndlc->powered = 0;
 	ndlc->ops->disable(ndlc->phy_id);
@@ -75,6 +88,18 @@ int ndlc_send(struct llt_ndlc *ndlc, struct sk_buff *skb)
 	/* add ndlc header */
 	u8 pcb = PCB_TYPE_DATAFRAME | PCB_DATAFRAME_RETRANSMIT_NO |
 		PCB_FRAME_CRC_INFO_NOTPRESENT;
+	int r;
+
+	if (ndlc->raw) {
+		NDLC_DUMP_SKB("nci frame written", skb);
+		r = ndlc->ops->write(ndlc->phy_id, skb);
+		if (r < 0) {
+			kfree_skb(skb);
+			return r;
+		}
+		consume_skb(skb);
+		return 0;
+	}
 
 	*(u8 *)skb_push(skb, 1) = pcb;
 	skb_queue_tail(&ndlc->send_q, skb);
@@ -226,6 +251,10 @@ void ndlc_recv(struct llt_ndlc *ndlc, struct sk_buff *skb)
 		pr_err("NULL Frame -> link is dead\n");
 		ndlc->hard_fault = -EREMOTEIO;
 		ndlc_close(ndlc);
+	} else if (ndlc->raw) {
+		NDLC_DUMP_SKB("incoming nci frame", skb);
+		nci_recv_frame(ndlc->ndev, skb);
+		return;
 	} else {
 		NDLC_DUMP_SKB("incoming frame", skb);
 		skb_queue_tail(&ndlc->rcv_q, skb);
@@ -251,7 +280,8 @@ static void ndlc_t2_timeout(struct timer_list *t)
 
 int ndlc_probe(void *phy_id, const struct nfc_phy_ops *phy_ops,
 	       struct device *dev, int phy_headroom, int phy_tailroom,
-	       struct llt_ndlc **ndlc_id, struct st_nci_se_status *se_status)
+	       struct llt_ndlc **ndlc_id, struct st_nci_se_status *se_status,
+	       bool raw)
 {
 	struct llt_ndlc *ndlc;
 
@@ -263,6 +293,7 @@ int ndlc_probe(void *phy_id, const struct nfc_phy_ops *phy_ops,
 	ndlc->phy_id = phy_id;
 	ndlc->dev = dev;
 	ndlc->powered = 0;
+	ndlc->raw = raw;
 
 	*ndlc_id = ndlc;
 

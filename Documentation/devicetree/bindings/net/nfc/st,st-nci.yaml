@@ -11,13 +11,23 @@ maintainers:
 
 properties:
   compatible:
-    enum:
-      - st,st21nfcb-i2c
-      - st,st21nfcb-spi
-      - st,st21nfcc-i2c
+    oneOf:
+      - enum:
+          - st,st21nfcb-i2c
+          - st,st21nfcb-spi
+          - st,st21nfcc-i2c
+      - items:
+          - const: st,st54j-i2c
+          - const: st,st21nfcc-i2c
 
   reset-gpios:
     description: Output GPIO pin used for resetting the controller
+
+  clocks:
+    maxItems: 1
+    description:
+      Reference clock, if the controller is not fed by its own crystal. It
+      is enabled while the controller is powered up.
 
   ese-present:
     type: boolean

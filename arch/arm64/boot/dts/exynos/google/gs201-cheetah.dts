@@ -693,6 +693,24 @@
 		cirrus,lra-f0-hz = <145>;
 		cirrus,lra-redc-micro-ohms = <13000000>;
 	};
+
+	/*
+	 * NFC: the NCI controller of the ST54J (NFC + eSE combo) at 0x08,
+	 * IRQ on gpa9-1, reset on gph1-5 (HSI1). Stock: st21nfc@8. The eSE
+	 * side (SPI, reset gph1-4) is left alone: no ese-present here.
+	 * The reference clock is the PMU's CLKOUT1 pad, which stock enables
+	 * while the device is open. Disabled until the nfc-test overlay.
+	 */
+	nfc@8 {
+		compatible = "st,st54j-i2c", "st,st21nfcc-i2c";
+		reg = <0x08>;
+		clocks = <&pmu_system_controller 1>;	/* CLKOUT1 */
+		interrupts-extended = <&gpa9 1 IRQ_TYPE_LEVEL_HIGH>;
+		reset-gpios = <&gph1 5 GPIO_ACTIVE_HIGH>;
+		pinctrl-0 = <&nfc_rst>;
+		pinctrl-names = "default";
+		status = "disabled";
+	};
 };
 
 /*
@@ -891,6 +909,15 @@
 		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
 		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
 		samsung,pin-pud-pdn = <GS101_PIN_PULL_DOWN>;
+	};
+};
+
+&pinctrl_hsi1 {
+	/* As stock: only the power-down state; the driver owns the level. */
+	nfc_rst: nfc-rst-pins {
+		samsung,pins = "gph1-5";
+		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
+		samsung,pin-pud-pdn = <GS101_PIN_PULL_NONE>;
 	};
 };
 

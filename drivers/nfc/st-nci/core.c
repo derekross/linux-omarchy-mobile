@@ -18,7 +18,12 @@
 
 static int st_nci_init(struct nci_dev *ndev)
 {
+	struct st_nci_info *info = nci_get_drvdata(ndev);
 	struct nci_mode_set_cmd cmd;
+
+	/* Plain NCI controllers start in NCI mode: CORE_RESET comes first. */
+	if (info->ndlc->raw)
+		return 0;
 
 	cmd.cmd_type = ST_NCI_SET_NFC_MODE;
 	cmd.mode = 1;
@@ -92,6 +97,22 @@ static const struct nci_driver_ops st_nci_prop_ops[] = {
 	},
 };
 
+/*
+ * Without a secure element described there is nothing to discover, and
+ * the HCI network set-up behind SE discovery would clear every pipe in the
+ * controller and replace its session identity, undoing what another host
+ * stack (with its secure element) set up. Leave all of it out.
+ */
+static const struct nci_ops st_nci_ops_no_se = {
+	.init = st_nci_init,
+	.open = st_nci_open,
+	.close = st_nci_close,
+	.send = st_nci_send,
+	.get_rfprotocol = st_nci_get_rfprotocol,
+	.prop_ops = st_nci_prop_ops,
+	.n_prop_ops = ARRAY_SIZE(st_nci_prop_ops),
+};
+
 static const struct nci_ops st_nci_ops = {
 	.init = st_nci_init,
 	.open = st_nci_open,
@@ -130,8 +151,10 @@ int st_nci_probe(struct llt_ndlc *ndlc, int phy_headroom,
 		| NFC_PROTO_NFC_DEP_MASK;
 
 	BUILD_BUG_ON(ARRAY_SIZE(st_nci_prop_ops) > NCI_MAX_PROPRIETARY_CMD);
-	ndlc->ndev = nci_allocate_device(&st_nci_ops, protocols,
-					phy_headroom, phy_tailroom);
+	ndlc->ndev = nci_allocate_device(se_status->is_ese_present ||
+					 se_status->is_uicc_present ?
+					 &st_nci_ops : &st_nci_ops_no_se,
+					 protocols, phy_headroom, phy_tailroom);
 	if (!ndlc->ndev) {
 		pr_err("Cannot allocate nfc ndev\n");
 		return -ENOMEM;
