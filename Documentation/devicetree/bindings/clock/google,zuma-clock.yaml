@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/clock/google,zuma-clock.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Google Tensor G3 clock controllers
+
+maintainers:
+  - Brett-Michael Green <brett@bmgvisualtech.com>
+
+description: |
+  CMU_TOP supplies the HSI0 NoC and peripheral clocks to CMU_HSI0 from its
+  shared PLLs. CMU_HSI0 supplies USI2, the touchscreen's SPI, from the HSI0
+  peripheral clock; its NoC path also takes the board-level HSI0 ALT clock.
+  CMU_APM supplies the APM mailbox, its internal memory and the always-on
+  GPIO banks from the always-on ALV PLL and the oscillator.
+  The external oscillator supplies the PLL reference and the oscillator mux
+  paths.
+  Clock identifiers are defined in dt-bindings/clock/google,zuma.h.
+
+properties:
+  compatible:
+    enum:
+      - google,zuma-cmu-top
+      - google,zuma-cmu-apm
+      - google,zuma-cmu-hsi0
+
+  reg:
+    maxItems: 1
+
+  "#clock-cells":
+    const: 1
+
+  clocks:
+    minItems: 1
+    maxItems: 4
+
+  clock-names:
+    minItems: 1
+    maxItems: 4
+
+required:
+  - compatible
+  - reg
+  - "#clock-cells"
+  - clocks
+  - clock-names
+
+allOf:
+  - if:
+      properties:
+        compatible:
+          enum:
+            - google,zuma-cmu-top
+            - google,zuma-cmu-apm
+    then:
+      properties:
+        clocks:
+          items:
+            - description: External oscillator reference clock
+        clock-names:
+          items:
+            - const: oscclk
+  - if:
+      properties:
+        compatible:
+          const: google,zuma-cmu-hsi0
+    then:
+      properties:
+        clocks:
+          items:
+            - description: External oscillator reference clock
+            - description: HSI0 NoC clock from CMU_TOP
+            - description: HSI0 peripheral clock from CMU_TOP
+            - description: HSI0 ALT input clock
+        clock-names:
+          items:
+            - const: oscclk
+            - const: bus
+            - const: peri
+            - const: alt
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/clock/google,zuma.h>
+
+    cmu_top: clock-controller@26040000 {
+        compatible = "google,zuma-cmu-top";
+        reg = <0x26040000 0x8000>;
+        #clock-cells = <1>;
+        clocks = <&oscclk>;
+        clock-names = "oscclk";
+    };
+
+    clock-controller@11000000 {
+        compatible = "google,zuma-cmu-hsi0";
+        reg = <0x11000000 0x8000>;
+        #clock-cells = <1>;
+        clocks = <&oscclk>, <&cmu_top CLK_DOUT_HSI0_NOC>,
+                 <&cmu_top CLK_DOUT_HSI0_PERI>, <&hsi0_alt>;
+        clock-names = "oscclk", "bus", "peri", "alt";
+    };
+
+...

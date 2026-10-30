@@ -1,0 +1,50 @@
+/* SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause) */
+#ifndef _DT_BINDINGS_CLOCK_GOOGLE_ZUMA_H
+#define _DT_BINDINGS_CLOCK_GOOGLE_ZUMA_H
+
+/* CMU_TOP: the HSI0 NoC and peripheral clock paths. */
+#define CLK_FOUT_SHARED0		1
+#define CLK_FOUT_SHARED1		2
+#define CLK_FOUT_SHARED2		3
+#define CLK_FOUT_SHARED3		4
+#define CLK_FOUT_SPARE			5
+#define CLK_SHARED0_D4			6
+#define CLK_SHARED1_D4			7
+#define CLK_SHARED2_D2			8
+#define CLK_SHARED3_D2			9
+#define CLK_MOUT_HSI0_NOC		10
+#define CLK_GOUT_HSI0_NOC		11
+#define CLK_DOUT_HSI0_NOC		12
+#define CLK_MOUT_HSI0_PERI		13
+#define CLK_GOUT_HSI0_PERI		14
+#define CLK_DOUT_HSI0_PERI		15
+
+/* CMU_HSI0: USI2, the touchscreen's SPI. */
+#define CLK_GOUT_HSI0_ALT		1
+#define CLK_MOUT_HSI0_NOC_USER		2
+#define CLK_MOUT_HSI0_ALT_USER		3
+#define CLK_MOUT_HSI0_NOC_LOCAL		4
+#define CLK_MOUT_HSI0_PERI_USER		5
+#define CLK_MOUT_HSI0_USI2		6
+#define CLK_GOUT_HSI0_USI2_SOURCE	7
+#define CLK_DOUT_HSI0_USI2		8
+#define CLK_GOUT_HSI0_USI2_IP		9
+#define CLK_GOUT_HSI0_USI2_PCLK		10
+
+/* CMU_APM: the APM mailbox, its SRAM and the always-on GPIO banks. */
+#define CLK_APM_PLL_ALV_DIV2		1
+#define CLK_APM_PLL_ALV_DIV4		2
+#define CLK_APM_PLL_ALV_DIV8		3
+#define CLK_APM_PLL_ALV_DIV16		4
+#define CLK_MOUT_APM_FUNCSRC		5
+#define CLK_MOUT_APM_FUNC		6
+#define CLK_GOUT_APM_FUNC		7
+#define CLK_DOUT_APM_NOC		8
+#define CLK_GOUT_APM_MAILBOX_AP		9
+#define CLK_GOUT_APM_INTMEM_ACLK	10
+#define CLK_GOUT_APM_INTMEM_PCLK	11
+#define CLK_GOUT_APM_GPIO_ALIVE		12
+#define CLK_GOUT_APM_GPIO_FAR_ALIVE	13
+#define CLK_GOUT_APM_GPIO_CUSTOM_ALIVE	14
+
+#endif /* _DT_BINDINGS_CLOCK_GOOGLE_ZUMA_H */
