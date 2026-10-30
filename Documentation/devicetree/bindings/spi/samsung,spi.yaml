@@ -33,6 +33,7 @@ properties:
       - items:
           - enum:
               - google,gs201-spi
+              - google,zuma-spi
               - google,zumapro-spi
           - const: google,gs101-spi
       - const: samsung,exynos7-spi
