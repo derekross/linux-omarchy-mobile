@@ -45,6 +45,7 @@ static const struct brcmf_feat_fwcap brcmf_fwcap_map[] = {
 	{ BRCMF_FEAT_SAE, "sae " },
 	{ BRCMF_FEAT_FWAUTH, "idauth" },
 	{ BRCMF_FEAT_SAE_EXT, "sae_ext" },
+	{ BRCMF_FEAT_HOST_SFHLLC, "host_sfhllc" },
 };
 
 #ifdef DEBUG
@@ -155,6 +156,18 @@ static void brcmf_feat_wlc_version_overrides(struct brcmf_pub *drv)
 	minor = le16_to_cpu(ver.wlc_ver_minor);
 
 	brcmf_dbg(INFO, "WLC version: %d.%d\n", major, minor);
+
+	/*
+	 * Versioned "join" parameters (wl_extjoin_params_v1_t), by the
+	 * same WLC version test as Broadcom's driver (bcmdhd
+	 * wl_cfg80211.c, MIN_JOINEXT_V1_*): 14.2 or 14.4, 16.1 and later
+	 * on 16, or 17 and later. Only the BCM4389 for now; its 20.101.90
+	 * firmware reports 14.4 and rejects the unversioned layout.
+	 */
+	if (drv->bus_if->chip == BRCM_CC_4389_CHIP_ID &&
+	    ((major == 14 && (minor == 2 || minor == 4)) ||
+	     (major == 16 && minor >= 1) || major >= 17))
+		feat_flags |= BIT(BRCMF_FEAT_JOIN_V1);
 
 	for (i = 0; i < ARRAY_SIZE(brcmf_feat_wlcfeat_map); i++) {
 		e = &brcmf_feat_wlcfeat_map[i];
@@ -345,6 +358,10 @@ void brcmf_feat_attach(struct brcmf_pub *drvr)
 	brcmf_feat_firmware_overrides(drvr);
 
 	brcmf_fwvid_feat_attach(ifp);
+
+	/* Host-built 802.3 + LLC/SNAP TX headers: only the BCM4389 for now */
+	if (drvr->bus_if->chip != BRCM_CC_4389_CHIP_ID)
+		drvr->feat_flags &= ~BIT(BRCMF_FEAT_HOST_SFHLLC);
 
 	if (drvr->settings->feature_disable) {
 		brcmf_dbg(INFO, "Features: 0x%02x, disable: 0x%02x\n",

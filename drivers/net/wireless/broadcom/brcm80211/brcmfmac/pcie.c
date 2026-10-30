@@ -9,12 +9,14 @@
 #include <linux/pci.h>
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
+#include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
 #include <linux/bcma/bcma.h>
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
 #include <linux/kthread.h>
 #include <linux/io.h>
+#include <linux/iopoll.h>
 #include <linux/random.h>
 #include <linux/unaligned.h>
 
@@ -123,6 +125,10 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 /* backplane addres space accessed by BAR0 */
 #define	BRCMF_PCIE_BAR0_WINDOW			0x80
 #define BRCMF_PCIE_BAR0_REG_SIZE		0x1000
+/* backplane address space accessed by BAR1 (PCI BAR 2, devinfo->tcm) */
+#define	BRCMF_PCIE_BAR1_WINDOW			0x84
+/* largest TCM block copy done under one tcm_lock hold */
+#define BRCMF_PCIE_TCM_COPY_CHUNK		4096
 #define	BRCMF_PCIE_BAR0_WRAPPERBASE		0x70
 
 #define BRCMF_PCIE_BAR0_WRAPBASE_DMP_OFFSET	0x1000
@@ -150,6 +156,23 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 #define BRCMF_PCIE_64_PCIE2REG_MAILBOXMASK	0xC34
 #define BRCMF_PCIE_64_PCIE2REG_H2D_MAILBOX_0	0xA20
 #define BRCMF_PCIE_64_PCIE2REG_H2D_MAILBOX_1	0xA24
+
+/* Save/restore power domain requests, in the PCIe core's own registers,
+ * reached through BAR0 + BRCMF_PCIE_BARO_PCIE_ENUM_OFFSET.
+ */
+#define BRCMF_PCIE_PCIE2REG_POWERCTL		0x1E8
+#define BRCMF_PCIE_64_PCIE2REG_DAR_POWERCTL	0xA0C
+#define BRCMF_PCIE_SRPWR_DMN0_PCIE		BIT(0)
+#define BRCMF_PCIE_SRPWR_DMN1_ARMBP		BIT(1)
+#define BRCMF_PCIE_SRPWR_DMN2_MACAUX		BIT(2)
+#define BRCMF_PCIE_SRPWR_DMN3_MACMAIN		BIT(3)
+#define BRCMF_PCIE_SRPWR_DMN_ALL		(BRCMF_PCIE_SRPWR_DMN0_PCIE | \
+						 BRCMF_PCIE_SRPWR_DMN1_ARMBP | \
+						 BRCMF_PCIE_SRPWR_DMN2_MACAUX | \
+						 BRCMF_PCIE_SRPWR_DMN3_MACMAIN)
+#define BRCMF_PCIE_SRPWR_REQON_SHIFT		8
+#define BRCMF_PCIE_SRPWR_STATUS_SHIFT		16
+#define BRCMF_PCIE_SRPWR_TIMEOUT_US		15000
 
 #define BRCMF_PCIE2_INTA			0x01
 #define BRCMF_PCIE2_INTB			0x02
@@ -221,7 +244,9 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 #define BRCMF_PCIE_SHARED_VERSION_MASK		0x00FF
 #define BRCMF_PCIE_SHARED_DMA_INDEX		0x10000
 #define BRCMF_PCIE_SHARED_DMA_2B_IDX		0x100000
+#define BRCMF_PCIE_SHARED_USE_MAILBOX		0x2000000
 #define BRCMF_PCIE_SHARED_HOSTRDY_DB1		0x10000000
+#define BRCMF_PCIE_SHARED_DAR			0x80000000
 
 #define BRCMF_PCIE_FLAGS_HTOD_SPLIT		0x4000
 #define BRCMF_PCIE_FLAGS_DTOH_SPLIT		0x8000
@@ -237,6 +262,12 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 #define BRCMF_SHARED_DMA_SCRATCH_ADDR_OFFSET	56
 #define BRCMF_SHARED_DMA_RINGUPD_LEN_OFFSET	64
 #define BRCMF_SHARED_DMA_RINGUPD_ADDR_OFFSET	68
+/* shared area revision >= 6: host capabilities, read by the firmware */
+#define BRCMF_SHARED_HOST_CAP_OFFSET		84
+
+#define BRCMF_HOSTCAP_H2D_ENABLE_HOSTRDY	0x00000400
+#define BRCMF_HOSTCAP_DS_NO_OOB_DW		0x00001000
+#define BRCMF_HOSTCAP_UR_FW_NO_TRAP		0x00800000
 
 #define BRCMF_RING_H2D_RING_COUNT_OFFSET	0
 #define BRCMF_RING_D2H_RING_COUNT_OFFSET	1
@@ -278,6 +309,8 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 #define BRCMF_PCIE_CFGREG_MSI_DATA		0x64
 #define BRCMF_PCIE_CFGREG_LINK_STATUS_CTRL	0xBC
 #define BRCMF_PCIE_CFGREG_LINK_STATUS_CTRL2	0xDC
+#define BRCMF_PCIE_CFGREG_SUBSYSTEM_CONTROL	0x88
+#define BRCMF_PCIE_SSCTRL_BAR_COHERENT		0x300
 #define BRCMF_PCIE_CFGREG_RBAR_CTRL		0x228
 #define BRCMF_PCIE_CFGREG_PML1_SUB_CTRL1	0x248
 #define BRCMF_PCIE_CFGREG_REG_BAR2_CONFIG	0x4E0
@@ -341,6 +374,14 @@ struct brcmf_pciedev_info {
 	const struct brcmf_pcie_reginfo *reginfo;
 	void __iomem *regs;
 	void __iomem *tcm;
+	struct delayed_work poll_work;
+	struct mutex rx_lock;		/* one D2H ring processor at a time */
+	unsigned int poll_left;
+	bool poll_enabled;
+	u32 tcm_size;
+	u32 tcm_win;
+	bool tcm_win_switch;
+	spinlock_t tcm_lock;
 	u32 ram_base;
 	u32 ram_size;
 	struct brcmf_chip *ci;
@@ -348,6 +389,12 @@ struct brcmf_pciedev_info {
 	struct brcmf_pcie_shared_info shared;
 	wait_queue_head_t mbdata_resp_wait;
 	bool mbdata_completed;
+	/* Mailbox data travels as control messages (shared version >= 6). */
+	bool mb_ctrlmsg;
+	/* A D3 ACK arrived as a control message; publish it after RX. */
+	bool d3_ack_pending;
+	/* How the last D3 ACK arrived, for the log. */
+	const char *d3_ack_via;
 	bool irq_allocated;
 	bool wowl_enabled;
 	u8 dma_idx_sz;
@@ -451,6 +498,25 @@ static const struct brcmf_pcie_reginfo brcmf_reginfo_default = {
 	.int_fn0 = BRCMF_PCIE_MB_INT_FN0,
 };
 
+/* Core rev >= 64 with the doorbells in the PCIe core's own registers, for
+ * firmware that does not offer the DAR doorbells (BRCMF_PCIE_SHARED_DAR).
+ *
+ * From core rev 64 the FN0 bits (0x100, 0x200) are also the D2H4 doorbells.
+ * Broadcom's driver still reads the shared-memory D2H mailbox when either is
+ * set (dhdpcie_bus_process_mailbox_intr()), and firmware may post mailbox
+ * data, the D3 ACK among it, that way even when it otherwise sends it as a
+ * control message.
+ */
+static const struct brcmf_pcie_reginfo brcmf_reginfo_64_nodar = {
+	.intmask = BRCMF_PCIE_64_PCIE2REG_INTMASK,
+	.mailboxint = BRCMF_PCIE_64_PCIE2REG_MAILBOXINT,
+	.mailboxmask = BRCMF_PCIE_64_PCIE2REG_MAILBOXMASK,
+	.h2d_mailbox_0 = BRCMF_PCIE_PCIE2REG_H2D_MAILBOX_0,
+	.h2d_mailbox_1 = BRCMF_PCIE_PCIE2REG_H2D_MAILBOX_1,
+	.int_d2h_db = BRCMF_PCIE_64_MB_INT_D2H_DB,
+	.int_fn0 = BRCMF_PCIE_MB_INT_FN0,
+};
+
 static const struct brcmf_pcie_reginfo brcmf_reginfo_64 = {
 	.intmask = BRCMF_PCIE_64_PCIE2REG_INTMASK,
 	.mailboxint = BRCMF_PCIE_64_PCIE2REG_MAILBOXINT,
@@ -458,7 +524,7 @@ static const struct brcmf_pcie_reginfo brcmf_reginfo_64 = {
 	.h2d_mailbox_0 = BRCMF_PCIE_64_PCIE2REG_H2D_MAILBOX_0,
 	.h2d_mailbox_1 = BRCMF_PCIE_64_PCIE2REG_H2D_MAILBOX_1,
 	.int_d2h_db = BRCMF_PCIE_64_MB_INT_D2H_DB,
-	.int_fn0 = 0,
+	.int_fn0 = BRCMF_PCIE_MB_INT_FN0,
 };
 
 static void brcmf_pcie_setup(struct device *dev, int ret,
@@ -496,21 +562,86 @@ brcmf_pcie_write_reg32(struct brcmf_pciedev_info *devinfo, u32 reg_offset,
 }
 
 
+/*
+ * devinfo->tcm maps tcm_size bytes of the chip's backplane, starting at the
+ * address in the BAR1 window register. The BCM4389 has 2.6 MiB of RAM at
+ * 0x200000, which crosses the 4 MiB BAR, so for chips whose RAM does not fit
+ * the BAR the window is moved to the tcm_size-aligned block that holds each
+ * access. Callers hold tcm_lock.
+ */
+static void __iomem *
+brcmf_pcie_tcm_addr(struct brcmf_pciedev_info *devinfo, u32 addr)
+{
+	u32 win;
+
+	lockdep_assert_held(&devinfo->tcm_lock);
+
+	if (!devinfo->tcm_win_switch)
+		return devinfo->tcm + addr;
+
+	win = addr & ~(devinfo->tcm_size - 1);
+	if (win != devinfo->tcm_win) {
+		pci_write_config_dword(devinfo->pdev, BRCMF_PCIE_BAR1_WINDOW,
+				       win);
+		devinfo->tcm_win = win;
+	}
+
+	return devinfo->tcm + (addr - win);
+}
+
+/* Bytes from addr up to the end of its window, at most chunk. */
+static u32
+brcmf_pcie_tcm_chunk(struct brcmf_pciedev_info *devinfo, u32 addr, u32 len)
+{
+	u32 chunk = min_t(u32, len, BRCMF_PCIE_TCM_COPY_CHUNK);
+
+	if (devinfo->tcm_win_switch)
+		chunk = min_t(u32, chunk,
+			      devinfo->tcm_size - (addr & (devinfo->tcm_size - 1)));
+
+	return chunk;
+}
+
+/* Point the BAR1 window back at backplane address 0, as after a reset. */
+static void brcmf_pcie_tcm_win_reset(struct brcmf_pciedev_info *devinfo)
+{
+	unsigned long flags;
+
+	if (!devinfo->tcm_win_switch)
+		return;
+
+	spin_lock_irqsave(&devinfo->tcm_lock, flags);
+	pci_write_config_dword(devinfo->pdev, BRCMF_PCIE_BAR1_WINDOW, 0);
+	devinfo->tcm_win = 0;
+	spin_unlock_irqrestore(&devinfo->tcm_lock, flags);
+}
+
+
 static u8
 brcmf_pcie_read_tcm8(struct brcmf_pciedev_info *devinfo, u32 mem_offset)
 {
-	void __iomem *address = devinfo->tcm + mem_offset;
+	unsigned long flags;
+	u8 val;
 
-	return (ioread8(address));
+	spin_lock_irqsave(&devinfo->tcm_lock, flags);
+	val = ioread8(brcmf_pcie_tcm_addr(devinfo, mem_offset));
+	spin_unlock_irqrestore(&devinfo->tcm_lock, flags);
+
+	return val;
 }
 
 
 static u16
 brcmf_pcie_read_tcm16(struct brcmf_pciedev_info *devinfo, u32 mem_offset)
 {
-	void __iomem *address = devinfo->tcm + mem_offset;
+	unsigned long flags;
+	u16 val;
 
-	return (ioread16(address));
+	spin_lock_irqsave(&devinfo->tcm_lock, flags);
+	val = ioread16(brcmf_pcie_tcm_addr(devinfo, mem_offset));
+	spin_unlock_irqrestore(&devinfo->tcm_lock, flags);
+
+	return val;
 }
 
 
@@ -518,9 +649,11 @@ static void
 brcmf_pcie_write_tcm16(struct brcmf_pciedev_info *devinfo, u32 mem_offset,
 		       u16 value)
 {
-	void __iomem *address = devinfo->tcm + mem_offset;
+	unsigned long flags;
 
-	iowrite16(value, address);
+	spin_lock_irqsave(&devinfo->tcm_lock, flags);
+	iowrite16(value, brcmf_pcie_tcm_addr(devinfo, mem_offset));
+	spin_unlock_irqrestore(&devinfo->tcm_lock, flags);
 }
 
 
@@ -546,9 +679,14 @@ brcmf_pcie_write_idx(struct brcmf_pciedev_info *devinfo, u32 mem_offset,
 static u32
 brcmf_pcie_read_tcm32(struct brcmf_pciedev_info *devinfo, u32 mem_offset)
 {
-	void __iomem *address = devinfo->tcm + mem_offset;
+	unsigned long flags;
+	u32 val;
 
-	return (ioread32(address));
+	spin_lock_irqsave(&devinfo->tcm_lock, flags);
+	val = ioread32(brcmf_pcie_tcm_addr(devinfo, mem_offset));
+	spin_unlock_irqrestore(&devinfo->tcm_lock, flags);
+
+	return val;
 }
 
 
@@ -556,18 +694,19 @@ static void
 brcmf_pcie_write_tcm32(struct brcmf_pciedev_info *devinfo, u32 mem_offset,
 		       u32 value)
 {
-	void __iomem *address = devinfo->tcm + mem_offset;
+	unsigned long flags;
 
-	iowrite32(value, address);
+	spin_lock_irqsave(&devinfo->tcm_lock, flags);
+	iowrite32(value, brcmf_pcie_tcm_addr(devinfo, mem_offset));
+	spin_unlock_irqrestore(&devinfo->tcm_lock, flags);
 }
 
 
 static u32
 brcmf_pcie_read_ram32(struct brcmf_pciedev_info *devinfo, u32 mem_offset)
 {
-	void __iomem *addr = devinfo->tcm + devinfo->ci->rambase + mem_offset;
-
-	return (ioread32(addr));
+	return brcmf_pcie_read_tcm32(devinfo,
+				     devinfo->ci->rambase + mem_offset);
 }
 
 
@@ -575,17 +714,34 @@ static void
 brcmf_pcie_write_ram32(struct brcmf_pciedev_info *devinfo, u32 mem_offset,
 		       u32 value)
 {
-	void __iomem *addr = devinfo->tcm + devinfo->ci->rambase + mem_offset;
-
-	iowrite32(value, addr);
+	brcmf_pcie_write_tcm32(devinfo, devinfo->ci->rambase + mem_offset,
+			       value);
 }
 
 
 static void
-brcmf_pcie_copy_dev_tomem(struct brcmf_pciedev_info *devinfo, u32 mem_offset,
-			  void *dstaddr, u32 len)
+brcmf_pcie_copy_mem_todev(struct brcmf_pciedev_info *devinfo, u32 mem_offset,
+			  const void *srcaddr, u32 len)
 {
-	void __iomem *address = devinfo->tcm + mem_offset;
+	unsigned long flags;
+	u32 chunk;
+
+	while (len) {
+		chunk = brcmf_pcie_tcm_chunk(devinfo, mem_offset, len);
+		spin_lock_irqsave(&devinfo->tcm_lock, flags);
+		memcpy_toio(brcmf_pcie_tcm_addr(devinfo, mem_offset), srcaddr,
+			    chunk);
+		spin_unlock_irqrestore(&devinfo->tcm_lock, flags);
+		mem_offset += chunk;
+		srcaddr += chunk;
+		len -= chunk;
+	}
+}
+
+
+static void
+brcmf_pcie_copy_tcm_chunk(void __iomem *address, void *dstaddr, u32 len)
+{
 	__le32 *dst32;
 	__le16 *dst16;
 	u8 *dst8;
@@ -618,6 +774,27 @@ brcmf_pcie_copy_dev_tomem(struct brcmf_pciedev_info *devinfo, u32 mem_offset,
 			dst32++;
 			len--;
 		}
+	}
+}
+
+
+static void
+brcmf_pcie_copy_dev_tomem(struct brcmf_pciedev_info *devinfo, u32 mem_offset,
+			  void *dstaddr, u32 len)
+{
+	unsigned long flags;
+	u32 chunk;
+
+	while (len) {
+		chunk = brcmf_pcie_tcm_chunk(devinfo, mem_offset, len);
+		spin_lock_irqsave(&devinfo->tcm_lock, flags);
+		brcmf_pcie_copy_tcm_chunk(brcmf_pcie_tcm_addr(devinfo,
+							      mem_offset),
+					  dstaddr, chunk);
+		spin_unlock_irqrestore(&devinfo->tcm_lock, flags);
+		mem_offset += chunk;
+		dstaddr += chunk;
+		len -= chunk;
 	}
 }
 
@@ -655,6 +832,113 @@ brcmf_pcie_select_core(struct brcmf_pciedev_info *devinfo, u16 coreid)
 }
 
 
+/*
+ * Chips with several backplane power domains (the BCM4389 here) power the
+ * ARM/backplane and MAC domains down unless the host asks for them, and
+ * a chip reset drops the host's requests. Backplane accesses to a domain
+ * that is off fault, and read back as 0xffffffff.
+ */
+static bool brcmf_pcie_has_srpwr(struct brcmf_pciedev_info *devinfo)
+{
+	return devinfo->pdev->device == BRCM_PCIE_4389_DEVICE_ID;
+}
+
+static void brcmf_pcie_srpwr_request(struct brcmf_pciedev_info *devinfo)
+{
+	u32 reg = BRCMF_PCIE_BARO_PCIE_ENUM_OFFSET +
+		  BRCMF_PCIE_PCIE2REG_POWERCTL;
+	u32 req = BRCMF_PCIE_SRPWR_DMN_ALL << BRCMF_PCIE_SRPWR_REQON_SHIFT;
+	u32 up = BRCMF_PCIE_SRPWR_DMN_ALL << BRCMF_PCIE_SRPWR_STATUS_SHIFT;
+	u32 dar = BRCMF_PCIE_BARO_PCIE_ENUM_OFFSET +
+		  BRCMF_PCIE_64_PCIE2REG_DAR_POWERCTL;
+	u32 val;
+
+	if (!brcmf_pcie_has_srpwr(devinfo))
+		return;
+
+	val = brcmf_pcie_read_reg32(devinfo, reg);
+	if (val == 0xffffffff) {
+		pci_err(devinfo->pdev, "power control reads 0xffffffff\n");
+		return;
+	}
+	if ((val & req) != req)
+		brcmf_pcie_write_reg32(devinfo, reg, val | req);
+
+	if (readl_poll_timeout(devinfo->regs + reg, val, (val & up) == up, 10,
+			       BRCMF_PCIE_SRPWR_TIMEOUT_US))
+		pci_warn(devinfo->pdev, "power domains not up, powerctl 0x%08x\n",
+			 val);
+	else
+		brcmf_dbg(PCIE, "power domains up, powerctl 0x%08x\n", val);
+
+	/* The ARM also needs the ARM/backplane domain requested through the
+	 * DAR copy of the register, or it fails to boot from cold.
+	 */
+	val = brcmf_pcie_read_reg32(devinfo, dar);
+	req = BRCMF_PCIE_SRPWR_DMN1_ARMBP << BRCMF_PCIE_SRPWR_REQON_SHIFT;
+	if ((val & req) != req)
+		brcmf_pcie_write_reg32(devinfo, dar, val | req);
+}
+
+/* The ARM CA7 needs host accesses through the BARs to be coherent. */
+static void brcmf_pcie_set_bar_coherent(struct brcmf_pciedev_info *devinfo)
+{
+	u32 val;
+
+	if (!brcmf_pcie_has_srpwr(devinfo))
+		return;
+
+	pci_read_config_dword(devinfo->pdev,
+			      BRCMF_PCIE_CFGREG_SUBSYSTEM_CONTROL, &val);
+	if ((val & BRCMF_PCIE_SSCTRL_BAR_COHERENT) !=
+	    BRCMF_PCIE_SSCTRL_BAR_COHERENT)
+		pci_write_config_dword(devinfo->pdev,
+				       BRCMF_PCIE_CFGREG_SUBSYSTEM_CONTROL,
+				       val | BRCMF_PCIE_SSCTRL_BAR_COHERENT);
+}
+
+/*
+ * Function level reset as Broadcom's driver does it for the BCM4389
+ * (bcmdhd dhd_pcie.c dhd_bus_perform_flr()): set Initiate FLR, wait 70 ms,
+ * clear it again, then wait for the subsystem reset status (config 0x88
+ * bit 13) to clear, and restore the config space.
+ */
+#define BRCMF_PCIE_SSCTRL_SSRESET_STATUS	BIT(13)
+
+static int brcmf_pcie_flr(struct brcmf_pciedev_info *devinfo)
+{
+	struct pci_dev *pdev = devinfo->pdev;
+	u32 cap, val;
+	int i;
+
+	pcie_capability_read_dword(pdev, PCI_EXP_DEVCAP, &cap);
+	if (!(cap & PCI_EXP_DEVCAP_FLR))
+		return -EOPNOTSUPP;
+
+	pci_save_state(pdev);
+	pcie_capability_set_word(pdev, PCI_EXP_DEVCTL, PCI_EXP_DEVCTL_BCR_FLR);
+	msleep(70);
+	pcie_capability_clear_word(pdev, PCI_EXP_DEVCTL,
+				   PCI_EXP_DEVCTL_BCR_FLR);
+
+	for (i = 0; i < 200; i++) {
+		pci_read_config_dword(pdev, BRCMF_PCIE_CFGREG_SUBSYSTEM_CONTROL,
+				      &val);
+		if (!(val & BRCMF_PCIE_SSCTRL_SSRESET_STATUS))
+			break;
+		udelay(40);
+	}
+	pci_restore_state(pdev);
+
+	if (val & BRCMF_PCIE_SSCTRL_SSRESET_STATUS) {
+		pci_err(pdev, "FLR did not complete, config 0x88 = 0x%08x\n",
+			val);
+		return -ETIMEDOUT;
+	}
+	brcmf_dbg(PCIE, "FLR done\n");
+	return 0;
+}
+
 static void brcmf_pcie_reset_device(struct brcmf_pciedev_info *devinfo)
 {
 	struct brcmf_core *core;
@@ -686,15 +970,27 @@ static void brcmf_pcie_reset_device(struct brcmf_pciedev_info *devinfo)
 	pci_write_config_dword(devinfo->pdev, BRCMF_PCIE_REG_LINK_STATUS_CTRL,
 			       val);
 
-	/* Watchdog reset */
-	brcmf_pcie_select_core(devinfo, BCMA_CORE_CHIPCOMMON);
-	WRITECC32(devinfo, watchdog, 4);
-	msleep(100);
+	/* Watchdog reset, with all power domains up as it starts. The
+	 * BCM4389 is reset the way Broadcom's driver resets it, with an
+	 * FLR: after a chipcommon watchdog reset its ARM does not boot a
+	 * second firmware download.
+	 */
+	brcmf_pcie_srpwr_request(devinfo);
+	if (devinfo->pdev->device != BRCM_PCIE_4389_DEVICE_ID ||
+	    brcmf_pcie_flr(devinfo)) {
+		brcmf_pcie_select_core(devinfo, BCMA_CORE_CHIPCOMMON);
+		WRITECC32(devinfo, watchdog, 4);
+		msleep(100);
+	}
 
 	/* Restore ASPM */
 	brcmf_pcie_select_core(devinfo, BCMA_CORE_PCIE2);
 	pci_write_config_dword(devinfo->pdev, BRCMF_PCIE_REG_LINK_STATUS_CTRL,
 			       lsc);
+
+	/* The reset dropped the power domain requests */
+	brcmf_pcie_srpwr_request(devinfo);
+	brcmf_pcie_set_bar_coherent(devinfo);
 
 	core = brcmf_chip_get_core(devinfo->ci, BCMA_CORE_PCIE2);
 	if (core->rev <= 13) {
@@ -711,6 +1007,8 @@ static void brcmf_pcie_reset_device(struct brcmf_pciedev_info *devinfo)
 					       val);
 		}
 	}
+
+	brcmf_pcie_tcm_win_reset(devinfo);
 }
 
 
@@ -730,6 +1028,8 @@ static void brcmf_pcie_attach(struct brcmf_pciedev_info *devinfo)
 
 static int brcmf_pcie_enter_download_state(struct brcmf_pciedev_info *devinfo)
 {
+	brcmf_pcie_tcm_win_reset(devinfo);
+
 	if (devinfo->ci->chip == BRCM_CC_43602_CHIP_ID) {
 		brcmf_pcie_select_core(devinfo, BCMA_CORE_ARM_CR4);
 		brcmf_pcie_write_reg32(devinfo, BRCMF_PCIE_ARMCR4REG_BANKIDX,
@@ -770,6 +1070,14 @@ brcmf_pcie_send_mb_data(struct brcmf_pciedev_info *devinfo, u32 htod_mb_data)
 	u32 cur_htod_mb_data;
 	u32 i;
 
+	if (devinfo->mb_ctrlmsg) {
+		if (devinfo->state != BRCMFMAC_PCIE_STATE_UP)
+			return -EIO;
+		/* Rings the doorbell through the control ring's callbacks. */
+		return brcmf_proto_msgbuf_h2d_mb_data(&devinfo->pdev->dev,
+						      htod_mb_data);
+	}
+
 	shared = &devinfo->shared;
 	addr = shared->htod_mb_data_addr;
 	cur_htod_mb_data = brcmf_pcie_read_tcm32(devinfo, addr);
@@ -799,21 +1107,9 @@ brcmf_pcie_send_mb_data(struct brcmf_pciedev_info *devinfo, u32 htod_mb_data)
 }
 
 
-static void brcmf_pcie_handle_mb_data(struct brcmf_pciedev_info *devinfo)
+static void brcmf_pcie_process_mb_data(struct brcmf_pciedev_info *devinfo,
+				       u32 dtoh_mb_data, bool in_ring)
 {
-	struct brcmf_pcie_shared_info *shared;
-	u32 addr;
-	u32 dtoh_mb_data;
-
-	shared = &devinfo->shared;
-	addr = shared->dtoh_mb_data_addr;
-	dtoh_mb_data = brcmf_pcie_read_tcm32(devinfo, addr);
-
-	if (!dtoh_mb_data)
-		return;
-
-	brcmf_pcie_write_tcm32(devinfo, addr, 0);
-
 	brcmf_dbg(PCIE, "D2H_MB_DATA: 0x%04x\n", dtoh_mb_data);
 	if (dtoh_mb_data & BRCMF_D2H_DEV_DS_ENTER_REQ)  {
 		brcmf_dbg(PCIE, "D2H_MB_DATA: DEEP SLEEP REQ\n");
@@ -824,13 +1120,55 @@ static void brcmf_pcie_handle_mb_data(struct brcmf_pciedev_info *devinfo)
 		brcmf_dbg(PCIE, "D2H_MB_DATA: DEEP SLEEP EXIT\n");
 	if (dtoh_mb_data & BRCMF_D2H_DEV_D3_ACK) {
 		brcmf_dbg(PCIE, "D2H_MB_DATA: D3 ACK\n");
-		devinfo->mbdata_completed = true;
-		wake_up(&devinfo->mbdata_resp_wait);
+		devinfo->d3_ack_via = in_ring ? "control message" :
+				      "shared-memory mailbox";
+		if (in_ring) {
+			/*
+			 * The message is still being processed: its ring read
+			 * pointer isn't written back yet, and once the waiter
+			 * sets STATE_DOWN that write is refused. Publish the
+			 * ACK once RX processing is done (under rx_lock).
+			 */
+			devinfo->d3_ack_pending = true;
+		} else {
+			WRITE_ONCE(devinfo->mbdata_completed, true);
+			wake_up(&devinfo->mbdata_resp_wait);
+		}
 	}
 	if (dtoh_mb_data & BRCMF_D2H_DEV_FWHALT) {
 		brcmf_dbg(PCIE, "D2H_MB_DATA: FW HALT\n");
 		brcmf_fw_crashed(&devinfo->pdev->dev);
 	}
+}
+
+
+/* The shared-memory D2H mailbox; the interrupt thread and the D3 wait poll it. */
+static void brcmf_pcie_handle_mb_data(struct brcmf_pciedev_info *devinfo)
+{
+	struct brcmf_pcie_shared_info *shared;
+	u32 addr;
+	u32 dtoh_mb_data;
+
+	shared = &devinfo->shared;
+	addr = shared->dtoh_mb_data_addr;
+	if (!addr)
+		return;
+
+	mutex_lock(&devinfo->rx_lock);
+	dtoh_mb_data = brcmf_pcie_read_tcm32(devinfo, addr);
+	if (dtoh_mb_data) {
+		brcmf_pcie_write_tcm32(devinfo, addr, 0);
+		brcmf_pcie_process_mb_data(devinfo, dtoh_mb_data, false);
+	}
+	mutex_unlock(&devinfo->rx_lock);
+}
+
+
+static void brcmf_pcie_d2h_mb_data(struct device *dev, u32 data)
+{
+	struct brcmf_bus *bus_if = dev_get_drvdata(dev);
+
+	brcmf_pcie_process_mb_data(bus_if->bus_priv.pcie->devinfo, data, true);
 }
 
 
@@ -922,9 +1260,16 @@ static void brcmf_pcie_intr_enable(struct brcmf_pciedev_info *devinfo)
 
 static void brcmf_pcie_hostready(struct brcmf_pciedev_info *devinfo)
 {
-	if (devinfo->shared.flags & BRCMF_PCIE_SHARED_HOSTRDY_DB1)
+	if (devinfo->shared.flags & BRCMF_PCIE_SHARED_HOSTRDY_DB1) {
+		brcmf_dbg(PCIE, "host ready on 0x%x\n",
+			  devinfo->reginfo->h2d_mailbox_1);
+		/* bcmdhd dhd_bus_hostready() writes this value */
 		brcmf_pcie_write_reg32(devinfo,
-				       devinfo->reginfo->h2d_mailbox_1, 1);
+				       devinfo->reginfo->h2d_mailbox_1,
+				       devinfo->pdev->device ==
+				       BRCM_PCIE_4389_DEVICE_ID ?
+				       0x12345678 : 1);
+	}
 }
 
 static irqreturn_t brcmf_pcie_quick_check_isr(int irq, void *arg)
@@ -940,6 +1285,73 @@ static irqreturn_t brcmf_pcie_quick_check_isr(int irq, void *arg)
 }
 
 
+/* Process the D2H rings; the interrupt thread and the poll both get here. */
+static void brcmf_pcie_rx_process(struct brcmf_pciedev_info *devinfo)
+{
+	struct brcmf_bus *bus = dev_get_drvdata(&devinfo->pdev->dev);
+
+	mutex_lock(&devinfo->rx_lock);
+	if (devinfo->state == BRCMFMAC_PCIE_STATE_UP && bus && bus->drvr &&
+	    bus->drvr->proto)
+		brcmf_proto_msgbuf_rx_trigger(&devinfo->pdev->dev);
+	/*
+	 * The rings' read pointers are written back now, so a D3 ACK that
+	 * came as a control message can be published.
+	 */
+	if (devinfo->d3_ack_pending) {
+		devinfo->d3_ack_pending = false;
+		WRITE_ONCE(devinfo->mbdata_completed, true);
+		wake_up(&devinfo->mbdata_resp_wait);
+	}
+	mutex_unlock(&devinfo->rx_lock);
+}
+
+/*
+ * BCM4389 on INTx: completions were seen to go unprocessed until a later
+ * interrupt (ioctl timeouts, a control ring that looks stuck). Broadcom's
+ * driver re-runs its interrupt work after INTx with DMA'd indices
+ * (dhd_bus_handle_intx_ahead_dma_indices()). Do the same, more often: after
+ * each interrupt and each doorbell, look at the D2H rings every 10 ms for
+ * the next 500 ms.
+ */
+#define BRCMF_PCIE_POLL_MS	10
+#define BRCMF_PCIE_POLL_COUNT	50
+
+static void brcmf_pcie_kick_poll(struct brcmf_pciedev_info *devinfo)
+{
+	if (!devinfo->poll_enabled ||
+	    devinfo->state != BRCMFMAC_PCIE_STATE_UP)
+		return;
+	WRITE_ONCE(devinfo->poll_left, BRCMF_PCIE_POLL_COUNT);
+	mod_delayed_work(system_wq, &devinfo->poll_work,
+			 msecs_to_jiffies(BRCMF_PCIE_POLL_MS));
+}
+
+static void brcmf_pcie_poll_worker(struct work_struct *work)
+{
+	struct brcmf_pciedev_info *devinfo =
+		container_of(to_delayed_work(work), struct brcmf_pciedev_info,
+			     poll_work);
+	u32 status;
+	unsigned int left;
+
+	if (devinfo->state != BRCMFMAC_PCIE_STATE_UP)
+		return;
+
+	status = brcmf_pcie_read_reg32(devinfo, devinfo->reginfo->mailboxint);
+	if (status & devinfo->reginfo->int_d2h_db)
+		brcmf_dbg(PCIE, "poll: mailboxint 0x%08x pending without an interrupt\n",
+			  status);
+	brcmf_pcie_rx_process(devinfo);
+
+	left = READ_ONCE(devinfo->poll_left);
+	if (left) {
+		WRITE_ONCE(devinfo->poll_left, left - 1);
+		queue_delayed_work(system_wq, &devinfo->poll_work,
+				   msecs_to_jiffies(BRCMF_PCIE_POLL_MS));
+	}
+}
+
 static irqreturn_t brcmf_pcie_isr_thread(int irq, void *arg)
 {
 	struct brcmf_pciedev_info *devinfo = (struct brcmf_pciedev_info *)arg;
@@ -954,14 +1366,24 @@ static irqreturn_t brcmf_pcie_isr_thread(int irq, void *arg)
 		if (status & devinfo->reginfo->int_fn0)
 			brcmf_pcie_handle_mb_data(devinfo);
 		if (status & devinfo->reginfo->int_d2h_db) {
-			if (devinfo->state == BRCMFMAC_PCIE_STATE_UP)
-				brcmf_proto_msgbuf_rx_trigger(
-							&devinfo->pdev->dev);
+			brcmf_pcie_rx_process(devinfo);
+			/* With INTx and DMA'd indices the interrupt can
+			 * overtake the index update it announces; Broadcom's
+			 * driver looks again later
+			 * (dhd_bus_handle_intx_ahead_dma_indices()).
+			 */
+			if (devinfo->dma_idx_sz &&
+			    devinfo->pdev->device == BRCM_PCIE_4389_DEVICE_ID &&
+			    devinfo->state == BRCMFMAC_PCIE_STATE_UP) {
+				usleep_range(500, 1000);
+				brcmf_pcie_rx_process(devinfo);
+			}
 		}
 	}
 	brcmf_pcie_bus_console_read(devinfo, false);
 	if (devinfo->state == BRCMFMAC_PCIE_STATE_UP)
 		brcmf_pcie_intr_enable(devinfo);
+	brcmf_pcie_kick_poll(devinfo);
 	devinfo->in_irq = false;
 	return IRQ_HANDLED;
 }
@@ -1066,6 +1488,7 @@ static int brcmf_pcie_ring_mb_ring_bell(void *ctx)
 	brcmf_dbg(PCIE, "RING !\n");
 	/* Any arbitrary value will do, lets use 1 */
 	brcmf_pcie_write_reg32(devinfo, devinfo->reginfo->h2d_mailbox_0, 1);
+	brcmf_pcie_kick_poll(devinfo);
 
 	return 0;
 }
@@ -1236,8 +1659,8 @@ static int brcmf_pcie_init_ringbuffers(struct brcmf_pciedev_info *devinfo)
 	u16 max_submissionrings;
 	u16 max_completionrings;
 
-	memcpy_fromio(&ringinfo, devinfo->tcm + devinfo->shared.ring_info_addr,
-		      sizeof(ringinfo));
+	brcmf_pcie_copy_dev_tomem(devinfo, devinfo->shared.ring_info_addr,
+				  &ringinfo, sizeof(ringinfo));
 	if (devinfo->shared.version >= 6) {
 		max_submissionrings = le16_to_cpu(ringinfo.max_submissionrings);
 		max_flowrings = le16_to_cpu(ringinfo.max_flowrings);
@@ -1259,8 +1682,10 @@ static int brcmf_pcie_init_ringbuffers(struct brcmf_pciedev_info *devinfo)
 		devinfo->idxbuf = dma_alloc_coherent(&devinfo->pdev->dev, bufsz,
 						     &devinfo->idxbuf_dmahandle,
 						     GFP_KERNEL);
-		if (!devinfo->idxbuf)
+		if (!devinfo->idxbuf) {
+			brcmf_err(bus, "no DMA memory for ring indices, using TCM\n");
 			devinfo->dma_idx_sz = 0;
+		}
 	}
 
 	if (devinfo->dma_idx_sz == 0) {
@@ -1310,8 +1735,9 @@ static int brcmf_pcie_init_ringbuffers(struct brcmf_pciedev_info *devinfo)
 		ringinfo.d2h_r_idx_hostaddr.high_addr =
 			cpu_to_le32(address >> 32);
 
-		memcpy_toio(devinfo->tcm + devinfo->shared.ring_info_addr,
-			    &ringinfo, sizeof(ringinfo));
+		brcmf_pcie_copy_mem_todev(devinfo,
+					  devinfo->shared.ring_info_addr,
+					  &ringinfo, sizeof(ringinfo));
 		brcmf_dbg(PCIE, "Using host memory indices\n");
 	}
 
@@ -1401,6 +1827,29 @@ brcmf_pcie_release_scratchbuffers(struct brcmf_pciedev_info *devinfo)
 	}
 }
 
+/*
+ * Tell the firmware what the host does, as Broadcom's driver does for shared
+ * area revision 6 and later (bcmdhd dhd_msgbuf.c dhd_set_host_cap()): the
+ * IPC revision in use, that a host-ready doorbell will come, that there is
+ * no device-wake (no deep sleep), and not to trap on an unsupported
+ * request.
+ */
+static void brcmf_pcie_set_host_cap(struct brcmf_pciedev_info *devinfo)
+{
+	u32 cap = devinfo->shared.version;
+
+	if (devinfo->shared.version < 6)
+		return;
+
+	if (devinfo->shared.flags & BRCMF_PCIE_SHARED_HOSTRDY_DB1)
+		cap |= BRCMF_HOSTCAP_H2D_ENABLE_HOSTRDY;
+	cap |= BRCMF_HOSTCAP_DS_NO_OOB_DW | BRCMF_HOSTCAP_UR_FW_NO_TRAP;
+
+	brcmf_pcie_write_tcm32(devinfo, devinfo->shared.tcm_base_address +
+			       BRCMF_SHARED_HOST_CAP_OFFSET, cap);
+	brcmf_dbg(PCIE, "host capabilities 0x%08x\n", cap);
+}
+
 static int brcmf_pcie_init_scratchbuffers(struct brcmf_pciedev_info *devinfo)
 {
 	struct brcmf_bus *bus = dev_get_drvdata(&devinfo->pdev->dev);
@@ -1423,6 +1872,11 @@ static int brcmf_pcie_init_scratchbuffers(struct brcmf_pciedev_info *devinfo)
 	addr = devinfo->shared.tcm_base_address +
 	       BRCMF_SHARED_DMA_SCRATCH_LEN_OFFSET;
 	brcmf_pcie_write_tcm32(devinfo, addr, BRCMF_DMA_D2H_SCRATCH_BUF_LEN);
+
+	if (devinfo->pdev->device == BRCM_PCIE_4389_DEVICE_ID) {
+		brcmf_pcie_set_host_cap(devinfo);
+		return 0;
+	}
 
 	devinfo->shared.ringupd =
 		dma_alloc_coherent(&devinfo->pdev->dev,
@@ -1466,7 +1920,12 @@ static int brcmf_pcie_preinit(struct device *dev)
 	brcmf_dbg(PCIE, "Enter\n");
 
 	brcmf_pcie_intr_enable(buspub->devinfo);
-	brcmf_pcie_hostready(buspub->devinfo);
+	/* The BCM4389 was told host ready right after its rings were set
+	 * up; its firmware traps on a second one (_hnd_die from
+	 * pciedev_handle_hostready_intr), so ring it only once.
+	 */
+	if (buspub->devinfo->pdev->device != BRCM_PCIE_4389_DEVICE_ID)
+		brcmf_pcie_hostready(buspub->devinfo);
 
 	return 0;
 }
@@ -1557,7 +2016,19 @@ static int brcmf_pcie_reset(struct device *dev)
 	struct brcmf_fw_request *fwreq;
 	int err;
 
+	/*
+	 * Stop everything that processes the rings before brcmf_detach()
+	 * frees the protocol layer: the interrupt thread, the D2H poll and
+	 * the console timer. As in brcmf_pcie_remove(); STATE_DOWN keeps the
+	 * interrupt thread and the poll from re-arming. brcmf_pcie_setup()
+	 * sets it UP again.
+	 */
+	devinfo->state = BRCMFMAC_PCIE_STATE_DOWN;
+	brcmf_pcie_fwcon_timer(devinfo, false);
 	brcmf_pcie_intr_disable(devinfo);
+	if (devinfo->irq_allocated)
+		synchronize_irq(devinfo->pdev->irq);
+	cancel_delayed_work_sync(&devinfo->poll_work);
 
 	brcmf_pcie_bus_console_read(devinfo, true);
 
@@ -1595,6 +2066,7 @@ static const struct brcmf_bus_ops brcmf_pcie_bus_ops = {
 	.get_blob = brcmf_pcie_get_blob,
 	.reset = brcmf_pcie_reset,
 	.debugfs_create = brcmf_pcie_debugfs_create,
+	.d2h_mb_data = brcmf_pcie_d2h_mb_data,
 };
 
 
@@ -1633,6 +2105,31 @@ brcmf_pcie_init_share_ram_info(struct brcmf_pciedev_info *devinfo,
 
 	shared->flags = brcmf_pcie_read_tcm32(devinfo, sharedram_addr);
 	shared->version = (u8)(shared->flags & BRCMF_PCIE_SHARED_VERSION_MASK);
+	brcmf_dbg(PCIE, "shared flags 0x%08x\n", shared->flags);
+
+	/*
+	 * From shared version 6 Broadcom's driver exchanges mailbox data
+	 * (D3 inform and ack, deep sleep) as control messages, unless the
+	 * firmware asks for the shared-memory mailbox. The BCM4389 firmware
+	 * doesn't, and ignores the TCM mailbox.
+	 */
+	devinfo->mb_ctrlmsg = shared->version >= 6 &&
+			      !(shared->flags & BRCMF_PCIE_SHARED_USE_MAILBOX);
+	brcmf_dbg(PCIE, "mailbox data as %s\n",
+		  devinfo->mb_ctrlmsg ? "control messages" : "TCM mailbox");
+
+	/* Broadcom's driver rings the DAR doorbells only when the firmware
+	 * offers them, and the core's own H2D mailbox registers otherwise.
+	 * The BCM4389 firmware does not, and ignores the DAR doorbells.
+	 */
+	if (devinfo->reginfo == &brcmf_reginfo_64 &&
+	    devinfo->pdev->device == BRCM_PCIE_4389_DEVICE_ID &&
+	    !(shared->flags & BRCMF_PCIE_SHARED_DAR)) {
+		devinfo->reginfo = &brcmf_reginfo_64_nodar;
+		brcmf_dbg(PCIE, "no DAR: doorbells at 0x%x/0x%x\n",
+			  devinfo->reginfo->h2d_mailbox_0,
+			  devinfo->reginfo->h2d_mailbox_1);
+	}
 	brcmf_dbg(PCIE, "PCIe protocol version %d\n", shared->version);
 	if ((shared->version > BRCMF_PCIE_MAX_SHARED_VERSION) ||
 	    (shared->version < BRCMF_PCIE_MIN_SHARED_VERSION)) {
@@ -1689,7 +2186,8 @@ brcmf_pcie_provide_random_bytes(struct brcmf_pciedev_info *devinfo, u32 address)
 	u8 randbuf[BRCMF_RANDOM_SEED_LENGTH];
 
 	get_random_bytes(randbuf, BRCMF_RANDOM_SEED_LENGTH);
-	memcpy_toio(devinfo->tcm + address, randbuf, BRCMF_RANDOM_SEED_LENGTH);
+	brcmf_pcie_copy_mem_todev(devinfo, address, randbuf,
+				  BRCMF_RANDOM_SEED_LENGTH);
 }
 
 static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
@@ -1710,8 +2208,8 @@ static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
 		return err;
 
 	brcmf_dbg(PCIE, "Download FW %s\n", devinfo->fw_name);
-	memcpy_toio(devinfo->tcm + devinfo->ci->rambase,
-		    (void *)fw->data, fw->size);
+	brcmf_pcie_copy_mem_todev(devinfo, devinfo->ci->rambase, fw->data,
+				  fw->size);
 
 	resetintr = get_unaligned_le32(fw->data);
 	release_firmware(fw);
@@ -1725,7 +2223,7 @@ static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
 		brcmf_dbg(PCIE, "Download NVRAM %s\n", devinfo->nvram_name);
 		address = devinfo->ci->rambase + devinfo->ci->ramsize -
 			  nvram_len;
-		memcpy_toio(devinfo->tcm + address, nvram, nvram_len);
+		brcmf_pcie_copy_mem_todev(devinfo, address, nvram, nvram_len);
 		brcmf_fw_nvram_free(nvram);
 
 		if (devinfo->fwseed) {
@@ -1741,8 +2239,8 @@ static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
 			brcmf_dbg(PCIE, "Download random seed\n");
 
 			address -= sizeof(footer);
-			memcpy_toio(devinfo->tcm + address, &footer,
-				    sizeof(footer));
+			brcmf_pcie_copy_mem_todev(devinfo, address, &footer,
+						  sizeof(footer));
 
 			address -= rand_len;
 			brcmf_pcie_provide_random_bytes(devinfo, address);
@@ -1802,6 +2300,20 @@ static int brcmf_pcie_get_resource(struct brcmf_pciedev_info *devinfo)
 
 	pci_set_master(pdev);
 
+	/* The dongle takes 64-bit host addresses in every ring and buffer
+	 * descriptor. Without this the PCI default 32-bit mask applies, and
+	 * every allocation from a restricted DMA pool placed above 4 GiB
+	 * fails.
+	 */
+	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+	if (err) {
+		err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
+		if (err) {
+			brcmf_err(bus, "no usable DMA mask: %d\n", err);
+			return err;
+		}
+	}
+
 	/* Bar-0 mapped address */
 	bar0_addr = pci_resource_start(pdev, 0);
 	/* Bar-1 mapped address */
@@ -1816,6 +2328,7 @@ static int brcmf_pcie_get_resource(struct brcmf_pciedev_info *devinfo)
 
 	devinfo->regs = ioremap(bar0_addr, BRCMF_PCIE_REG_MAP_SIZE);
 	devinfo->tcm = ioremap(bar1_addr, bar1_size);
+	devinfo->tcm_size = bar1_size;
 
 	if (!devinfo->regs || !devinfo->tcm) {
 		brcmf_err(bus, "ioremap() failed (%p,%p)\n", devinfo->regs,
@@ -1875,7 +2388,18 @@ static void brcmf_pcie_buscore_write32(void *ctx, u32 addr, u32 value)
 
 static int brcmf_pcie_buscoreprep(void *ctx)
 {
-	return brcmf_pcie_get_resource(ctx);
+	struct brcmf_pciedev_info *devinfo = ctx;
+	int err;
+
+	err = brcmf_pcie_get_resource(devinfo);
+	if (err)
+		return err;
+
+	/* before the first access to a core outside the always-on domain */
+	brcmf_pcie_srpwr_request(devinfo);
+	brcmf_pcie_set_bar_coherent(devinfo);
+
+	return 0;
 }
 
 
@@ -2199,6 +2723,15 @@ static void brcmf_pcie_setup(struct device *dev, int ret,
 	ret = brcmf_pcie_request_irq(devinfo);
 	if (ret)
 		goto fail;
+	devinfo->poll_enabled = devinfo->pdev->device ==
+				BRCM_PCIE_4389_DEVICE_ID;
+
+	/* Broadcom's driver rings host ready as soon as the common rings
+	 * are set up, before it posts any buffer (bcmdhd dhd_prot_init(),
+	 * hostrdy_after_init), and the BCM4389 was told so in host_cap.
+	 */
+	if (devinfo->pdev->device == BRCM_PCIE_4389_DEVICE_ID)
+		brcmf_pcie_hostready(devinfo);
 
 	/* hook the commonrings in the bus structure. */
 	for (i = 0; i < BRCMF_NROF_COMMON_MSGRINGS; i++)
@@ -2448,6 +2981,20 @@ static const struct brcmf_pcie_drvdata drvdata[] = {
 /* Forward declaration for pci_match_id() call */
 static const struct pci_device_id brcmf_pcie_devid_table[];
 
+static void brcmf_pcie_tcm_win_setup(struct brcmf_pciedev_info *devinfo)
+{
+	u32 end = devinfo->ci->rambase + devinfo->ci->ramsize - 1;
+
+	/* RAM that ends inside the BAR is reached without moving it. */
+	if (end < devinfo->tcm_size || !is_power_of_2(devinfo->tcm_size))
+		return;
+
+	devinfo->tcm_win_switch = true;
+	brcmf_pcie_tcm_win_reset(devinfo);
+	brcmf_dbg(PCIE, "RAM 0x%x-0x%x does not fit the %u KiB BAR, moving its window\n",
+		  devinfo->ci->rambase, end, devinfo->tcm_size / 1024);
+}
+
 static int
 brcmf_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
@@ -2474,6 +3021,9 @@ brcmf_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		return ret;
 
 	devinfo->pdev = pdev;
+	spin_lock_init(&devinfo->tcm_lock);
+	mutex_init(&devinfo->rx_lock);
+	INIT_DELAYED_WORK(&devinfo->poll_work, brcmf_pcie_poll_worker);
 	pcie_bus_dev = NULL;
 	devinfo->ci = brcmf_chip_attach(devinfo, pdev->device,
 					&brcmf_pcie_buscore_ops);
@@ -2482,6 +3032,8 @@ brcmf_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		devinfo->ci = NULL;
 		goto fail;
 	}
+
+	brcmf_pcie_tcm_win_setup(devinfo);
 
 	core = brcmf_chip_get_core(devinfo->ci, BCMA_CORE_PCIE2);
 	if (core->rev >= 64)
@@ -2605,6 +3157,7 @@ brcmf_pcie_remove(struct pci_dev *pdev)
 	brcmf_pcie_fwcon_timer(devinfo, false);
 
 	devinfo->state = BRCMFMAC_PCIE_STATE_DOWN;
+	cancel_delayed_work_sync(&devinfo->poll_work);
 	if (devinfo->ci)
 		brcmf_pcie_intr_disable(devinfo);
 
@@ -2642,10 +3195,33 @@ brcmf_pcie_remove(struct pci_dev *pdev)
 #ifdef CONFIG_PM
 
 
+/*
+ * Wait for the D3 ACK. It may come as a control message or in the
+ * shared-memory mailbox, with or without an interrupt, so look at both every
+ * 2 ms, as Broadcom's driver does when it asks for no ACK interrupt.
+ */
+static bool brcmf_pcie_wait_d3_ack(struct brcmf_pciedev_info *devinfo)
+{
+	unsigned long deadline = jiffies + BRCMF_PCIE_MBDATA_TIMEOUT;
+
+	do {
+		brcmf_pcie_handle_mb_data(devinfo);
+		brcmf_pcie_rx_process(devinfo);
+		if (wait_event_timeout(devinfo->mbdata_resp_wait,
+				       READ_ONCE(devinfo->mbdata_completed),
+				       msecs_to_jiffies(2)))
+			return true;
+	} while (time_before(jiffies, deadline));
+
+	return READ_ONCE(devinfo->mbdata_completed);
+}
+
 static int brcmf_pcie_pm_enter_D3(struct device *dev)
 {
 	struct brcmf_pciedev_info *devinfo;
 	struct brcmf_bus *bus;
+	ktime_t start;
+	int err;
 
 	brcmf_dbg(PCIE, "Enter\n");
 
@@ -2655,18 +3231,55 @@ static int brcmf_pcie_pm_enter_D3(struct device *dev)
 	brcmf_pcie_fwcon_timer(devinfo, false);
 	brcmf_bus_change_state(bus, BRCMF_BUS_DOWN);
 
-	devinfo->mbdata_completed = false;
-	brcmf_pcie_send_mb_data(devinfo, BRCMF_H2D_HOST_D3_INFORM);
+	WRITE_ONCE(devinfo->mbdata_completed, false);
+	devinfo->d3_ack_via = NULL;
+	start = ktime_get();
+	err = brcmf_pcie_send_mb_data(devinfo, BRCMF_H2D_HOST_D3_INFORM);
+	if (err) {
+		/* Nothing reached the device: just carry on. */
+		brcmf_err(bus, "Failed to send D3 inform: %d\n", err);
+		brcmf_bus_change_state(bus, BRCMF_BUS_UP);
+		brcmf_pcie_fwcon_timer(devinfo, true);
+		return err;
+	}
 
-	wait_event_timeout(devinfo->mbdata_resp_wait, devinfo->mbdata_completed,
-			   BRCMF_PCIE_MBDATA_TIMEOUT);
-	if (!devinfo->mbdata_completed) {
-		brcmf_err(bus, "Timeout on response for entering D3 substate\n");
+	if (!brcmf_pcie_wait_d3_ack(devinfo)) {
+		brcmf_err(bus, "Timeout on response for entering D3 substate (%lld ms, mailboxint 0x%08x)\n",
+			  ktime_ms_delta(ktime_get(), start),
+			  brcmf_pcie_read_reg32(devinfo,
+						devinfo->reginfo->mailboxint));
+		/*
+		 * The device may have taken the inform and stopped. Broadcom's
+		 * driver gives up on it here and has the whole stack
+		 * restarted; a host-ready doorbell is no cure (an inform still
+		 * queued puts it to sleep again, and this firmware traps on an
+		 * unexpected host ready), and brcmfmac's own bus reset doesn't
+		 * bring this chip back. Leave recovery to a reload of the
+		 * stack, which power-cycles the chip.
+		 */
+		brcmf_err(bus, "device unresponsive after D3 inform; reload the driver stack to recover\n");
 		brcmf_bus_change_state(bus, BRCMF_BUS_UP);
 		return -EIO;
 	}
 
+	dev_dbg(dev, "D3 ACK by %s after %lld us\n", devinfo->d3_ack_via,
+		ktime_us_delta(ktime_get(), start));
+
 	devinfo->state = BRCMFMAC_PCIE_STATE_DOWN;
+	/*
+	 * The interrupt thread that published the ACK may still be running
+	 * and, having seen STATE_UP, unmask the interrupt or kick the poll.
+	 * Let it finish before masking.
+	 */
+	if (devinfo->irq_allocated)
+		synchronize_irq(devinfo->pdev->irq);
+	/* Nothing to poll until resume; the worker would only see DOWN. */
+	cancel_delayed_work_sync(&devinfo->poll_work);
+	/* As Broadcom's driver: no device interrupts until resume. */
+	brcmf_pcie_intr_disable(devinfo);
+	brcmf_pcie_write_reg32(devinfo, devinfo->reginfo->mailboxint,
+			       brcmf_pcie_read_reg32(devinfo,
+						     devinfo->reginfo->mailboxint));
 
 	return 0;
 }
@@ -2688,15 +3301,29 @@ static int brcmf_pcie_pm_leave_D3(struct device *dev)
 	/* Check if device is still up and running, if so we are ready */
 	if (brcmf_pcie_read_reg32(devinfo, devinfo->reginfo->intmask) != 0) {
 		brcmf_dbg(PCIE, "Try to wakeup device....\n");
-		if (brcmf_pcie_send_mb_data(devinfo, BRCMF_H2D_HOST_D0_INFORM))
+		/*
+		 * With mailbox data as control messages there is no D0 inform:
+		 * the host-ready doorbell below resumes the device.
+		 */
+		if (!devinfo->mb_ctrlmsg &&
+		    brcmf_pcie_send_mb_data(devinfo, BRCMF_H2D_HOST_D0_INFORM))
 			goto cleanup;
 		brcmf_dbg(PCIE, "Hot resume, continue....\n");
+		dev_dbg(dev, "hot resume\n");
 		devinfo->state = BRCMFMAC_PCIE_STATE_UP;
+		devinfo->d3_ack_pending = false;
 		brcmf_pcie_select_core(devinfo, BCMA_CORE_PCIE2);
 		brcmf_bus_change_state(bus, BRCMF_BUS_UP);
 		brcmf_pcie_intr_enable(devinfo);
 		brcmf_pcie_hostready(devinfo);
 		brcmf_pcie_fwcon_timer(devinfo, true);
+		/*
+		 * Completions the device posted while the interrupt was off
+		 * would otherwise wait for the next interrupt.
+		 */
+		brcmf_pcie_handle_mb_data(devinfo);
+		brcmf_pcie_rx_process(devinfo);
+		brcmf_pcie_kick_poll(devinfo);
 		return 0;
 	}
 
@@ -2706,6 +3333,7 @@ cleanup:
 	pdev = devinfo->pdev;
 	brcmf_pcie_remove(pdev);
 
+	dev_dbg(dev, "device lost its state in sleep, probing again\n");
 	err = brcmf_pcie_probe(pdev, NULL);
 	if (err)
 		__brcmf_err(NULL, __func__, "probe after resume failed, err=%d\n", err);

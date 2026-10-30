@@ -403,6 +403,27 @@ config PCI_EXYNOS
 	  hardware and therefore the driver re-uses the DesignWare core
 	  functions to implement the driver.
 
+config PCIE_GS201
+	tristate "Google gs201 PCIe controller (host mode)"
+	depends on OF && (ARCH_EXYNOS || COMPILE_TEST)
+	depends on PCI_MSI
+	select PCIE_DW_HOST
+	select PCI_PWRCTRL_GENERIC
+	help
+	  Say Y here to enable support for the PCIe controller of the Google
+	  gs201 (Tensor G2) SoC in host mode. Pixel 7 phones connect their
+	  Wi-Fi chip to it. The controller uses the DesignWare core plus a
+	  Samsung wrapper, and needs the gs201 PCIe PHY driver.
+
+config PCIE_GS201_SYSMMU
+	tristate "Google gs201 PCIe System MMU as a DMA window"
+	depends on PCIE_GS201
+	help
+	  Confine the DMA of the device on the gs201 PCIe GEN4A_1 controller
+	  (the Pixel 7 Wi-Fi chip) to one reserved memory region, with the
+	  System MMU that sits in front of the controller. The region is
+	  mapped 1:1, so the device driver keeps using physical addresses.
+
 config PCIE_FU740
 	bool "SiFive FU740 PCIe controller"
 	depends on PCI_MSI
