@@ -21,6 +21,7 @@
 
 	/* The pin controllers are numbered as in Tensor G4's driver data. */
 	aliases {
+		pinctrl0 = &pinctrl_gpio_alive;
 		pinctrl10 = &pinctrl_hsi2ufs;
 		pinctrl11 = &pinctrl_peric0;
 	};
@@ -428,6 +429,18 @@
 				mode-bootloader = <0xfc>;
 				mode-fastboot = <0xfa>;
 				mode-recovery = <0xff>;
+			};
+		};
+
+		pinctrl_gpio_alive: pinctrl@154d0000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x154d0000 0x1000>;
+			clocks = <&clk_gpio_stub>;
+			clock-names = "pclk";
+
+			wakeup-interrupt-controller {
+				compatible = "google,zuma-wakeup-eint",
+					     "google,zumapro-wakeup-eint";
 			};
 		};
 	};
