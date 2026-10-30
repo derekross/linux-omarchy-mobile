@@ -117,6 +117,19 @@
 	};
 };
 
+/*
+ * The main PMIC, behind the ACPM firmware. Its regulators are described
+ * with their consumers, which run them through the firmware.
+ */
+&acpm_ipc {
+	pmic-1 {
+		compatible = "samsung,s2mpg14-pmic";
+
+		regulators {
+		};
+	};
+};
+
 &usb_dwc3 {
 	status = "okay";
 };
