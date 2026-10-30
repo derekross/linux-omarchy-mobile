@@ -158,8 +158,12 @@ static int charger_input_valid(struct max77759_charger *chg)
 	if (ret)
 		return ret;
 
-	return (val & MAX77759_CHGR_REG_CHG_INT_CHG) &&
-		(val & MAX77759_CHGR_REG_CHG_INT_CHGIN);
+	/*
+	 * CHGIN alone says whether the input is there. CHG_OK clears when a
+	 * charge is done (and on charger faults), which the status property
+	 * already reports.
+	 */
+	return !!(val & MAX77759_CHGR_REG_CHG_INT_CHGIN);
 }
 
 static int get_online(struct max77759_charger *chg)
