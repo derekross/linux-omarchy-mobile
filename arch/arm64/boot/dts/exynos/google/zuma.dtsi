@@ -148,6 +148,15 @@
 		};
 	};
 
+	firmware {
+		acpm_ipc: power-management {
+			compatible = "google,zuma-acpm-ipc";
+			#clock-cells = <1>;
+			mboxes = <&ap2apm_mailbox>;
+			shmem = <&apm_sram>;
+		};
+	};
+
 	psci {
 		compatible = "arm,psci-1.0";
 		method = "smc";
@@ -439,6 +448,23 @@
 			status = "disabled";
 		};
 
+		ap2apm_mailbox: mailbox@15110000 {
+			compatible = "google,zuma-mbox", "google,gs101-mbox";
+			reg = <0x15110000 0x1000>;
+			clocks = <&cmu_apm CLK_GOUT_APM_MAILBOX_AP>;
+			clock-names = "pclk";
+			interrupts = <GIC_SPI 80 IRQ_TYPE_LEVEL_HIGH>;
+			#mbox-cells = <0>;
+		};
+
+		cmu_apm: clock-controller@15400000 {
+			compatible = "google,zuma-cmu-apm";
+			reg = <0x15400000 0x8000>;
+			#clock-cells = <1>;
+			clocks = <&oscclk>;
+			clock-names = "oscclk";
+		};
+
 		/* Writes go through EL3 (SMC), as on gs101. */
 		pmu_system_controller: system-controller@15460000 {
 			compatible = "google,zuma-pmu";
@@ -467,6 +493,21 @@
 			wakeup-interrupt-controller {
 				compatible = "google,zuma-wakeup-eint",
 					     "google,zumapro-wakeup-eint";
+			};
+		};
+
+		apm_sram: sram@15700000 {
+			compatible = "mmio-sram";
+			reg = <0x15700000 0x58000>;
+			clocks = <&cmu_apm CLK_GOUT_APM_INTMEM_ACLK>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges = <0x0 0x15700000 0x58000>;
+			no-memory-wc;
+
+			/* The APM firmware's window, as one block. */
+			firmware-sram@0 {
+				reg = <0x0 0x58000>;
 			};
 		};
 
