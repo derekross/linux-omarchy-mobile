@@ -290,6 +290,9 @@ struct brcmf_msgbuf {
 	u16 ioctl_seq_no;
 	u32 reqid;
 	u32 h2d_seqnum[BRCMF_NROF_H2D_COMMON_MSGRINGS];
+	/* D2H sync (bcmdhd dhd_prot_d2h_sync_*()): mode, and next epochs */
+	u32 d2h_sync;
+	u32 d2h_seqnum[BRCMF_NROF_COMMON_MSGRINGS];
 	wait_queue_head_t ioctl_resp_wait;
 	bool ctl_completed;
 
@@ -1521,9 +1524,55 @@ static void brcmf_msgbuf_process_msgtype(struct brcmf_msgbuf *msgbuf, void *buf)
 }
 
 
-static void brcmf_msgbuf_process_rx(struct brcmf_msgbuf *msgbuf,
-				    struct brcmf_commonring *commonring)
+#define BRCMF_MSGBUF_D2H_EPOCH_MODULO		253
+#define BRCMF_MSGBUF_D2H_EPOCH_INIT		254
+#define BRCMF_MSGBUF_D2H_SYNC_SEQNUM		0x20000
+#define BRCMF_MSGBUF_D2H_SYNC_XORCSUM		0x40000
+#define BRCMF_MSGBUF_D2H_SYNC_TRIES		512
+#define BRCMF_MSGBUF_D2H_SYNC_STEPS		5
+
+/*
+ * With DMA'd ring indices the firmware can publish a completion's index
+ * before the item itself has landed in host memory. Firmware that asks for
+ * D2H sync stamps each item with a sequence number (its epoch) and, in
+ * XORCSUM mode, a checksum making the XOR of the item's words zero; the
+ * host waits for both before reading the item, as Broadcom's driver does
+ * (dhd_prot_d2h_sync_seqnum() and dhd_prot_d2h_sync_xorcsum()). An item
+ * that never completes is skipped, as there.
+ */
+static bool brcmf_msgbuf_d2h_sync(struct brcmf_msgbuf *msgbuf, u32 ringid,
+				  void *item, u16 len)
 {
+	u8 want = msgbuf->d2h_seqnum[ringid] % BRCMF_MSGBUF_D2H_EPOCH_MODULO;
+	struct msgbuf_common_hdr *hdr = item;
+	u32 step, tries, csum, i;
+
+	for (step = 1; step <= BRCMF_MSGBUF_D2H_SYNC_STEPS; step++) {
+		for (tries = 0; tries < BRCMF_MSGBUF_D2H_SYNC_TRIES; tries++) {
+			if (READ_ONCE(hdr->rsvd0) == want) {
+				csum = 0;
+				if (msgbuf->d2h_sync & BRCMF_MSGBUF_D2H_SYNC_XORCSUM)
+					for (i = 0; i < len / 4; i++)
+						csum ^= READ_ONCE(((u32 *)item)[i]);
+				if (!csum) {
+					msgbuf->d2h_seqnum[ringid]++;
+					dma_rmb();
+					return true;
+				}
+			}
+			udelay(step);
+		}
+	}
+
+	brcmf_err("D2H ring %u: item never completed (epoch %u, want %u)\n",
+		  ringid, READ_ONCE(hdr->rsvd0), want);
+	msgbuf->d2h_seqnum[ringid]++;
+	return false;
+}
+
+static void brcmf_msgbuf_process_rx(struct brcmf_msgbuf *msgbuf, u32 ringid)
+{
+	struct brcmf_commonring *commonring = msgbuf->commonrings[ringid];
 	void *buf;
 	u16 count;
 	u16 processed;
@@ -1535,8 +1584,11 @@ again:
 
 	processed = 0;
 	while (count) {
-		brcmf_msgbuf_process_msgtype(msgbuf,
-					     buf + msgbuf->rx_dataoffset);
+		if (!msgbuf->d2h_sync ||
+		    brcmf_msgbuf_d2h_sync(msgbuf, ringid, buf,
+					  brcmf_commonring_len_item(commonring)))
+			brcmf_msgbuf_process_msgtype(msgbuf,
+						     buf + msgbuf->rx_dataoffset);
 		buf += brcmf_commonring_len_item(commonring);
 		processed++;
 		if (processed == BRCMF_MSGBUF_UPDATE_RX_PTR_THRS) {
@@ -1592,7 +1644,6 @@ int brcmf_proto_msgbuf_rx_trigger(struct device *dev)
 	struct brcmf_pub *drvr = bus_if->drvr;
 	struct brcmf_msgbuf *msgbuf;
 	struct brcmf_commonring *commonring;
-	void *buf;
 	u32 flowid;
 	int qlen;
 
@@ -1600,12 +1651,9 @@ int brcmf_proto_msgbuf_rx_trigger(struct device *dev)
 		return -ENODEV;
 	msgbuf = (struct brcmf_msgbuf *)drvr->proto->pd;
 
-	buf = msgbuf->commonrings[BRCMF_D2H_MSGRING_RX_COMPLETE];
-	brcmf_msgbuf_process_rx(msgbuf, buf);
-	buf = msgbuf->commonrings[BRCMF_D2H_MSGRING_TX_COMPLETE];
-	brcmf_msgbuf_process_rx(msgbuf, buf);
-	buf = msgbuf->commonrings[BRCMF_D2H_MSGRING_CONTROL_COMPLETE];
-	brcmf_msgbuf_process_rx(msgbuf, buf);
+	brcmf_msgbuf_process_rx(msgbuf, BRCMF_D2H_MSGRING_RX_COMPLETE);
+	brcmf_msgbuf_process_rx(msgbuf, BRCMF_D2H_MSGRING_TX_COMPLETE);
+	brcmf_msgbuf_process_rx(msgbuf, BRCMF_D2H_MSGRING_CONTROL_COMPLETE);
 
 	for_each_set_bit(flowid, msgbuf->txstatus_done_map,
 			 msgbuf->max_flowrings) {
@@ -1825,6 +1873,14 @@ int brcmf_proto_msgbuf_attach(struct brcmf_pub *drvr)
 		goto fail;
 
 	msgbuf->rx_dataoffset = if_msgbuf->rx_dataoffset;
+	msgbuf->d2h_sync = if_msgbuf->d2h_sync;
+	msgbuf->d2h_seqnum[BRCMF_D2H_MSGRING_CONTROL_COMPLETE] =
+		BRCMF_MSGBUF_D2H_EPOCH_INIT;
+	msgbuf->d2h_seqnum[BRCMF_D2H_MSGRING_TX_COMPLETE] =
+		BRCMF_MSGBUF_D2H_EPOCH_INIT;
+	msgbuf->d2h_seqnum[BRCMF_D2H_MSGRING_RX_COMPLETE] =
+		BRCMF_MSGBUF_D2H_EPOCH_INIT;
+	brcmf_dbg(MSGBUF, "D2H sync mode 0x%x\n", msgbuf->d2h_sync);
 
 	msgbuf->max_ioctlrespbuf = BRCMF_MSGBUF_MAX_IOCTLRESPBUF_POST;
 	msgbuf->max_eventbuf = BRCMF_MSGBUF_MAX_EVENTBUF_POST;
