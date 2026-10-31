@@ -253,6 +253,18 @@ EXPORT_SYMBOL_GPL(trigger_aoc_ramdump);
 
 static irqreturn_t watchdog_int_handler(int irq, void *dev)
 {
+	struct aoc_prvdata *prvdata = dev_get_drvdata(dev);
+
+	/*
+	 * Firmware-managed AoCs (zumapro) are not restarted: keep the fault
+	 * for the watchdog work and don't take the interrupt again.
+	 */
+	if (prvdata->soc->firmware_managed_mmu) {
+		disable_irq_nosync(irq);
+		dev_err(dev, "AoC watchdog interrupt\n");
+		schedule_work(&prvdata->watchdog_work);
+		return IRQ_HANDLED;
+	}
 	trigger_aoc_ssr(false, NULL);
 	return IRQ_HANDLED;
 }
