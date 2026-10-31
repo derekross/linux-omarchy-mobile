@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/display/panel/google,hk3.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Google HK3 AMOLED DSI panel
+
+description:
+  The HK3 is the 1344x2992 command-mode AMOLED panel of the Google Pixel
+  8 Pro. It takes DSC 1.2 compressed pixel data (two 672x187 slices at 8
+  bits per pixel) over four MIPI DSI lanes, reports its refresh timing on
+  a tearing effect (TE) line and runs at 60 or 120 Hz.
+
+maintainers:
+  - Brett-Michael Green <brett@bmgvisualtech.com>
+
+allOf:
+  - $ref: panel-common.yaml#
+
+properties:
+  compatible:
+    const: google,hk3
+
+  reg:
+    maxItems: 1
+
+  reset-gpios: true
+
+  vddi-supply:
+    description: I/O supply
+
+  vddd-supply:
+    description: Digital core supply
+
+  vci-supply:
+    description: Analog supply
+
+required:
+  - compatible
+  - reg
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/gpio/gpio.h>
+
+    dsi {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        panel@0 {
+            compatible = "google,hk3";
+            reg = <0>;
+            reset-gpios = <&gpp0 0 GPIO_ACTIVE_LOW>;
+            vci-supply = <&vci>;
+            vddi-supply = <&vddi>;
+            vddd-supply = <&vddd>;
+        };
+    };
+
+...
