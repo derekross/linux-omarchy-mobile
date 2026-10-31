@@ -64,7 +64,7 @@ config GS201_AOC
 	  Google's AoC core driver, ported: loads and authenticates the AoC
 	  firmware through the GSA, starts it, and exposes its services on the
 	  AoC bus. Firmware loading is triggered from sysfs (firmware), not at
-	  probe.
+	  probe. Supports gs201 and zumapro (Tensor G4).
 
 config GS201_AOC_CHAR
 	tristate "gs201 AoC service character devices"

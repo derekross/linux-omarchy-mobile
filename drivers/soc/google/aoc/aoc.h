@@ -20,6 +20,7 @@
 #include <linux/timer.h>
 #include "aoc-compat.h"
 #include "aoc_ipc_core.h"
+#include "aoc_sensor_power.h"
 
 /* TODO: Remove internal calls, or promote to "public" */
 #include "aoc_ipc_core_internal.h"
@@ -88,7 +89,31 @@ struct aoc_service_dev {
 typedef int (*aoc_map_handler)(u32 handle, phys_addr_t p, size_t size,
 				bool mapped, void *ctx);
 
+/*
+ * What differs between Tensor generations: where the AoC's PCU and GPIO
+ * blocks sit in its address space, the chip id layout, the sensor supplies,
+ * whether Linux sets up the AoC's S2MPU and System MMU or the authenticated
+ * firmware owns its protection, and the forced-VNOM default.
+ */
+struct aoc_soc_data {
+	bool ordered_sensor_supplies;
+	bool firmware_managed_mmu;
+	bool merge_subrevision_into_type;
+	bool force_vnom_default;
+	u32 chipid_main_reg;
+	u32 chipid_main_shift;
+	u32 pcu_base;
+	u32 gpio_base;
+	u32 pcu_db_set;
+	u32 pcu_db_clear;
+};
+
 struct aoc_prvdata {
+	struct aoc_sensor_power sensor_power;
+	const struct aoc_soc_data *soc;
+	bool firmware_submitted;
+	void *auth_header_virt;
+	dma_addr_t auth_header_dma;
 	struct mbox_slot *mbox_channels;
 	struct dentry *debugfs;
 	struct aoc_service_dev **services;
