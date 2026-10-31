@@ -35,6 +35,7 @@
 
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_panel.h>
+#include <video/mipi_display.h>
 
 #include "gs-dsim.h"
 
@@ -42,15 +43,20 @@
 #define DSIM_LINK_STATUS1		0x000c
 #define DSIM_DPHY_STATUS		0x001c
 #define DSIM_CLK_CTRL			0x0020
+#define DSIM_TIMEOUT			0x0028
 #define DSIM_ESCMODE			0x002c
 #define DSIM_ESCMODE_CMD_LPDT		BIT(7)
 #define DSIM_UNDERRUN_CTRL		0x0034
 #define DSIM_CONFIG			0x004c
 #define DSIM_INTSRC			0x0050
+#define DSIM_INTSRC_RX_DATA_DONE	BIT(18)
 #define DSIM_INTMSK			0x0054
 #define DSIM_PKTHDR			0x0058
+#define DSIM_PKTHDR_BTA			BIT(24)
 #define DSIM_PAYLOAD			0x005c
+#define DSIM_RXFIFO			0x0060
 #define DSIM_FIFOCTRL			0x0068
+#define DSIM_FIFOCTRL_EMPTY_RX		BIT(12)
 #define DSIM_FIFOCTRL_FULL_PH_SFR	BIT(11)
 #define DSIM_FIFOCTRL_EMPTY_PH_SFR	BIT(10)
 #define DSIM_FIFOCTRL_FULL_PL_SFR	BIT(9)
@@ -64,6 +70,9 @@
 #define DSIM_MAX_PL_FIFO		2048
 /* the vendor driver's MIPI_WR_TIMEOUT */
 #define DSIM_TX_TIMEOUT_US		80000
+/* the vendor driver's MIPI_RD_TIMEOUT */
+#define DSIM_RX_TIMEOUT_US		100000
+#define DSIM_MAX_RX_FIFO		64
 
 static bool allow_tx;
 module_param(allow_tx, bool, 0644);
@@ -211,6 +220,108 @@ static int gs_dsim_detach(struct mipi_dsi_host *host,
 	return 0;
 }
 
+static int gs_dsim_send_header(struct gs_dsim *dsim, u8 h0, u8 h1, u8 h2, bool bta)
+{
+	int ret = gs_dsim_wait_fifo(dsim, DSIM_FIFOCTRL_FULL_PH_SFR, false);
+
+	if (ret)
+		return ret;
+	writel(h0 | h1 << 8 | h2 << 16 | (bta ? DSIM_PKTHDR_BTA : 0),
+	       dsim->regs + DSIM_PKTHDR);
+	return gs_dsim_wait_fifo(dsim, DSIM_FIFOCTRL_EMPTY_PH_SFR, true);
+}
+
+/*
+ * A read, as the vendor driver's dsim_read_data(): set the maximum return
+ * packet size, send the read request, wait for RX_DATA_DONE (polled here),
+ * then parse the response from the RX FIFO. Lock held.
+ */
+static ssize_t gs_dsim_read(struct gs_dsim *dsim, const struct mipi_dsi_msg *msg)
+{
+	struct mipi_dsi_packet packet;
+	u8 *rx_buf = msg->rx_buf;
+	u32 rx, val, intmsk;
+	size_t rx_size = 0, i = 0;
+	int ret;
+
+	if (msg->rx_len > DSIM_MAX_RX_FIFO)
+		return -EINVAL;
+	ret = mipi_dsi_create_packet(&packet, msg);
+	if (ret)
+		return ret;
+
+	/* the vendor's BTA and LP RX timeouts, if the bootloader left none */
+	if (!readl(dsim->regs + DSIM_TIMEOUT))
+		writel(0xff << 16 | 0xffff, dsim->regs + DSIM_TIMEOUT);
+
+	/* let RX_DATA_DONE latch in INTSRC while the read runs (no handler: polled) */
+	intmsk = readl(dsim->regs + DSIM_INTMSK);
+	writel(intmsk & ~DSIM_INTSRC_RX_DATA_DONE, dsim->regs + DSIM_INTMSK);
+	writel(DSIM_INTSRC_RX_DATA_DONE, dsim->regs + DSIM_INTSRC);
+	ret = gs_dsim_send_header(dsim, MIPI_DSI_SET_MAXIMUM_RETURN_PACKET_SIZE,
+				  msg->rx_len & 0xff, (msg->rx_len >> 8) & 0xff, false) ?:
+	      gs_dsim_send_header(dsim, packet.header[0], packet.header[1],
+				  packet.header[2], true);
+	if (ret) {
+		writel(intmsk, dsim->regs + DSIM_INTMSK);
+		return ret;
+	}
+
+	ret = readl_poll_timeout(dsim->regs + DSIM_INTSRC, val,
+				 val & DSIM_INTSRC_RX_DATA_DONE, 10, DSIM_RX_TIMEOUT_US);
+	if (ret) {
+		dev_err(dsim->dev, "read 0x%02x timed out: INTSRC 0x%08x FIFOCTRL 0x%08x CMD_STATUS 0x%08x LINK_STATUS1 0x%08x ESCMODE 0x%08x\n",
+			packet.header[1], readl(dsim->regs + DSIM_INTSRC),
+			readl(dsim->regs + DSIM_FIFOCTRL), readl(dsim->regs + DSIM_CMD_STATUS),
+			readl(dsim->regs + DSIM_LINK_STATUS1), readl(dsim->regs + DSIM_ESCMODE));
+		writel(intmsk, dsim->regs + DSIM_INTMSK);
+		return ret;
+	}
+	writel(intmsk, dsim->regs + DSIM_INTMSK);
+	writel(DSIM_INTSRC_RX_DATA_DONE, dsim->regs + DSIM_INTSRC);
+
+	rx = readl(dsim->regs + DSIM_RXFIFO);
+	switch (rx & 0xff) {
+	case MIPI_DSI_RX_DCS_SHORT_READ_RESPONSE_2BYTE:
+	case MIPI_DSI_RX_GENERIC_SHORT_READ_RESPONSE_2BYTE:
+		if (msg->rx_len > 1)
+			rx_buf[1] = (rx >> 16) & 0xff;
+		fallthrough;
+	case MIPI_DSI_RX_DCS_SHORT_READ_RESPONSE_1BYTE:
+	case MIPI_DSI_RX_GENERIC_SHORT_READ_RESPONSE_1BYTE:
+		rx_buf[0] = (rx >> 8) & 0xff;
+		rx_size = min_t(size_t, msg->rx_len, 2);
+		break;
+	case MIPI_DSI_RX_DCS_LONG_READ_RESPONSE:
+	case MIPI_DSI_RX_GENERIC_LONG_READ_RESPONSE:
+		rx_size = min_t(size_t, (rx >> 8) & 0xffff, msg->rx_len);
+		while (i < rx_size) {
+			size_t max = min_t(size_t, rx_size, i + 4);
+
+			rx = readl(dsim->regs + DSIM_RXFIFO);
+			for (; i < max; i++, rx >>= 8)
+				rx_buf[i] = rx & 0xff;
+		}
+		break;
+	case MIPI_DSI_RX_ACKNOWLEDGE_AND_ERROR_REPORT:
+		dev_warn(dsim->dev, "read 0x%02x: error report 0x%04x\n",
+			 packet.header[1], (rx >> 8) & 0xffff);
+		ret = -EIO;
+		break;
+	default:
+		dev_warn(dsim->dev, "read 0x%02x: unexpected response 0x%08x\n",
+			 packet.header[1], rx);
+		ret = -EIO;
+	}
+
+	/* leave the RX FIFO empty for the next read */
+	for (i = 0; i < DSIM_MAX_RX_FIFO / 4 &&
+	     !(readl(dsim->regs + DSIM_FIFOCTRL) & DSIM_FIFOCTRL_EMPTY_RX); i++)
+		readl(dsim->regs + DSIM_RXFIFO);
+
+	return ret ?: rx_size;
+}
+
 static ssize_t gs_dsim_transfer(struct mipi_dsi_host *host,
 				const struct mipi_dsi_msg *msg)
 {
@@ -227,9 +338,16 @@ static ssize_t gs_dsim_transfer(struct mipi_dsi_host *host,
 		return -EPERM;
 	}
 
-	/* Reads need BTA and the RX FIFO, which are not wired up yet. */
-	if (msg->rx_len)
-		return -EOPNOTSUPP;
+	if (msg->rx_len) {
+		mutex_lock(&dsim->lock);
+		/* as for writes below: with packet go on, nothing goes out */
+		if (readl(dsim->regs + DSIM_CMD_CONFIG) & DSIM_CMD_CONFIG_PKT_GO_EN)
+			ret = -EBUSY;
+		else
+			ret = gs_dsim_read(dsim, msg);
+		mutex_unlock(&dsim->lock);
+		return ret;
+	}
 
 	ret = mipi_dsi_create_packet(&packet, msg);
 	if (ret)
