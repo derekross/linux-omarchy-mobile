@@ -32,6 +32,8 @@
  * DUMP_OBSS: Firmware has capable to dump obss info to support ACS
  * SCAN_V2: Version 2 scan params
  * SAE_EXT: SAE authentication handled by user-space supplicant
+ * SCAN_V3: Version 3 scan params (the v2 layout, with the pad as ssid_type)
+ * SCAN_V4: Version 4 scan params (scan_type_ext after scan_type)
  */
 #define BRCMF_FEAT_LIST \
 	BRCMF_FEAT_DEF(MBSS) \
@@ -61,7 +63,9 @@
 	BRCMF_FEAT_DEF(PMKID_V3) \
 	BRCMF_FEAT_DEF(SAE_EXT) \
 	BRCMF_FEAT_DEF(JOIN_V1) \
-	BRCMF_FEAT_DEF(HOST_SFHLLC)
+	BRCMF_FEAT_DEF(HOST_SFHLLC) \
+	BRCMF_FEAT_DEF(SCAN_V3) \
+	BRCMF_FEAT_DEF(SCAN_V4)
 
 /*
  * Quirks:
