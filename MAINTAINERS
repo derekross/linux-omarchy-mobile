@@ -11155,6 +11155,20 @@ T:	git git://git.kernel.org/pub/scm/linux/kernel/git/chrome-platform/linux.git
 F:	drivers/firmware/google/
 F:	include/linux/coreboot.h
 
+GOOGLE GS201 AND ZUMAPRO CAMERA RECEIVER (CSIS) AND MIPI DC-PHY
+M:	Derek Ross <derekross@gmail.com>
+R:	W4HO <87742609+W4HO-ham@users.noreply.github.com>
+L:	linux-media@vger.kernel.org
+S:	Maintained
+F:	Documentation/devicetree/bindings/media/google,gs201-csis.yaml
+F:	Documentation/devicetree/bindings/media/i2c/samsung,s5kgn1.yaml
+F:	Documentation/devicetree/bindings/media/i2c/sony,imx386.yaml
+F:	Documentation/devicetree/bindings/phy/google,gs201-mipi-dcphy-rx.yaml
+F:	drivers/media/i2c/imx386.c
+F:	drivers/media/i2c/s5kgn1.c
+F:	drivers/media/platform/samsung/gs201-csis/
+F:	drivers/phy/samsung/phy-gs201-mipi-dcphy-rx.c
+
 GOOGLE TENSOR SoC SUPPORT
 M:	Peter Griffin <peter.griffin@linaro.org>
 R:	André Draszik <andre.draszik@linaro.org>

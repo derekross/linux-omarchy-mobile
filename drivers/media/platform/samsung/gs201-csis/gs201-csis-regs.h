@@ -47,6 +47,7 @@
 
 /* INT0: errors [GPL] */
 #define CSIS_INT0_ERRORS		(GENMASK(6, 0) | GENMASK(23, 12))
+#define  CSIS_INT0_ERR_WRONG_CONFIG	BIT(3)	/* a packet no channel takes */
 
 /* INT1: frame events [GPL] */
 #define CSIS_INT1_LINE_END		BIT(0)

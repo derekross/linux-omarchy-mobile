@@ -37,6 +37,15 @@
  * data in the Omarchy Mobile project), named by the firmware-name property and
  * loaded when a link first powers on. Without the file no link powers on.
  *
+ * zumapro (Tensor G4) has nine slaves for twelve CSIS links, all with the
+ * clock lane first and up to four data lanes (three C-PHY trios) after it;
+ * three are a clock lane only, which links 4, 6 and 9 enable next to their
+ * own in four-lane D-PHY mode. The shared bias block, the PMU isolation word
+ * and the data file are as on gs201; the reset bits are one per slave (the
+ * layout from the camera HAL's register table and Google's GPL zuma DT).
+ * Only the four-lane links are described; the two-lane and single-trio
+ * splits (links 3, 5, 7, 8, 10, 11) and link 9 are not.
+ *
  * C-PHY (Google's GPL code leaves it unimplemented): a consumer selects it
  * with phy_set_mode_ext(PHY_MODE_MIPI_DPHY, PHY_TYPE_CPHY), and the lanes
  * of phy_configure() are then trios and hs_clk_rate the symbol rate. Each
@@ -78,7 +87,7 @@
 
 #include <dt-bindings/phy/phy.h>
 
-#define DCPHY_NUM_LINKS		8
+#define DCPHY_MAX_LINKS		12
 
 #define DCPHY_BIAS_BASE		0x1000
 #define DCPHY_M_BIAS_CON0	0x00
@@ -176,6 +185,8 @@ struct gs201_dcphy_link {
 	unsigned int max_lanes;
 	bool data_first;	/* odd two-lane links: data, data, clock */
 	bool can_pair;		/* even two-lane link: takes the next one's lanes */
+	u32 partner_clk;	/* zumapro: a clock-only slave enabled with this one */
+	u32 reset_bits;		/* the slaves' reset bits */
 	bool cphy;		/* selected by the consumer with phy_set_mode_ext() */
 	u32 settle;		/* TIME_CON0 settle count as last powered on */
 	unsigned int lanes;	/* data lanes, or trios in C-PHY mode */
@@ -197,21 +208,52 @@ struct gs201_dcphy {
 	const char *fw_name;
 	bool loaded;
 	struct gs201_dcphy_settings settings[DCPHY_NUM_MODES];
-	struct gs201_dcphy_link links[DCPHY_NUM_LINKS];
+	unsigned int num_links;
+	struct gs201_dcphy_link links[DCPHY_MAX_LINKS];
 	struct dentry *debugfs;
 };
 
-/* Offset of each link's lane block and its layout (Google's GPL DT) */
-static const struct {
+/* Offset of each link's lane block and its layout */
+struct gs201_dcphy_layout {
 	u32 offset;
-	unsigned int max_lanes;
+	unsigned int max_lanes;	/* 0: not described */
 	bool data_first;
 	bool can_pair;
-} gs201_dcphy_layout[DCPHY_NUM_LINKS] = {
-	{ 0x1300, 4, false, false }, { 0x1b00, 4, false, false },
-	{ 0x2300, 2, false, true }, { 0x2600, 2, true, false },
-	{ 0x2b00, 2, false, true }, { 0x2e00, 2, true, false },
-	{ 0x3300, 2, false, true }, { 0x3600, 2, true, false },
+	u32 partner_clk;
+	u32 reset_bits;
+};
+
+struct gs201_dcphy_soc {
+	const struct gs201_dcphy_layout *layout;
+	unsigned int num_links;
+};
+
+/* gs201 (Google's GPL DT) */
+static const struct gs201_dcphy_layout gs201_dcphy_layout[] = {
+	{ 0x1300, 4, false, false, 0, BIT(0) }, { 0x1b00, 4, false, false, 0, BIT(1) },
+	{ 0x2300, 2, false, true, 0, BIT(2) }, { 0x2600, 2, true, false, 0, BIT(3) },
+	{ 0x2b00, 2, false, true, 0, BIT(4) }, { 0x2e00, 2, true, false, 0, BIT(5) },
+	{ 0x3300, 2, false, true, 0, BIT(6) }, { 0x3600, 2, true, false, 0, BIT(7) },
+};
+
+static const struct gs201_dcphy_soc gs201_dcphy_gs201 = {
+	.layout = gs201_dcphy_layout,
+	.num_links = ARRAY_SIZE(gs201_dcphy_layout),
+};
+
+/* zumapro: link n's clock lane, and the clock-only partner of links 4 and 6 */
+static const struct gs201_dcphy_layout zumapro_dcphy_layout[] = {
+	[0] = { 0x1200, 4, false, false, 0, BIT(0) },
+	[1] = { 0x1700, 4, false, false, 0, BIT(1) },
+	[2] = { 0x2200, 4, false, false, 0, BIT(2) },
+	[4] = { 0x2700, 4, false, false, 0x2c00, BIT(3) | BIT(4) },
+	[6] = { 0x3100, 4, false, false, 0x3600, BIT(5) | BIT(6) },
+	[11] = { },
+};
+
+static const struct gs201_dcphy_soc gs201_dcphy_zumapro = {
+	.layout = zumapro_dcphy_layout,
+	.num_links = ARRAY_SIZE(zumapro_dcphy_layout),
 };
 
 #define DCPHY_PAIR_LANES	4
@@ -225,8 +267,9 @@ static unsigned int gs201_dcphy_nr_lanes(struct gs201_dcphy_link *link)
 /* Reset bits of the slaves the link uses */
 static u32 gs201_dcphy_reset_mask(struct gs201_dcphy_link *link)
 {
-	return link->paired ? BIT(link->index) | BIT(link->index + 1) :
-			      BIT(link->index);
+	return link->paired ? link->reset_bits |
+			      link->dcphy->links[link->index + 1].reset_bits :
+			      link->reset_bits;
 }
 
 static int gs201_dcphy_reset(struct gs201_dcphy_link *link, bool release)
@@ -278,6 +321,8 @@ static void gs201_dcphy_lanes_off(struct gs201_dcphy_link *link)
 	unsigned int i;
 
 	writel(0, gs201_dcphy_clk_lane(link) + DCPHY_GNR_CON0);
+	if (link->partner_clk)
+		writel(0, link->dcphy->base + link->partner_clk + DCPHY_GNR_CON0);
 	for (i = 0; i < gs201_dcphy_nr_lanes(link); i++)
 		writel(0, gs201_dcphy_data_lane(link, i) + DCPHY_GNR_CON0);
 }
@@ -511,9 +556,14 @@ static int gs201_dcphy_lanes_on(struct gs201_dcphy_link *link)
 
 	gs201_dcphy_run_block(set, cols, DCPHY_BLOCK_BIAS,
 			      dcphy->base + DCPHY_BIAS_BASE);
-	if (!link->cphy)
+	if (!link->cphy) {
 		gs201_dcphy_run_block(set, cols, DCPHY_BLOCK_CLOCK,
 				      gs201_dcphy_clk_lane(link));
+		/* zumapro four-lane D-PHY: the partner's clock enable, as the link's */
+		if (link->partner_clk && link->lanes > 2)
+			writel(readl(gs201_dcphy_clk_lane(link) + DCPHY_GNR_CON0),
+			       dcphy->base + link->partner_clk + DCPHY_GNR_CON0);
+	}
 	for (i = 0; i < link->lanes; i++)
 		gs201_dcphy_run_block(set, cols, DCPHY_BLOCK_LANE,
 				      gs201_dcphy_data_lane(link, i));
@@ -728,7 +778,7 @@ static int gs201_dcphy_regs_show(struct seq_file *s, void *unused)
 		seq_printf(s, " %08x", readl(dcphy->base + DCPHY_BIAS_BASE + off));
 	seq_putc(s, '\n');
 
-	for (i = 0; i < DCPHY_NUM_LINKS; i++) {
+	for (i = 0; i < dcphy->num_links; i++) {
 		struct gs201_dcphy_link *link = &dcphy->links[i];
 
 		if (!link->powered)
@@ -752,7 +802,8 @@ static struct phy *gs201_dcphy_xlate(struct device *dev,
 {
 	struct gs201_dcphy *dcphy = dev_get_drvdata(dev);
 
-	if (args->args[0] >= DCPHY_NUM_LINKS)
+	if (args->args[0] >= dcphy->num_links ||
+	    !dcphy->links[args->args[0]].phy)
 		return ERR_PTR(-ENODEV);
 
 	return dcphy->links[args->args[0]].phy;
@@ -762,9 +813,14 @@ static int gs201_dcphy_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct phy_provider *provider;
+	const struct gs201_dcphy_soc *soc;
 	struct gs201_dcphy *dcphy;
 	unsigned int i;
 	int ret;
+
+	soc = of_device_get_match_data(dev);
+	if (!soc || soc->num_links > DCPHY_MAX_LINKS)
+		return -ENODEV;
 
 	dcphy = devm_kzalloc(dev, sizeof(*dcphy), GFP_KERNEL);
 	if (!dcphy)
@@ -802,15 +858,20 @@ static int gs201_dcphy_probe(struct platform_device *pdev)
 	/* The settings file; without it, no link powers on (says so then). */
 	of_property_read_string(dev->of_node, "firmware-name", &dcphy->fw_name);
 
-	for (i = 0; i < DCPHY_NUM_LINKS; i++) {
+	dcphy->num_links = soc->num_links;
+	for (i = 0; i < dcphy->num_links; i++) {
 		struct gs201_dcphy_link *link = &dcphy->links[i];
 
 		link->dcphy = dcphy;
 		link->index = i;
-		link->offset = gs201_dcphy_layout[i].offset;
-		link->max_lanes = gs201_dcphy_layout[i].max_lanes;
-		link->data_first = gs201_dcphy_layout[i].data_first;
-		link->can_pair = gs201_dcphy_layout[i].can_pair;
+		link->offset = soc->layout[i].offset;
+		link->max_lanes = soc->layout[i].max_lanes;
+		link->data_first = soc->layout[i].data_first;
+		link->can_pair = soc->layout[i].can_pair;
+		link->partner_clk = soc->layout[i].partner_clk;
+		link->reset_bits = soc->layout[i].reset_bits;
+		if (!link->max_lanes)
+			continue;
 
 		link->phy = devm_phy_create(dev, NULL, &gs201_dcphy_ops);
 		if (IS_ERR(link->phy))
@@ -837,7 +898,8 @@ static void gs201_dcphy_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id gs201_dcphy_of_match[] = {
-	{ .compatible = "google,gs201-mipi-dcphy-rx" },
+	{ .compatible = "google,gs201-mipi-dcphy-rx", .data = &gs201_dcphy_gs201 },
+	{ .compatible = "google,zumapro-mipi-dcphy-rx", .data = &gs201_dcphy_zumapro },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, gs201_dcphy_of_match);

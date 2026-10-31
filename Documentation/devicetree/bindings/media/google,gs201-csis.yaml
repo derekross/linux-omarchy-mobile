@@ -4,7 +4,7 @@
 $id: http://devicetree.org/schemas/media/google,gs201-csis.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
-title: Google gs201 CSIS camera receiver link and CSIS WDMA
+title: Google gs201 and zumapro CSIS camera receiver link and CSIS WDMA
 
 maintainers:
   - Derek Ross <derekross@gmail.com>
@@ -13,48 +13,36 @@ description:
   The camera block of Google's gs201 SoC has eight MIPI CSI-2 receiver links
   (CSIS) and a DMA block whose CSIS WDMA contexts write a link's frames to
   memory. One node describes one link and the WDMA context it feeds.
+  zumapro (Tensor G4) has the same receiver link in its ISP front end, with
+  twelve link contexts; its DMA path is different and not described here.
 
 properties:
   compatible:
-    const: google,gs201-csis
+    enum:
+      - google,gs201-csis
+      - google,zumapro-csis
 
   reg:
-    minItems: 3
-    items:
-      - description: the CSIS link registers
-      - description: the CSIS DMA block's common page (shared by all links)
-      - description: the CSIS WDMA context (links may share one; they then
-          stream one at a time)
-      - description: the EBUF control (shared by all links), bypassed on the
-          way to the WDMA
+    minItems: 1
+    maxItems: 4
 
   reg-names:
-    minItems: 3
-    items:
-      - const: link
-      - const: dma
-      - const: wdma
-      - const: ebuf
+    minItems: 1
+    maxItems: 4
 
   interrupts:
-    items:
-      - description: link interrupt
-      - description: WDMA context interrupt
+    minItems: 1
+    maxItems: 2
 
   interrupt-names:
-    items:
-      - const: link
-      - const: wdma
+    minItems: 1
+    maxItems: 2
 
   clocks:
-    items:
-      - description: the camera block's DVFS domain
-      - description: the bus (INT) DVFS domain
+    maxItems: 2
 
   clock-names:
-    items:
-      - const: cam
-      - const: int
+    maxItems: 2
 
   phys:
     maxItems: 1
@@ -62,8 +50,8 @@ properties:
 
   google,csis-link:
     $ref: /schemas/types.yaml#/definitions/uint32
-    maximum: 7
-    description: Index of the CSIS link.
+    maximum: 11
+    description: Index of the CSIS link (0-7 on gs201).
 
   google,wdma-context:
     $ref: /schemas/types.yaml#/definitions/uint32
@@ -81,6 +69,13 @@ properties:
     maximum: 3
     description:
       WDMA input slot the link is routed to; defaults to the context index.
+
+  google,image-loch:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    maximum: 6
+    description:
+      zumapro only. The CSIS core's image logical channel the link writes
+      its frames through; defaults to 0.
 
   google,lrte-packet-delimiters:
     type: boolean
@@ -132,9 +127,87 @@ required:
   - interrupt-names
   - phys
   - google,csis-link
-  - google,wdma-context
-  - google,csis-sysreg
   - port
+
+allOf:
+  - if:
+      properties:
+        compatible:
+          const: google,gs201-csis
+    then:
+      properties:
+        reg:
+          minItems: 3
+          items:
+            - description: the CSIS link registers
+            - description: the CSIS DMA block's common page (shared by all links)
+            - description: the CSIS WDMA context (links may share one; they
+                then stream one at a time)
+            - description: the EBUF control (shared by all links), bypassed on
+                the way to the WDMA
+        reg-names:
+          minItems: 3
+          items:
+            - const: link
+            - const: dma
+            - const: wdma
+            - const: ebuf
+        interrupts:
+          items:
+            - description: link interrupt
+            - description: WDMA context interrupt
+        interrupt-names:
+          items:
+            - const: link
+            - const: wdma
+        clocks:
+          items:
+            - description: the camera block's DVFS domain
+            - description: the bus (INT) DVFS domain
+        clock-names:
+          items:
+            - const: cam
+            - const: int
+        google,csis-link:
+          maximum: 7
+        google,image-loch: false
+      required:
+        - google,wdma-context
+        - google,csis-sysreg
+    else:
+      properties:
+        reg:
+          minItems: 1
+          items:
+            - description: the CSIS link registers
+            - description: the ISP front end's CSIS core page, shared by all
+                links; without it the link runs without DMA
+        reg-names:
+          minItems: 1
+          items:
+            - const: link
+            - const: core
+        interrupts:
+          minItems: 1
+          items:
+            - description: link interrupt
+            - description: CSIS core interrupt, shared by all links
+        interrupt-names:
+          minItems: 1
+          items:
+            - const: link
+            - const: core
+        clocks:
+          items:
+            - description: the INT DVFS domain, the ISP front end clock's rail
+            - description: the ISP front end's NOC clock
+        clock-names:
+          items:
+            - const: int
+            - const: fe
+        google,wdma-context: false
+        google,csis-sysreg: false
+        google,ebuf: false
 
 additionalProperties: false
 

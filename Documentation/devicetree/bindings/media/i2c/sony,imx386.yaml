@@ -4,22 +4,25 @@
 $id: http://devicetree.org/schemas/media/i2c/sony,imx386.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
-title: Sony IMX386 image sensor
+title: Sony IMX386 and IMX712 image sensors
 
 maintainers:
   - Derek Ross <derekross@gmail.com>
 
 description:
   Sony IMX386 12 MP Bayer CMOS sensor with a MIPI CSI-2 D-PHY output,
-  controlled over I2C. Its initialisation and readout modes are loaded from
-  a data file named by firmware-name.
+  controlled over I2C, and the IMX712 (the Pixel 9a's ultrawide and front
+  cameras), which has the same register map. Their initialisation and
+  readout modes are loaded from a data file named by firmware-name.
 
 allOf:
   - $ref: /schemas/media/video-interface-devices.yaml#
 
 properties:
   compatible:
-    const: sony,imx386
+    enum:
+      - sony,imx386
+      - sony,imx712
 
   reg:
     maxItems: 1
