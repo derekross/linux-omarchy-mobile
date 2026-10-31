@@ -114,6 +114,8 @@ struct aoc_prvdata {
 	bool firmware_submitted;
 	void *auth_header_virt;
 	dma_addr_t auth_header_dma;
+	struct clk_bulk_data *dvfs_clks;
+	int num_dvfs_clks;
 	struct mbox_slot *mbox_channels;
 	struct dentry *debugfs;
 	struct aoc_service_dev **services;

@@ -22,6 +22,7 @@
 #include <linux/io.h>
 #include <linux/jiffies.h>
 #include <linux/list.h>
+#include <linux/clk.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/of.h>
@@ -533,6 +534,22 @@ static int aoc_fw_authenticate(struct aoc_prvdata *prvdata,
 	return rc;
 }
 
+/*
+ * Ask ACPM for the current rate of each DVFS domain in "clocks" (ACPM
+ * clocks don't cache their rate). On zumapro the firmware faulted at every
+ * start until the AP had made this query once before it.
+ */
+static void aoc_read_dvfs_rates(struct aoc_prvdata *prvdata)
+{
+	unsigned long rate;
+	int i;
+
+	for (i = 0; i < prvdata->num_dvfs_clks; i++) {
+		rate = clk_get_rate(prvdata->dvfs_clks[i].clk);
+		dev_dbg(prvdata->dev, "DVFS %d: %lu Hz\n", i, rate);
+	}
+}
+
 static void aoc_fw_callback(const struct firmware *fw, void *ctx)
 {
 	static bool first_load_prevented = false;
@@ -624,6 +641,7 @@ static void aoc_fw_callback(const struct firmware *fw, void *ctx)
 			fw_data[i].value = board_rev;
 	}
 
+	aoc_read_dvfs_rates(prvdata);
 	request_aoc_on(prvdata, true);
 
 	if (!fw->data) {
@@ -2680,6 +2698,10 @@ static int aoc_platform_probe(struct platform_device *pdev)
 		if (rc)
 			return rc;
 	}
+	rc = devm_clk_bulk_get_all(dev, &prvdata->dvfs_clks);
+	if (rc < 0)
+		return dev_err_probe(dev, rc, "failed to get the DVFS clocks\n");
+	prvdata->num_dvfs_clks = rc;
 	aoc_platform_device = pdev;
 	mem_node = of_parse_phandle(aoc_node, "memory-region", 0);
 	platform_set_drvdata(pdev, prvdata);
