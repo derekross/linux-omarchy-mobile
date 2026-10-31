@@ -26,6 +26,8 @@
 	aliases {
 		pinctrl0 = &pinctrl_gpio_alive;
 		pinctrl1 = &pinctrl_custom_alive;
+		pinctrl2 = &pinctrl_far_alive;
+		pinctrl9 = &pinctrl_hsi2;
 		pinctrl10 = &pinctrl_hsi2ufs;
 		pinctrl11 = &pinctrl_peric0;
 		pinctrl12 = &pinctrl_peric1;
@@ -449,6 +451,14 @@
 			reg = <0x13020000 0x1000>;
 		};
 
+		pinctrl_hsi2: pinctrl@13040000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x13040000 0x1000>;
+			clocks = <&clk_gpio_stub>;
+			clock-names = "pclk";
+			interrupts = <GIC_SPI 432 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
 		pinctrl_hsi2ufs: pinctrl@13060000 {
 			compatible = "google,zuma-pinctrl";
 			reg = <0x13060000 0x1000>;
@@ -543,6 +553,18 @@
 			compatible = "google,zuma-pinctrl";
 			reg = <0x154d0000 0x1000>;
 			clocks = <&clk_gpio_stub>;
+			clock-names = "pclk";
+
+			wakeup-interrupt-controller {
+				compatible = "google,zuma-wakeup-eint",
+					     "google,zumapro-wakeup-eint";
+			};
+		};
+
+		pinctrl_far_alive: pinctrl@154e0000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x154e0000 0x1000>;
+			clocks = <&cmu_apm CLK_GOUT_APM_GPIO_FAR_ALIVE>;
 			clock-names = "pclk";
 
 			wakeup-interrupt-controller {
