@@ -76,6 +76,8 @@ BRCMF_FW_CLM_DEF(4387C2, "brcmfmac4387c2-pcie");
 BRCMF_FW_CLM_DEF(4389C1, "brcmfmac4389c1-pcie");
 /* BCM4383 rev 2 (Pixel 9a): the owner's firmware set, with CLM and TXCAP blobs */
 BRCMF_FW_CLM_DEF(4383, "brcmfmac4383-pcie");
+/* BCM4398 rev 3, d0 (Pixel 8 Pro): the owner's firmware set */
+BRCMF_FW_CLM_DEF(4398D0, "brcmfmac4398d0-pcie");
 BRCMF_FW_CLM_DEF(54591, "brcmfmac54591-pcie");
 
 /* firmware config files */
@@ -119,6 +121,7 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 	BRCMF_FW_ENTRY(BRCM_CC_4387_CHIP_ID, 0xFFFFFFFF, 4387C2), /* revision ID 7 */
 	BRCMF_FW_ENTRY(BRCM_CC_4389_CHIP_ID, 0xFFFFFFFF, 4389C1),
 	BRCMF_FW_ENTRY(BRCM_CC_4383_CHIP_ID, 0xFFFFFFFF, 4383),
+	BRCMF_FW_ENTRY(BRCM_CC_4398_CHIP_ID, 0xFFFFFFF8, 4398D0),
 };
 
 #define BRCMF_PCIE_FW_UP_TIMEOUT		5000 /* msec */
