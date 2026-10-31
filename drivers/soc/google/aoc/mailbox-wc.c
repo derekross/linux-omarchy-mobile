@@ -63,6 +63,9 @@ static const struct of_device_id wc_mbox_match[] = {
 	{
 		.compatible = "google,gs201-aoc-mbox",
 	},
+	{
+		.compatible = "google,zumapro-aoc-mbox",
+	},
 	{},
 };
 MODULE_DEVICE_TABLE(of, wc_mbox_match);
