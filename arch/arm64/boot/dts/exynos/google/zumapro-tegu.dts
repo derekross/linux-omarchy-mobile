@@ -8,8 +8,11 @@
 
 /dts-v1/;
 
+#include <dt-bindings/clock/google,zumapro-acpm.h>
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/linux-event-codes.h>
+#include <dt-bindings/leds/common.h>
+#include <dt-bindings/usb/pd.h>
 #include "../exynos-pinctrl.h"
 #include "zumapro.dtsi"
 #include "zumapro-reserved-memory.dtsi"
@@ -73,6 +76,68 @@
 		};
 	};
 
+	/*
+	 * The GPU's levels: the shader rates of the Pixel 9a's GPU DVFS table
+	 * up to 890 MHz, each with its paired L2 rate through the ACPM "gpu"
+	 * clock; gpu-thermal throttles them from 85 C. 940 MHz, the table's
+	 * top, is left out until it has run on the 9a.
+	 */
+	gpu_opp: opp-table-gpu {
+		compatible = "operating-points-v2";
+
+		opp-150000000 {
+			opp-hz = /bits/ 64 <150000000>;
+		};
+
+		opp-302000000 {
+			opp-hz = /bits/ 64 <302000000>;
+		};
+
+		opp-337000000 {
+			opp-hz = /bits/ 64 <337000000>;
+		};
+
+		opp-376000000 {
+			opp-hz = /bits/ 64 <376000000>;
+		};
+
+		opp-419000000 {
+			opp-hz = /bits/ 64 <419000000>;
+		};
+
+		opp-467000000 {
+			opp-hz = /bits/ 64 <467000000>;
+		};
+
+		opp-521000000 {
+			opp-hz = /bits/ 64 <521000000>;
+		};
+
+		opp-580000000 {
+			opp-hz = /bits/ 64 <580000000>;
+		};
+
+		opp-649000000 {
+			opp-hz = /bits/ 64 <649000000>;
+		};
+
+		opp-723000000 {
+			opp-hz = /bits/ 64 <723000000>;
+		};
+
+		opp-807000000 {
+			opp-hz = /bits/ 64 <807000000>;
+		};
+
+		opp-850000000 {
+			opp-hz = /bits/ 64 <850000000>;
+		};
+
+		opp-890000000 {
+			opp-hz = /bits/ 64 <890000000>;
+		};
+	};
+
 	/* UFS VCC, switched by gpp0-1 as on stock. */
 	ufs_vcc: regulator-ufs-vcc {
 		compatible = "regulator-fixed";
@@ -94,6 +159,15 @@
 	cont_splash_mem: splash@fac00000 {
 		reg = <0x0 0xfac00000 0x009fc900>;
 		no-map;
+	};
+
+	/* DECON's scanout buffers, below 4 GiB for its 32-bit DMA. */
+	display_pool: display-pool {
+		compatible = "shared-dma-pool";
+		reusable;
+		size = <0x04000000>;
+		alignment = <0x0 0x00200000>;
+		alloc-ranges = <0x0 0x98000000 0x06000000>;
 	};
 };
 
@@ -135,6 +209,10 @@
 	status = "okay";
 };
 
+&cmu_g3d {
+	status = "okay";
+};
+
 &cmu_hsi0 {
 	status = "okay";
 };
@@ -163,6 +241,37 @@
 	status = "okay";
 };
 
+/*
+ * DECON0 scans out to DSIM0, so gs-decon can switch the link and the
+ * panel between 60 and 120 Hz.
+ */
+&decon0 {
+	memory-region = <&display_pool>, <&cont_splash_mem>;
+	memory-region-names = "pool", "boot-framebuffer";
+	status = "okay";
+
+	port {
+		decon0_out: endpoint {
+			remote-endpoint = <&dsi0_in>;
+		};
+	};
+};
+
+&dsi0 {
+	status = "okay";
+
+	panel@0 {
+		compatible = "google,tg4c";
+		reg = <0>;
+	};
+
+	port {
+		dsi0_in: endpoint {
+			remote-endpoint = <&decon0_out>;
+		};
+	};
+};
+
 /* The keys' banks and the touchscreen's raise their own interrupts. */
 &gpa4 {
 	interrupt-controller;
@@ -182,14 +291,133 @@
 		     <GIC_SPI 35 IRQ_TYPE_LEVEL_HIGH>;
 };
 
+/* The USB-C port controller's interrupt (gpa8-3). */
+&gpa8 {
+	interrupt-controller;
+	#interrupt-cells = <2>;
+	interrupts = <GIC_SPI 44 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 45 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 46 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 47 IRQ_TYPE_LEVEL_HIGH>;
+};
+
 &gpn0 {
 	interrupt-controller;
 	#interrupt-cells = <2>;
 	interrupts = <GIC_SPI 0 IRQ_TYPE_LEVEL_HIGH>;
 };
 
+/*
+ * The GPU's core clock is ACPM's paired "gpu" clock, which sets the shader
+ * (G3D) and L2 (G3DL2) domains together; coregroup and stacks stay on
+ * CMU_G3D's gates.
+ */
+&gpu {
+	clocks = <&acpm_ipc ZUMAPRO_CLK_ACPM_GPU>,
+		 <&cmu_g3d CLK_GOUT_G3D_COREGROUP>,
+		 <&cmu_g3d CLK_GOUT_G3D_STACKS>;
+	operating-points-v2 = <&gpu_opp>;
+	status = "okay";
+};
+
+/* The torch: a TI LM3644 flash driver, both LED outputs on one white LED. */
+&hsi2c4 {
+	clock-frequency = <100000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&hsi2c4_bus>;
+	status = "okay";
+
+	led-controller@63 {
+		compatible = "ti,lm3644";
+		reg = <0x63>;
+		enable-gpios = <&gpp24 1 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&torch_enable>;
+
+		led {
+			function = LED_FUNCTION_TORCH;
+			color = <LED_COLOR_ID_WHITE>;
+			led-sources = <1 2>;
+			/* A dim flashlight, far below the part's and the LED's limits. */
+			led-max-microamp = <75000>;
+		};
+	};
+};
+
+/*
+ * The MAX77779's bus: its USB-C port controller, a sink with no link to the
+ * USB controller's role yet, its fuel gauge and its charger.
+ */
+&hsi2c6 {
+	clock-frequency = <950000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&hsi2c6_bus>;
+	status = "okay";
+
+	usb_tcpc: tcpc@25 {
+		compatible = "maxim,max77779-tcpc";
+		reg = <0x25>;
+		interrupt-parent = <&gpa8>;
+		interrupts = <3 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb_pd_irq>;
+
+		connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			data-role = "dual";
+			power-role = "sink";
+			self-powered;
+			op-sink-microwatt = <2600000>;
+			sink-pdos = <PDO_FIXED(5000, 3000, PDO_FIXED_USB_COMM)>;
+		};
+	};
+
+	fuel_gauge: fuel-gauge@36 {
+		compatible = "maxim,max77779-fg";
+		reg = <0x36>;
+		shunt-resistor-micro-ohms = <2000>;
+		power-supplies = <&charger>;
+	};
+
+	charger: charger@69 {
+		compatible = "maxim,max77779-charger";
+		reg = <0x69>;
+	};
+};
+
+/* The haptics: a CS40L26 on the 9a's LRA, with Google's limits for it. */
+&hsi2c9 {
+	clock-frequency = <100000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&hsi2c9_bus>;
+	status = "okay";
+
+	haptic-driver@43 {
+		compatible = "cirrus,cs40l26a";
+		reg = <0x43>;
+		interrupt-parent = <&gpa6>;
+		interrupts = <3 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&gph2 3 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&haptic_reset>;
+		cirrus,boost-peak-microamp = <2500000>;
+		cirrus,boost-ctl-microvolt = <10000000>;
+		cirrus,lra-f0-hz = <162>;
+		cirrus,lra-redc-micro-ohms = <14100007>;
+		cirrus,vpbr-threshold-microvolt = <3008000>;
+	};
+};
+
 &pinctrl_alive {
 	status = "okay";
+
+	usb_pd_irq: usb-pd-irq-pins {
+		samsung,pins = "gpa8-3";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
+		samsung,pin-drv = <0>;
+	};
 };
 
 &pinctrl_custom_alive {
@@ -202,6 +430,13 @@
 
 &pinctrl_hsi1 {
 	status = "okay";
+
+	haptic_reset: haptic-reset-pins {
+		samsung,pins = "gph2-3";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
 };
 
 &pinctrl_hsi2 {
@@ -215,6 +450,20 @@
 &pinctrl_peric0 {
 	status = "okay";
 
+	hsi2c4_bus: hsi2c4-bus-pins {
+		samsung,pins = "gpp8-0", "gpp8-1";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_3>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
+
+	hsi2c6_bus: hsi2c6-bus-pins {
+		samsung,pins = "gpp12-0", "gpp12-1";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_3>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
+
 	touch_reset_held: touch-reset-held-pins {
 		samsung,pins = "gpp1-1";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
@@ -224,6 +473,20 @@
 
 &pinctrl_peric1 {
 	status = "okay";
+
+	hsi2c9_bus: hsi2c9-bus-pins {
+		samsung,pins = "gpp19-4", "gpp19-5";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
+
+	torch_enable: torch-enable-pins {
+		samsung,pins = "gpp24-1";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
 };
 
 &pmu_system_controller {
@@ -318,6 +581,18 @@
 &usi2_hsi0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&touch_reset_held>;
+	status = "okay";
+};
+
+&usi4 {
+	status = "okay";
+};
+
+&usi6 {
+	status = "okay";
+};
+
+&usi9 {
 	status = "okay";
 };
 
