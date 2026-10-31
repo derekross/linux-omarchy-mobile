@@ -125,6 +125,17 @@ config PHY_LPC18XX_USB_OTG
 	  This driver is need for USB0 support on LPC18xx/43xx and takes
 	  care of enabling and clock setup.
 
+config PHY_TI_TUSB2E11
+	tristate "TI TUSB2E11 eUSB2 to USB 2.0 repeater"
+	depends on I2C
+	depends on OF
+	select GENERIC_PHY
+	select REGMAP_I2C
+	help
+	  Enable this to support the TI TUSB2E11 eUSB2 to USB 2.0 repeater,
+	  as on the Google Pixel 9a. It powers the repeater, enables its port
+	  and writes the board's signal tuning.
+
 config PHY_NXP_PTN3222
 	tristate "NXP PTN3222 1-port eUSB2 to USB2 redriver"
 	depends on I2C

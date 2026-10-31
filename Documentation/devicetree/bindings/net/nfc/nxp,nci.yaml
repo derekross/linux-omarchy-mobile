@@ -26,6 +26,11 @@ properties:
               - st,st54l
           - const: nxp,nxp-nci-i2c
 
+  clocks:
+    maxItems: 1
+    description: The controller's reference clock, or the SoC clock pad
+      that feeds it on the controller's request
+
   enable-gpios:
     description: Output GPIO pin used for enabling/disabling the controller
 
