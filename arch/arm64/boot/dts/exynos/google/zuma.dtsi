@@ -355,6 +355,58 @@
 			interrupts = <GIC_SPI 649 IRQ_TYPE_LEVEL_HIGH>;
 		};
 
+		/*
+		 * CMU_PERIC1 and USI11, the I2C bus of the MAX77759 gauge,
+		 * charger and Type-C controller. Firmware leaves them running;
+		 * board files enable them.
+		 */
+		cmu_peric1: clock-controller@10c00000 {
+			compatible = "google,zuma-cmu-peric1";
+			reg = <0x10c00000 0x8000>;
+			#clock-cells = <1>;
+			clocks = <&oscclk>, <&cmu_top CLK_DOUT_PERIC1_NOC>,
+				 <&cmu_top CLK_DOUT_PERIC1_IP>;
+			clock-names = "oscclk", "bus", "ip";
+			status = "disabled";
+		};
+
+		sysreg_peric1: syscon@10c21000 {
+			compatible = "google,zuma-peric1-sysreg", "syscon";
+			reg = <0x10c21000 0x1000>;
+			clocks = <&cmu_peric1 CLK_GOUT_PERIC1_SYSREG>;
+			status = "disabled";
+		};
+
+		usi11: usi@10cb00c0 {
+			compatible = "google,zuma-usi", "samsung,exynos850-usi";
+			reg = <0x10cb00c0 0x20>;
+			clocks = <&cmu_peric1 CLK_GOUT_PERIC1_USI11_PCLK>,
+				 <&cmu_peric1 CLK_GOUT_PERIC1_USI11_IPCLK>;
+			clock-names = "pclk", "ipclk";
+			samsung,sysreg = <&sysreg_peric1 0xc>;
+			samsung,mode = <USI_MODE_I2C>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+			status = "disabled";
+
+			hsi2c_11: i2c@10cb0000 {
+				compatible = "google,zuma-hsi2c",
+					     "samsung,exynosautov9-hsi2c";
+				/* USI control starts at 0xc0; do not claim it twice. */
+				reg = <0x10cb0000 0xc0>;
+				interrupts = <GIC_SPI 659 IRQ_TYPE_LEVEL_HIGH>;
+				clocks = <&cmu_peric1 CLK_GOUT_PERIC1_USI11_IPCLK>,
+					 <&cmu_peric1 CLK_GOUT_PERIC1_USI11_PCLK>;
+				clock-names = "hsi2c", "hsi2c_pclk";
+				pinctrl-0 = <&hsi2c11_bus>;
+				pinctrl-names = "default";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				status = "disabled";
+			};
+		};
+
 		cmu_hsi0: clock-controller@11000000 {
 			compatible = "google,zuma-cmu-hsi0";
 			reg = <0x11000000 0x8000>;

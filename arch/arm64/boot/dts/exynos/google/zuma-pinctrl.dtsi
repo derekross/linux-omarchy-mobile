@@ -158,6 +158,28 @@
 		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
 		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
 	};
+
+	/* MAX77759 interrupt lines, active low with pull-ups (stock: pud 3). */
+	if_pmic_int: if-pmic-int-pins {
+		samsung,pins = "gpa8-0";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_UP>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
+	if_pmic_fg_int: if-pmic-fg-int-pins {
+		samsung,pins = "gpa7-7";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_UP>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
+	typec_int: typec-int-pins {
+		samsung,pins = "gpa8-3";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_UP>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
 };
 
 &pinctrl_custom_alive {
@@ -434,6 +456,18 @@
 		samsung,pins = "gpp21-2";
 		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
 		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
+	/*
+	 * USI11, the battery bus: stock's board file moves it to gpp21-0/1 and
+	 * sets no pull, then zuma-typec.dtsi, applied after it, sets the
+	 * pull-up (pud 3), which is what the pins end up with.
+	 */
+	hsi2c11_bus: hsi2c11-bus-pins {
+		samsung,pins = "gpp21-0", "gpp21-1";
+		samsung,pin-function = <GS101_PIN_FUNC_2>;
+		samsung,pin-pud = <GS101_PIN_PULL_UP>;
 		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
 	};
 };
