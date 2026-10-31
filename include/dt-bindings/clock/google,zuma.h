@@ -33,6 +33,21 @@
 #define CLK_DOUT_PERIC0_NOC		26
 #define CLK_DOUT_PERIC0_IP		27
 
+/* CMU_TOP: the G3D paths, and the shared PLL dividers they take. */
+#define CLK_SHARED0_D2			28
+#define CLK_SHARED0_D3			29
+#define CLK_SHARED1_D2			30
+#define CLK_SHARED1_D3			31
+#define CLK_MOUT_G3D_GLB		32
+#define CLK_MOUT_G3D_NOCD		33
+#define CLK_MOUT_G3D_SWITCH		34
+#define CLK_GOUT_G3D_GLB		35
+#define CLK_GOUT_G3D_NOCD		36
+#define CLK_GOUT_G3D_SWITCH		37
+#define CLK_DOUT_G3D_GLB		38
+#define CLK_DOUT_G3D_NOCD		39
+#define CLK_DOUT_G3D_SWITCH		40
+
 /* CMU_HSI0: USI2, the touchscreen's SPI, and USI3, the GNSS receiver's SPI. */
 #define CLK_GOUT_HSI0_ALT		1
 #define CLK_MOUT_HSI0_NOC_USER		2
@@ -103,5 +118,26 @@
 #define CLK_GOUT_PERIC0_USI14_IPCLK	6
 #define CLK_GOUT_PERIC0_USI14_PCLK	7
 #define CLK_GOUT_PERIC0_USI14_RSTNSYNC	8
+
+/* CMU_G3D: the GPU. */
+#define CLK_FOUT_G3D			1
+#define CLK_FOUT_G3D_L2			2
+#define CLK_MOUT_G3D_SWITCH_USER	3
+#define CLK_MOUT_G3D_GLB_USER		4
+#define CLK_MOUT_G3D_NOCD_USER		5
+#define CLK_MOUT_G3D_L2_GLB		6
+#define CLK_MOUT_G3D_STACKS		7
+#define CLK_MOUT_G3D_TOP		8
+#define CLK_DOUT_G3D_L2_GLB		9
+#define CLK_DOUT_G3D_STACKS		10
+#define CLK_DOUT_G3D_TOP		11
+#define CLK_MOUT_G3D_COREGROUP_USER	12
+#define CLK_MOUT_G3D_STACKS_USER	13
+#define CLK_MOUT_G3D_TOP_USER		14
+#define CLK_DOUT_G3D_NOCP		15
+#define CLK_GOUT_G3D_CMU		16
+#define CLK_GOUT_G3D_CORE		17
+#define CLK_GOUT_G3D_COREGROUP		18
+#define CLK_GOUT_G3D_STACKS		19
 
 #endif /* _DT_BINDINGS_CLOCK_GOOGLE_ZUMA_H */
