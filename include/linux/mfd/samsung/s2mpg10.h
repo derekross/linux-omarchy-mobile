@@ -290,6 +290,9 @@ enum s2mpg10_pmic_reg {
 	S2MPG10_PMIC_LDO_SENSE4,
 };
 
+/* Alarm0 pending flag in S2MPG10_PMIC_STATUS2. */
+#define S2MPG10_STATUS2_RTCA0E		BIT(2)
+
 /* Rail controlled externally, based on PCTRLSELx */
 #define S2MPG10_PMIC_CTRL_ENABLE_EXT BIT(0)
 
