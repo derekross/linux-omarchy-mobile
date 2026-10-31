@@ -195,6 +195,48 @@
 			};
 		};
 	};
+
+	pmic-2 {
+		compatible = "samsung,s2mpg15-pmic";
+
+		regulators {
+			sensor_3v3: ldo5s {
+				regulator-name = "sensor-3v3";
+			};
+
+			sensor_1v8: ldo7s {
+				regulator-name = "sensor-1v8";
+			};
+		};
+	};
+};
+
+/*
+ * The AoC's firmware is the board's own signed image; the board id and
+ * revision are stock's for this board, and GNSS type 2 is the modem's
+ * integrated receiver.
+ */
+&aoc {
+	memory-region = <&aoc_reserved>;
+	firmware-name = "aoc-tegu.bin";
+	google,board-id = <0x60b02>;
+	google,board-rev = <0x10000>;
+	google,gnss-type = <2>;
+	sensor-1v8-supply = <&sensor_1v8>;
+	sensor-3v3-supply = <&sensor_3v3>;
+	status = "okay";
+};
+
+&aoc_mbox_a32 {
+	status = "okay";
+};
+
+&aoc_mbox_f1 {
+	status = "okay";
+};
+
+&aoc_mbox_p6 {
+	status = "okay";
 };
 
 &ap2apm_mailbox {
@@ -317,6 +359,10 @@
 		 <&cmu_g3d CLK_GOUT_G3D_COREGROUP>,
 		 <&cmu_g3d CLK_GOUT_G3D_STACKS>;
 	operating-points-v2 = <&gpu_opp>;
+	status = "okay";
+};
+
+&gsa {
 	status = "okay";
 };
 
@@ -548,6 +594,10 @@
 };
 
 &sysreg_ufs {
+	status = "okay";
+};
+
+&trusty {
 	status = "okay";
 };
 
