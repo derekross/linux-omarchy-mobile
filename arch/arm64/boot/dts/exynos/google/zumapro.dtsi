@@ -1505,6 +1505,14 @@
 			};
 		};
 
+		gsa: gsa@16490000 {
+			compatible = "google,zumapro-gsa";
+			reg = <0x0 0x16490000 0x1000>;
+			reg-names = "mbox";
+			interrupts = <GIC_SPI 375 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+
 		dsi0: dsi@19440000 {
 			compatible = "google,zumapro-dsim", "google,gs201-dsim";
 			reg = <0x0 0x19440000 0x300>,
