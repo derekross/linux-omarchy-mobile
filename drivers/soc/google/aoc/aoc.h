@@ -100,6 +100,7 @@ struct aoc_soc_data {
 	bool firmware_managed_mmu;
 	bool merge_subrevision_into_type;
 	bool force_vnom_default;
+	bool zero_heaps;
 	u32 chipid_main_reg;
 	u32 chipid_main_shift;
 	u32 pcu_base;

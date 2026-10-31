@@ -1240,6 +1240,7 @@ static const struct aoc_soc_data gs201_aoc_data = {
 static const struct aoc_soc_data zumapro_aoc_data = {
 	.ordered_sensor_supplies = true,
 	.firmware_managed_mmu = true,
+	.zero_heaps = true,
 	.chipid_main_reg = 0,
 	.chipid_main_shift = 0,
 	.pcu_base = 0x1400000,
@@ -2536,6 +2537,19 @@ bool aoc_create_dma_buf_heaps(struct aoc_prvdata *prvdata)
 	prvdata->audio_playback_heap_base = base;
 	base -= CAPTURE_HEAP_SIZE;
 	prvdata->audio_capture_heap_base = base;
+
+	/*
+	 * Android's heap constructors clear the three heaps at probe; on
+	 * zumapro do the same before the firmware is ever authenticated.
+	 */
+	if (prvdata->soc->zero_heaps) {
+		memset_io((void __iomem *)prvdata->dram_virt +
+			  (base - prvdata->dram_resource.start), 0,
+			  CAPTURE_HEAP_SIZE + PLAYBACK_HEAP_SIZE +
+			  SENSOR_DIRECT_HEAP_SIZE);
+		/* Before any later authentication and start */
+		dma_wmb();
+	}
 
 	return true;
 }
