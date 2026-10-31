@@ -67,8 +67,26 @@
 		 * phone, as on the Pixel 7 Pro. The panel is DSI command mode,
 		 * so new frames reach it only once DECON0's trigger is unmasked.
 		 */
+		/*
+		 * Without a panel node simpledrm estimates the display's
+		 * physical size from its pixels at 96 dpi: 355x791 mm instead
+		 * of about 70x155 mm, which sizes everything that works in
+		 * millimetres (the on-screen keyboard is half as tall as it
+		 * should be) wrongly. simpledrm only reads width-mm and
+		 * height-mm from this node. It stays disabled so that
+		 * fw_devlink does not make the framebuffer wait for a driver
+		 * this node will never have. The size is approximate, from
+		 * the panel's published 489 ppi, not measured.
+		 */
+		panel0: panel {
+			status = "disabled";
+			width-mm = <70>;
+			height-mm = <155>;
+		};
+
 		framebuffer0: framebuffer {
 			compatible = "simple-framebuffer";
+			panel = <&panel0>;
 			memory-region = <&cont_splash_mem>;
 			width = <1344>;
 			height = <2992>;
