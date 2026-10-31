@@ -247,6 +247,8 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 #define BRCMF_PCIE_MAX_SHARED_VERSION		BRCMF_PCIE_SHARED_VERSION_9
 #define BRCMF_PCIE_SHARED_VERSION_MASK		0x00FF
 #define BRCMF_PCIE_SHARED_DMA_INDEX		0x10000
+#define BRCMF_PCIE_SHARED_D2H_SYNC_SEQNUM	0x20000
+#define BRCMF_PCIE_SHARED_D2H_SYNC_XORCSUM	0x40000
 #define BRCMF_PCIE_SHARED_DMA_2B_IDX		0x100000
 #define BRCMF_PCIE_SHARED_USE_MAILBOX		0x2000000
 #define BRCMF_PCIE_SHARED_HOSTRDY_DB1		0x10000000
@@ -2876,6 +2878,9 @@ static void brcmf_pcie_setup(struct device *dev, int ret,
 
 	bus->msgbuf->rx_dataoffset = devinfo->shared.rx_dataoffset;
 	bus->msgbuf->max_rxbufpost = devinfo->shared.max_rxbufpost;
+	bus->msgbuf->d2h_sync = devinfo->shared.flags &
+				(BRCMF_PCIE_SHARED_D2H_SYNC_SEQNUM |
+				 BRCMF_PCIE_SHARED_D2H_SYNC_XORCSUM);
 	bus->msgbuf->max_flowrings = devinfo->shared.max_flowrings;
 
 	init_waitqueue_head(&devinfo->mbdata_resp_wait);
