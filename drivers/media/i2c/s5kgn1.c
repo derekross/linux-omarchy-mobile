@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Samsung S5KGN1, S5K3J1 and S5KGM5 image sensor driver
+ * Samsung S5KGN1, S5K3J1, S5KGM5 and S5KGN8 image sensor driver
  *
  * The S5KGN1 (ISOCELL GN1) is a 50 MP Samsung Bayer sensor with dual-pixel
  * phase detection and a MIPI CSI-2 C-PHY or D-PHY output; the S5K3J1 a
@@ -239,6 +239,41 @@ static const struct s5kgn1_variant s5kgm5_variant = {
 	.delays_us = { 300, 0, 1000, 10000 },
 	.direct_page = true,
 	.clock_enable = true,
+	.soft_reset_us = 10000,
+	.crop_x_div = 1,
+};
+
+/*
+ * GN8, the Pixel 9a main camera, in stock's power-up order: pp3200_bb,
+ * pp1350, s2mpg15_ldo12 (I/O), slg51002 ldo5 (2.9 V), ldo4 (2.9 V), ldo1
+ * (2.25 V, analog), the digital supply's enable, reset released, the clock;
+ * 1 ms after each, 10 ms after the clock. Its soft reset goes through the
+ * direct page (0xfcfc = 0x4000, 0x6010 = 1), 10 ms, and nothing enables a
+ * clock after it; standard registers in the direct page. Horizontal
+ * addresses count pixels, one per column (80..8142 for a 2x2-binned 4000).
+ *
+ * [I] ldo5/ldo4 roles: both 2.9 V and shared by the sensor, EEPROM, AF and
+ * OIS nodes, so which one the sensor itself needs isn't known; both stay
+ * required here. The driver has one supply delay (after delay_supply), so
+ * stock's 1 ms between ldo5, ldo4, ldo1 and vdig is left out unless the
+ * driver grows a per-supply step.
+ */
+static const char * const s5kgn8_supplies[] = {
+	"vbb", "vbuck", "vio", "vaux", "vaux2", "vana", "vdig",
+};
+
+static const struct s5kgn1_variant s5kgn8_variant = {
+	.name = "S5KGN8",
+	.model = "s5kgn8",
+	.chip_id = 0x08e8,
+	.supplies = s5kgn8_supplies,
+	.num_supplies = ARRAY_SIZE(s5kgn8_supplies),
+	.optional = BIT(0) | BIT(1),
+	.delay_supply = 2,			/* 1 ms after vio */
+	.delays_us = { 1000, 1000, 1000, 10000 },
+	.reset_before_clock = true,		/* reset, 1 ms, clock, 10 ms */
+	.direct_page = true,
+	.clock_enable = false,
 	.soft_reset_us = 10000,
 	.crop_x_div = 1,
 };
@@ -1325,6 +1360,7 @@ static const struct of_device_id s5kgn1_of_match[] = {
 	{ .compatible = "samsung,s5k3j1", .data = &s5k3j1_variant },
 	{ .compatible = "samsung,s5kgm5", .data = &s5kgm5_variant },
 	{ .compatible = "samsung,s5kgn1", .data = &s5kgn1_variant },
+	{ .compatible = "samsung,s5kgn8", .data = &s5kgn8_variant },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, s5kgn1_of_match);
@@ -1340,5 +1376,5 @@ static struct i2c_driver s5kgn1_driver = {
 };
 module_i2c_driver(s5kgn1_driver);
 
-MODULE_DESCRIPTION("Samsung S5KGN1, S5K3J1 and S5KGM5 sensor driver");
+MODULE_DESCRIPTION("Samsung S5KGN1, S5K3J1, S5KGM5 and S5KGN8 sensor driver");
 MODULE_LICENSE("GPL");
