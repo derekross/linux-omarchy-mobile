@@ -45,6 +45,22 @@
 		enable-active-high;
 	};
 
+	/*
+	 * Without a panel node simpledrm estimates the display's physical
+	 * size from its pixels at 96 dpi: 355x791 mm instead of 70x155 mm,
+	 * which sizes everything that works in millimetres (the on-screen
+	 * keyboard is half as tall as it should be) wrongly. simpledrm only
+	 * reads width-mm and height-mm from this node. It stays disabled so
+	 * that fw_devlink does not make the framebuffer wait for a driver
+	 * this node will never have. 70x155 mm is HK3_WIDTH_MM and
+	 * HK3_HEIGHT_MM in Google's panel-gs-hk3.c for the Pixel 8 Pro.
+	 */
+	panel0: panel {
+		status = "disabled";
+		width-mm = <70>;
+		height-mm = <155>;
+	};
+
 	chosen {
 		/*
 		 * ABL requires bootargs to exist; it appends its own after these.
@@ -69,6 +85,7 @@
 		 */
 		framebuffer0: framebuffer {
 			compatible = "simple-framebuffer";
+			panel = <&panel0>;
 			memory-region = <&cont_splash_mem>;
 			width = <1344>;
 			height = <2992>;
