@@ -1,0 +1,41 @@
+#!/bin/bash
+# G3, fifth try: strace gnssd across engine starts (observation only).
+# Starts the modem with GNSS (once per boot), attaches strace to gnssd as
+# soon as it runs, and records 240 s of its syscalls plus gnssd's own log.
+# Stop condition: a modem not ONLINE, or the rails off. Afterwards the modem
+# stays up (no stop by hand); the next try needs a reboot.
+set -uo pipefail
+L=/var/log/omamobile/modem.log
+O=/var/log/omamobile/g7; mkdir -p "$O"
+say() { printf 'g7: %s\n' "$*"; }
+for n in gnss-core gnss-rf gnss-aux; do
+  r=$(grep -lx "$n" /sys/class/regulator/*/name 2>/dev/null | head -1)
+  [[ -n $r ]] || { say "STOP: no $n regulator"; exit 1; }
+  s=$(cat "$(dirname "$r")/state" 2>/dev/null)
+  say "$n: $s"; [[ $s == enabled ]] || { say "STOP: $n is $s"; exit 1; }
+done
+touch "$L"; start=$(wc -l < "$L")
+/usr/local/bin/omamobile-tegu-modem-up --gnss || { say "STOP: modem not ONLINE"; exit 1; }
+pid=
+for _ in $(seq 1 120); do
+  pid=$(pgrep -x gnssd | head -1) && [[ -n $pid ]] && break
+  sleep 0.25
+done
+[[ -n $pid ]] || { say "STOP: no gnssd"; exit 1; }
+say "gnssd pid $pid"
+timeout 75 strace -f -tt -T -yy -s 4096 -p "$pid" -o "$O/strace.txt" 2>"$O/strace.err" &
+sp=$!
+# the HAL and our client: a location request, so the engine starts
+sleep 5
+systemd-run -q --unit=x-gnss-slsi -p KillMode=control-group sh -c \
+  "OMAMOBILE_GNSS_NMEA_OUT=stdout /usr/lib/omamobile-vendor/omamobile-vendor-chroot gnss-slsi start > $O/gnss-slsi.log 2>&1"
+for i in $(seq 1 15); do
+  sleep 5
+  t=$(tail -n +"$((start + 1))" "$L")
+  hf=$(grep -c "HARDFAULT" <<<"$t"); nm=$(grep -c -E '\$G[PNL][A-Z]{3},' <<<"$t")
+  say "t=$((i * 5))s hardfaults=$hf nmea=$nm"
+done
+wait "$sp" 2>/dev/null
+tail -n +"$((start + 1))" "$L" > "$O/modem.log"
+journalctl -b --no-pager -o short-monotonic | grep -iE "gnss|kepler|cpif|ufshcd" > "$O/journal.txt"
+say "strace lines $(wc -l < "$O/strace.txt"); output in $O"

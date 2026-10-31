@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/dts-v1/;
+/plugin/;
+
+/*
+ * Pixel 9a bring-up, not for merge (MODEM-PLAN G3): the GNSS SPI with
+ * the controller's automatic chip select, as Google's driver uses for
+ * this device (no samsung,spi-chip-select-mode). Dropping the
+ * google,zumapro-spi compatible leaves google,gs101-spi, for which
+ * spi-s3c64xx in this tree lets the controller drive chip select itself.
+ * Applied to the palmtop's integration DTB (gn3).
+ */
+&spi21 {
+	compatible = "google,gs101-spi";
+};

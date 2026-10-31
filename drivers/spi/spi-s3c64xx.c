@@ -235,11 +235,16 @@ static void s3c64xx_flush_fifo(struct s3c64xx_spi_driver_data *sdd)
 	unsigned long loops;
 	u32 val;
 
-	writel(0, regs + S3C64XX_SPI_PACKET_CNT);
-
 	val = readl(regs + S3C64XX_SPI_CH_CFG);
 	val &= ~(S3C64XX_SPI_CH_RXCH_ON | S3C64XX_SPI_CH_TXCH_ON);
 	writel(val, regs + S3C64XX_SPI_CH_CFG);
+
+	/*
+	 * Clear the count only with the channels off, as Google's driver does:
+	 * with RXCH_ON set and PACKET_CNT_EN cleared the controller clocks
+	 * freely, and with automatic chip select the slave sees those edges.
+	 */
+	writel(0, regs + S3C64XX_SPI_PACKET_CNT);
 
 	val = readl(regs + S3C64XX_SPI_CH_CFG);
 	val |= S3C64XX_SPI_CH_SW_RST;
@@ -758,14 +763,26 @@ static int s3c64xx_spi_config(struct s3c64xx_spi_driver_data *sdd)
 	case 32:
 		val |= S3C64XX_SPI_MODE_BUS_TSZ_WORD;
 		val |= S3C64XX_SPI_MODE_CH_TSZ_WORD;
+		if (sdd->cntrlr_info->swap_mode)
+			writel(S3C64XX_SPI_SWAP_TX_EN | S3C64XX_SPI_SWAP_TX_BYTE |
+			       S3C64XX_SPI_SWAP_TX_HALF_WORD |
+			       S3C64XX_SPI_SWAP_RX_EN | S3C64XX_SPI_SWAP_RX_BYTE |
+			       S3C64XX_SPI_SWAP_RX_HALF_WORD,
+			       regs + S3C64XX_SPI_SWAP_CFG);
 		break;
 	case 16:
 		val |= S3C64XX_SPI_MODE_BUS_TSZ_HALFWORD;
 		val |= S3C64XX_SPI_MODE_CH_TSZ_HALFWORD;
+		if (sdd->cntrlr_info->swap_mode)
+			writel(S3C64XX_SPI_SWAP_TX_EN | S3C64XX_SPI_SWAP_TX_BYTE |
+			       S3C64XX_SPI_SWAP_RX_EN | S3C64XX_SPI_SWAP_RX_BYTE,
+			       regs + S3C64XX_SPI_SWAP_CFG);
 		break;
 	default:
 		val |= S3C64XX_SPI_MODE_BUS_TSZ_BYTE;
 		val |= S3C64XX_SPI_MODE_CH_TSZ_BYTE;
+		if (sdd->cntrlr_info->swap_mode)
+			writel(0, regs + S3C64XX_SPI_SWAP_CFG);
 		break;
 	}
 
@@ -1224,6 +1241,12 @@ static struct s3c64xx_spi_info *s3c64xx_spi_parse_dt(struct device *dev)
 
 	sci->no_cs = of_property_read_bool(dev->of_node, "no-cs-readback");
 	sci->polling = !of_property_present(dev->of_node, "dmas");
+	/*
+	 * Bring-up (Pixel 9a GNSS): Google's "swap-mode" property, the
+	 * controller's byte and half-word swap for 16- and 32-bit words, so
+	 * the bytes land in memory in wire order as with 8-bit words.
+	 */
+	sci->swap_mode = of_property_read_bool(dev->of_node, "swap-mode");
 
 	return sci;
 }

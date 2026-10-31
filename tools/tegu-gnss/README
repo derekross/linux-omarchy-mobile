@@ -1,0 +1,52 @@
+Pixel 9a GNSS SPI bring-up scripts (MODEM-PLAN G3, 2026-10-28/29)
+=================================================================
+
+Bring-up only, not for merge. The scripts that ran the tries of
+MODEM-PLAN G3 (derekross/omarchy-mobile, device/tegu/MODEM-PLAN.md) on
+the palmtop and the offline checks of their captures, published so the
+plan can link each try to what ran. Paths are the palmtop's and the
+laptop's as they were.
+
+On the palmtop (/usr/local/bin):
+
+  g7-strace.sh   fifth try onwards: start the modem with GNSS, attach
+                 strace to gnssd, request a location, record 240 s of
+                 syscalls and gnssd's log under /var/log/omamobile/g7.
+  g7-min         the morning's short sessions (installed as g7-short):
+                 engine start, 35 s of frames dumped by the gnssif
+                 built with GNSS_PKT_DEBUG, then stop, so Kepler's
+                 watchdog resets do not pile up; rx.txt holds the bytes.
+
+On the laptop, one case per fresh boot:
+
+  run-case.sh NAME "ARGS"    waits for the palmtop, runs g7-strace under
+                             systemd-run with GNSS_SPI_ARGS=ARGS (the
+                             device package's omamobile-tegu-modem-up
+                             appends them to insmod gnss_spi.ko), then
+                             counts bad checksums, ACK timeouts, watchdog
+                             and hard-fault lines in gnssd's log.
+  run-short.sh NAME "ARGS"   the same with g7-short.
+
+Offline, on a saved strace (reads of /dev/gnss_ipc) or rx.txt:
+
+  chpp.py       CHPP frames in the reads and whether their CRC32 (over
+                the 8-byte header and payload) matches the footer.
+  realign.py    valid frames per left shift of 0-7 bits (the one-bit-late
+                finding of the twenty-ninth try).
+  realign2.py   valid and invalid frames by length after a one-bit shift,
+                whole buffer and per 64-byte read.
+  bits.py       at which bit offset modulo 8 the CHPP preamble arrives.
+  frames.py     the first N reads that hold a preamble, as hex.
+  frames_dump.py  the same CRC check on the kernel-log dump of g7-min.
+  brute.py      set the dropped bit at every 64-byte read boundary of a
+                long frame every possible way and see if any passes.
+  diffpos.py    where copies of a resent frame disagree, by offset in
+                the 64-byte read.
+  long.py       the first three reads of 192 bytes or more, in 64-byte
+                rows.
+  xor.py        footer against computed CRC of the "BAD checksum" lines.
+
+g7-short: the palmtop's own copy (recovered 2026-10-29): the fifth try's
+240 s strace session, output in /var/log/omamobile/g7/, which is what
+run-short.sh counts. g7-min is the later 12 s session with its own
+directory; the two are different scripts.

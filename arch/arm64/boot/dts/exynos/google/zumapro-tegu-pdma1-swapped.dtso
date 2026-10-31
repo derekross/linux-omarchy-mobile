@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/dts-v1/;
+/plugin/;
+
+/*
+ * Pixel 9a bring-up, not for merge (MODEM-PLAN G3): the second boot with
+ * pdma1, the GNSS SPI's two DMA channels the other way round (0x15 tx,
+ * 0x14 rx), in case stock's order was wrong for mainline. Applied on top
+ * of zumapro-tegu-pdma1.dtso.
+ */
+&spi21 {
+	dma-names = "rx", "tx";
+};

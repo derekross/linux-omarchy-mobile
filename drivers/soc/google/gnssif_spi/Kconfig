@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config EXYNOS_GNSS_IF_SPI
+	tristate "Exynos GNSS SPI interface driver (Pixel 9a bring-up)"
+	depends on SPI && OF
+	default n
+	help
+	  Bring-up only, not for merge: Google's gnssif_spi driver for the
+	  GNSS core behind a SPI link (Kepler on the Pixel 9a), as ported to
+	  this tree for MODEM-PLAN G3. gnss_spi binds the SPI device and
+	  gnssif exposes /dev/gnss_ipc, /dev/gnss_boot and the Kepler control
+	  device to gnssd.

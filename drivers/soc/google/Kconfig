@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+if ARCH_EXYNOS || COMPILE_TEST
+
+menu "Google SoC drivers"
+
+source "drivers/soc/google/gnssif_spi/Kconfig"
+
+endmenu
+
+endif

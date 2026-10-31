@@ -38,6 +38,7 @@ struct s3c64xx_spi_info {
 	int num_cs;
 	bool no_cs;
 	bool polling;
+	bool swap_mode;
 	int (*cfg_gpio)(void);
 };
 

@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+
+/*
+ * Pixel 9a bring-up, not for merge (MODEM-PLAN G3): stock's pdma1, a
+ * PL330 at 0x10130000 on GIC SPI 806, with a fixed 200 MHz APB clock
+ * (the clock tree has no node for it yet), and the GNSS SPI's DMA
+ * channels as stock's overlay gives them (0x14 tx, 0x15 rx). Samsung's
+ * 36-bit address wrappers around the PL330 are not described. Applied
+ * to the palmtop's integration DTB (gn3), which has the soc and spi21
+ * labels.
+ */
+&soc {
+	pdma1_apb: clock-pdma-200m {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <200000000>;
+		clock-output-names = "pdma1-apb";
+	};
+
+	pdma1: dma-controller@10130000 {
+		compatible = "arm,pl330", "arm,primecell";
+		reg = <0x0 0x10130000 0x1000>;
+		interrupts = <GIC_SPI 806 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&pdma1_apb>;
+		clock-names = "apb_pclk";
+		#dma-cells = <1>;
+	};
+};
+
+&spi21 {
+	dmas = <&pdma1 0x14>, <&pdma1 0x15>;
+	dma-names = "tx", "rx";
+};
