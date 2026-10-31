@@ -7,7 +7,10 @@
 
 #include <linux/arm-smccc.h>
 #include <linux/array_size.h>
+#include <linux/clk-provider.h>
 #include <linux/device.h>
+#include <linux/of.h>
+#include <linux/overflow.h>
 #include <linux/soc/samsung/exynos-pmu.h>
 #include <linux/soc/samsung/exynos-regs-pmu.h>
 #include <linux/regmap.h>
@@ -343,6 +346,8 @@ const struct exynos_pmu_data gs101_pmu_data = {
 #define ZUMA_CLUSTER1_NONCPU_INT_EN	0x1544
 #define ZUMA_HSI0_STATUS		0x2a84
 #define ZUMA_PHY_CTRL_UFS		0x3ec0
+#define ZUMA_NFC_CLK_PAD		0x3e84
+#define  ZUMA_NFC_CLK_PAD_EXTPAD_EN	BIT(16)
 
 static const struct regmap_range zuma_pmu_registers[] = {
 	/* reboot mode */
@@ -360,6 +365,8 @@ static const struct regmap_range zuma_pmu_registers[] = {
 	regmap_reg_range(ZUMA_PHY_CTRL_UFS, ZUMA_PHY_CTRL_UFS),
 	/* a hint TF-A reads, not a status register: see zuma_pmu_regmap_init() */
 	regmap_reg_range(ZUMA_PMU_INFORM0, ZUMA_PMU_INFORM0),
+	/* the NFC controller's clock pad: see zuma_pmu_nfc_pad_ops */
+	regmap_reg_range(ZUMA_NFC_CLK_PAD, ZUMA_NFC_CLK_PAD),
 };
 
 static const struct regmap_range zuma_pmu_ro_registers[] = {
@@ -386,6 +393,77 @@ static const struct regmap_access_table zuma_pmu_wr_table = {
  * INVALID_PARAMETERS) until the kernel allows C2 in PMU_INFORM0, as Google's
  * exynos-cpupm does once at init.
  */
+/*
+ * The NFC controller's reference clock pad (clock 0 of the PMU): with
+ * EXTPAD_EN set the PMU follows the controller's CLK_REQ line and feeds it
+ * the pad clock, as Google's st21nfc driver sets it (pmu_clk_pad 0x3e84,
+ * st,extpad_control_en). Without it the Pixel 9a's ST54L answers NCI but
+ * never finds a card.
+ */
+struct zuma_pmu_clk_pad {
+	struct clk_hw hw;
+	struct regmap *regmap;
+};
+
+static int zuma_pmu_nfc_pad_enable(struct clk_hw *hw)
+{
+	struct zuma_pmu_clk_pad *pad = container_of(hw, struct zuma_pmu_clk_pad, hw);
+
+	return regmap_set_bits(pad->regmap, ZUMA_NFC_CLK_PAD,
+			       ZUMA_NFC_CLK_PAD_EXTPAD_EN);
+}
+
+static void zuma_pmu_nfc_pad_disable(struct clk_hw *hw)
+{
+	struct zuma_pmu_clk_pad *pad = container_of(hw, struct zuma_pmu_clk_pad, hw);
+
+	regmap_clear_bits(pad->regmap, ZUMA_NFC_CLK_PAD,
+			  ZUMA_NFC_CLK_PAD_EXTPAD_EN);
+}
+
+static int zuma_pmu_nfc_pad_is_enabled(struct clk_hw *hw)
+{
+	struct zuma_pmu_clk_pad *pad = container_of(hw, struct zuma_pmu_clk_pad, hw);
+
+	return regmap_test_bits(pad->regmap, ZUMA_NFC_CLK_PAD,
+				ZUMA_NFC_CLK_PAD_EXTPAD_EN);
+}
+
+static const struct clk_ops zuma_pmu_nfc_pad_ops = {
+	.enable = zuma_pmu_nfc_pad_enable,
+	.disable = zuma_pmu_nfc_pad_disable,
+	.is_enabled = zuma_pmu_nfc_pad_is_enabled,
+};
+
+static int zuma_pmu_register_clks(struct device *dev, struct regmap *regmap)
+{
+	struct clk_init_data init = {
+		.name = "zuma_pmu_nfc_clk_pad",
+		.ops = &zuma_pmu_nfc_pad_ops,
+	};
+	struct clk_hw_onecell_data *data;
+	struct zuma_pmu_clk_pad *pad;
+	int ret;
+
+	if (!of_property_present(dev->of_node, "#clock-cells"))
+		return 0;
+
+	pad = devm_kzalloc(dev, sizeof(*pad), GFP_KERNEL);
+	data = devm_kzalloc(dev, struct_size(data, hws, 1), GFP_KERNEL);
+	if (!pad || !data)
+		return -ENOMEM;
+
+	pad->regmap = regmap;
+	pad->hw.init = &init;
+	ret = devm_clk_hw_register(dev, &pad->hw);
+	if (ret)
+		return ret;
+
+	data->num = 1;
+	data->hws[0] = &pad->hw;
+	return devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get, data);
+}
+
 static void zuma_pmu_regmap_init(struct device *dev, struct regmap *regmap)
 {
 	int ret;
@@ -393,6 +471,10 @@ static void zuma_pmu_regmap_init(struct device *dev, struct regmap *regmap)
 	ret = regmap_write(regmap, ZUMA_PMU_INFORM0, ZUMA_PMU_ALLOWED_C2);
 	if (ret)
 		dev_warn(dev, "failed to allow C2 in PMU_INFORM0: %d\n", ret);
+
+	ret = zuma_pmu_register_clks(dev, regmap);
+	if (ret)
+		dev_warn(dev, "failed to register the PMU clocks: %d\n", ret);
 }
 
 /*
