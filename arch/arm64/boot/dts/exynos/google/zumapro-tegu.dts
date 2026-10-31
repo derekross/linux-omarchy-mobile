@@ -138,6 +138,25 @@
 		};
 	};
 
+	/* The cameras' 1.35 V (stock's PP1350_CAM), on the sub-PMIC's GPIO 2. */
+	cam_1v35: regulator-cam-1v35 {
+		compatible = "regulator-fixed";
+		regulator-name = "pp1350-cam";
+		regulator-min-microvolt = <1350000>;
+		regulator-max-microvolt = <1350000>;
+		gpio = <&pmic_sub_gpio 2 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <2000>;
+	};
+
+	/* The main camera's digital supply: a switch on the main PMIC's GPIO 0. */
+	cam_main_vdig: regulator-cam-main-vdig {
+		compatible = "regulator-fixed";
+		regulator-name = "cam-main-vdig";
+		gpio = <&pmic_main_gpio 0 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
 	/* UFS VCC, switched by gpp0-1 as on stock. */
 	ufs_vcc: regulator-ufs-vcc {
 		compatible = "regulator-fixed";
@@ -174,8 +193,14 @@
 &acpm_ipc {
 	status = "okay";
 
-	pmic-1 {
+	pmic_main: pmic-1 {
 		compatible = "samsung,s2mpg14-pmic";
+
+		pmic_main_gpio: gpio {
+			compatible = "samsung,s2mpg14-gpio";
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
 
 		regulators {
 			touch_avdd: ldo4m {
@@ -192,6 +217,28 @@
 
 			touch_vdd: ldo25m {
 				regulator-name = "touch-vdd";
+			};
+		};
+	};
+
+	/*
+	 * The sub-PMIC. Its GPIO 0 selects the camera PMIC, GPIO 1 enables
+	 * the camera buck-boost and GPIO 2 the cameras' 1.35 V, as in stock's
+	 * board description; all ten pins are outputs, low, at hand-off.
+	 */
+	pmic_sub: pmic-2 {
+		compatible = "samsung,s2mpg15-pmic";
+
+		pmic_sub_gpio: gpio {
+			compatible = "samsung,s2mpg15-gpio";
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
+
+		regulators {
+			/* the camera sensors' shared 1.8 V (stock's S2MPG15 LDO12) */
+			cam_1v8: ldo12s {
+				regulator-name = "cam-1v8";
 			};
 		};
 	};
@@ -320,7 +367,10 @@
 	status = "okay";
 };
 
-/* The torch: a TI LM3644 flash driver, both LED outputs on one white LED. */
+/*
+ * The torch (a TI LM3644 flash driver, both LED outputs on one white LED)
+ * and the cameras' power chips.
+ */
 &hsi2c4 {
 	clock-frequency = <100000>;
 	pinctrl-names = "default";
@@ -341,6 +391,76 @@
 			/* A dim flashlight, far below the part's and the LED's limits. */
 			led-max-microamp = <75000>;
 		};
+	};
+
+	/*
+	 * The camera PMIC: an SLG51002 behind the camera buck-boost, whose
+	 * LDOs feed the three camera sensors. Voltages as stock's board
+	 * description; every LDO stays off until a sensor is powered.
+	 */
+	cam_pmic: pmic@75 {
+		compatible = "dlg,slg51002";
+		reg = <0x75>;
+		dlg,cs-gpios = <&pmic_sub_gpio 0 GPIO_ACTIVE_HIGH>;
+		vin1-2-supply = <&cam_bb>;
+		vin3-supply = <&cam_bb>;
+		vin4-supply = <&cam_bb>;
+		vin5-supply = <&cam_bb>;
+
+		regulators {
+			cam_ldo1: ldo1 {
+				regulator-name = "cam-ldo1";
+				regulator-min-microvolt = <2250000>;
+				regulator-max-microvolt = <2250000>;
+			};
+
+			cam_ldo2: ldo2 {
+				regulator-name = "cam-ldo2";
+				regulator-min-microvolt = <2800000>;
+				regulator-max-microvolt = <2800000>;
+			};
+
+			cam_ldo3: ldo3 {
+				regulator-name = "cam-ldo3";
+				regulator-min-microvolt = <2800000>;
+				regulator-max-microvolt = <2800000>;
+			};
+
+			cam_ldo4: ldo4 {
+				regulator-name = "cam-ldo4";
+				regulator-min-microvolt = <2900000>;
+				regulator-max-microvolt = <2900000>;
+			};
+
+			cam_ldo5: ldo5 {
+				regulator-name = "cam-ldo5";
+				regulator-min-microvolt = <2900000>;
+				regulator-max-microvolt = <2900000>;
+			};
+
+			cam_ldo6: ldo6 {
+				regulator-name = "cam-ldo6";
+				regulator-min-microvolt = <1200000>;
+				regulator-max-microvolt = <1200000>;
+			};
+
+			cam_ldo7: ldo7 {
+				regulator-name = "cam-ldo7";
+				regulator-min-microvolt = <1200000>;
+				regulator-max-microvolt = <1200000>;
+			};
+		};
+	};
+
+	/* The camera buck-boost (stock's PP3200_CAM_BB), an RT6160. */
+	cam_bb: regulator@77 {
+		compatible = "richtek,rt6160";
+		reg = <0x77>;
+		enable-gpios = <&pmic_sub_gpio 1 GPIO_ACTIVE_HIGH>;
+		regulator-name = "pp3200-cam-bb";
+		regulator-min-microvolt = <3200000>;
+		regulator-max-microvolt = <3200000>;
+		regulator-enable-ramp-delay = <2000>;
 	};
 };
 
