@@ -356,6 +356,22 @@ void brcmf_feat_attach(struct brcmf_pub *drvr)
 
 	brcmf_feat_iovar_int_get(ifp, BRCMF_FEAT_FWSUP, "sup_wpa");
 	brcmf_feat_iovar_int_get(ifp, BRCMF_FEAT_SCAN_V2, "scan_ver");
+	if (brcmf_feat_is_enabled(ifp, BRCMF_FEAT_SCAN_V2)) {
+		struct {
+			__le16 version;
+			__le16 length;
+			__le16 major;
+		} scan_ver = {};
+
+		err = brcmf_fil_iovar_data_get(ifp, "scan_ver", &scan_ver,
+					       sizeof(scan_ver));
+		brcmf_dbg(INFO, "scan interface version %u\n",
+			  le16_to_cpu(scan_ver.major));
+		if (!err && le16_to_cpu(scan_ver.major) == 3)
+			ifp->drvr->feat_flags |= BIT(BRCMF_FEAT_SCAN_V3);
+		else if (!err && le16_to_cpu(scan_ver.major) >= 4)
+			ifp->drvr->feat_flags |= BIT(BRCMF_FEAT_SCAN_V4);
+	}
 
 	brcmf_feat_wlc_version_overrides(drvr);
 	brcmf_feat_firmware_overrides(drvr);
