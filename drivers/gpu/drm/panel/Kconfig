@@ -77,6 +77,21 @@ config DRM_PANEL_BOE_HIMAX8279D
 	  24 bit RGB per pixel. It provides a MIPI DSI interface to
 	  the host and has a built-in LED backlight.
 
+config DRM_PANEL_BOE_NT37290
+	tristate "BOE NT37290 DSI command mode panel"
+	depends on GPIOLIB
+	depends on OF
+	depends on DRM_MIPI_DSI
+	depends on BACKLIGHT_CLASS_DEVICE
+	select DRM_DISPLAY_HELPER
+	select DRM_DISPLAY_DSC_HELPER
+	help
+	  Say Y or M here if you want to enable support for the BOE
+	  NT37290 DDIC and its 1440x3120 command-mode AMOLED panel, found
+	  in BOE-variant Google Pixel 7 Pro phones. The driver can take
+	  over a panel the bootloader left running and exposes its
+	  brightness as a backlight device.
+
 config DRM_PANEL_BOE_TD4320
 	tristate "BOE TD4320 DSI panel"
 	depends on OF
