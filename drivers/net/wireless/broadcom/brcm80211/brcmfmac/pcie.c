@@ -2352,6 +2352,43 @@ brcmf_pcie_provide_random_bytes(struct brcmf_pciedev_info *devinfo, u32 address)
 				  BRCMF_RANDOM_SEED_LENGTH);
 }
 
+/*
+ * Before the host lets go of firmware that supports it, Broadcom's driver
+ * makes it trap on purpose by writing a magic number to the PCIe core's
+ * H2D doorbell 1 of function 3 ("DB7"): in its trap handler the firmware
+ * holds the chip's power resources high, which a new firmware needs to boot.
+ * Without it the always-on domain keeps the old firmware's PMU state across
+ * WL_REG_ON and an FLR, and a second download never starts
+ * (dhd_pcie.c dhdpcie_fw_trap(), DHD_DONGLE_TRAP_IN_DETACH).
+ */
+#define BRCMF_SHARED_FLAGS2_OFFSET		80
+#define BRCMF_PCIE_SHARED2_TRAP_ON_HOST_DB7	0x00040000
+#define BRCMF_PCIE_PCIE2REG_H2D3_DOORBELL1	0x174
+#define BRCMF_PCIE_DB7_MAGIC_DPC_TRAP		0xdead0002
+#define BRCMF_PCIE_DB7_TRAP_WAIT_MS		100
+
+static void brcmf_pcie_db7_trap(struct brcmf_pciedev_info *devinfo)
+{
+	u32 flags2;
+
+	if (devinfo->pdev->device != BRCM_PCIE_4398_DEVICE_ID ||
+	    !devinfo->shared.tcm_base_address)
+		return;
+
+	flags2 = brcmf_pcie_read_tcm32(devinfo,
+				       devinfo->shared.tcm_base_address +
+				       BRCMF_SHARED_FLAGS2_OFFSET);
+	if (flags2 == 0xffffffff ||
+	    !(flags2 & BRCMF_PCIE_SHARED2_TRAP_ON_HOST_DB7))
+		return;
+
+	brcmf_dbg(PCIE, "DB7 trap before release\n");
+	brcmf_pcie_write_reg32(devinfo, BRCMF_PCIE_BARO_PCIE_ENUM_OFFSET +
+			       BRCMF_PCIE_PCIE2REG_H2D3_DOORBELL1,
+			       BRCMF_PCIE_DB7_MAGIC_DPC_TRAP);
+	msleep(BRCMF_PCIE_DB7_TRAP_WAIT_MS);
+}
+
 static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
 					const struct firmware *fw, void *nvram,
 					u32 nvram_len)
@@ -3366,6 +3403,7 @@ brcmf_pcie_remove(struct pci_dev *pdev)
 	kfree(bus->msgbuf);
 	kfree(bus);
 
+	brcmf_pcie_db7_trap(devinfo);
 	brcmf_pcie_release_irq(devinfo);
 	brcmf_pcie_release_scratchbuffers(devinfo);
 	brcmf_pcie_release_ringbuffers(devinfo);
