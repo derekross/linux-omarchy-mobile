@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/display/panel/oneplus,dodge-panel.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: OnePlus 13 (dodge) DSC panel
+
+maintainers:
+  - Martin Lund <mrlund@hotmail.com>
+
+description:
+  DSC panel used on the OnePlus 13 (dodge), driven by
+  drivers/gpu/drm/panel/panel-aa569-p-3-a0019-dsc.c.
+
+allOf:
+  - $ref: panel-common.yaml#
+
+properties:
+  compatible:
+    const: oneplus,dodge-panel
+
+  reg:
+    maxItems: 1
+
+  vddio-supply: true
+  vci-supply: true
+  vdd-supply: true
+  reset-gpios: true
+  port: true
+
+required:
+  - compatible
+  - reg
+  - reset-gpios
+
+unevaluatedProperties: false
+
+...

@@ -1462,4 +1462,16 @@ config TOUCHSCREEN_HIMAX_HX83112B
 	  To compile this driver as a module, choose M here: the
 	  module will be called himax_hx83112b.
 
+config TOUCHSCREEN_SYNA_TCM2
+	tristate "Synaptics TCM touchscreen over SPI"
+	depends on SPI
+	help
+	  Say Y here if you have a Synaptics TCM touchscreen on SPI,
+	  such as the S3910 (compatible "synaptics,tcm-spi-hbp").
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called synaptics_tcm2.
+
 endif
