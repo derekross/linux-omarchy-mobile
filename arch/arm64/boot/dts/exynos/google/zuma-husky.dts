@@ -5,6 +5,7 @@
 
 /dts-v1/;
 
+#include <dt-bindings/clock/google,zuma-acpm.h>
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
 #include "zuma.dtsi"
@@ -105,6 +106,67 @@
 		};
 	};
 
+	/*
+	 * The GPU's levels: the shader rates of the Pixel 8 Pro's GPU DVFS
+	 * table, each with its paired L2 rate through the ACPM "gpu" clock,
+	 * up to stock's 890 MHz. gpu-thermal throttles them.
+	 */
+	gpu_opp: opp-table-gpu {
+		compatible = "operating-points-v2";
+
+		opp-150000000 {
+			opp-hz = /bits/ 64 <150000000>;
+		};
+
+		opp-302000000 {
+			opp-hz = /bits/ 64 <302000000>;
+		};
+
+		opp-337000000 {
+			opp-hz = /bits/ 64 <337000000>;
+		};
+
+		opp-376000000 {
+			opp-hz = /bits/ 64 <376000000>;
+		};
+
+		opp-419000000 {
+			opp-hz = /bits/ 64 <419000000>;
+		};
+
+		opp-467000000 {
+			opp-hz = /bits/ 64 <467000000>;
+		};
+
+		opp-521000000 {
+			opp-hz = /bits/ 64 <521000000>;
+		};
+
+		opp-580000000 {
+			opp-hz = /bits/ 64 <580000000>;
+		};
+
+		opp-649000000 {
+			opp-hz = /bits/ 64 <649000000>;
+		};
+
+		opp-723000000 {
+			opp-hz = /bits/ 64 <723000000>;
+		};
+
+		opp-807000000 {
+			opp-hz = /bits/ 64 <807000000>;
+		};
+
+		opp-850000000 {
+			opp-hz = /bits/ 64 <850000000>;
+		};
+
+		opp-890000000 {
+			opp-hz = /bits/ 64 <890000000>;
+		};
+	};
+
 	reserved-memory {
 		#address-cells = <2>;
 		#size-cells = <1>;
@@ -114,6 +176,71 @@
 			reg = <0x0 0xfac00000 (1344 * 2992 * 4)>;
 			no-map;
 		};
+	};
+};
+
+/*
+ * The main PMIC, behind the ACPM firmware. Its regulators are described
+ * with their consumers, which run them through the firmware.
+ */
+&acpm_ipc {
+	pmic-1 {
+		compatible = "samsung,s2mpg14-pmic";
+
+		regulators {
+			touch_avdd: ldo4m {
+				regulator-name = "touch-avdd";
+				regulator-min-microvolt = <3300000>;
+				regulator-max-microvolt = <3300000>;
+			};
+
+			touch_vdd: ldo25m {
+				regulator-name = "touch-vdd";
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+			};
+		};
+	};
+};
+
+&cmu_g3d {
+	status = "okay";
+};
+
+/*
+ * The GPU's core clock is ACPM's paired "gpu" clock, which sets the shader
+ * (G3D) and L2 (G3DL2) domains together; coregroup and stacks stay on
+ * CMU_G3D's gates.
+ */
+&gpu {
+	clocks = <&acpm_ipc ZUMA_CLK_ACPM_GPU>,
+		 <&cmu_g3d CLK_GOUT_G3D_COREGROUP>,
+		 <&cmu_g3d CLK_GOUT_G3D_STACKS>;
+	operating-points-v2 = <&gpu_opp>;
+	status = "okay";
+};
+
+&spi20 {
+	status = "okay";
+
+	/*
+	 * ST FTM5 (SALIXP, chip id 36 40), as stock's fts node: 10 MHz,
+	 * manual chip select. Not stock's axis inversion: salixp already
+	 * reports in the panel's orientation.
+	 */
+	touchscreen@0 {
+		compatible = "st,salixp";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+		interrupt-parent = <&gpn0>;
+		interrupts = <0 IRQ_TYPE_LEVEL_LOW>;
+		vdd-supply = <&touch_vdd>;
+		avdd-supply = <&touch_avdd>;
+		reset-gpios = <&gpp21 2 GPIO_ACTIVE_LOW>;
+		touchscreen-size-x = <1344>;
+		touchscreen-size-y = <2992>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&ts_irq &ts_reset>;
 	};
 };
 
@@ -139,5 +266,9 @@
 };
 
 &ufs_0_phy {
+	status = "okay";
+};
+
+&usi2_hsi0 {
 	status = "okay";
 };

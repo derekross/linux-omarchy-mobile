@@ -1,0 +1,86 @@
+/* SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause) */
+#ifndef _DT_BINDINGS_CLOCK_GOOGLE_ZUMA_H
+#define _DT_BINDINGS_CLOCK_GOOGLE_ZUMA_H
+
+/* CMU_TOP: the HSI0 NoC and peripheral clock paths. */
+#define CLK_FOUT_SHARED0		1
+#define CLK_FOUT_SHARED1		2
+#define CLK_FOUT_SHARED2		3
+#define CLK_FOUT_SHARED3		4
+#define CLK_FOUT_SPARE			5
+#define CLK_SHARED0_D4			6
+#define CLK_SHARED1_D4			7
+#define CLK_SHARED2_D2			8
+#define CLK_SHARED3_D2			9
+#define CLK_MOUT_HSI0_NOC		10
+#define CLK_GOUT_HSI0_NOC		11
+#define CLK_DOUT_HSI0_NOC		12
+#define CLK_MOUT_HSI0_PERI		13
+#define CLK_GOUT_HSI0_PERI		14
+#define CLK_DOUT_HSI0_PERI		15
+
+/* CMU_TOP: the G3D paths, and the shared PLL dividers they take. */
+#define CLK_SHARED0_D2			16
+#define CLK_SHARED0_D3			17
+#define CLK_SHARED1_D2			18
+#define CLK_SHARED1_D3			19
+#define CLK_MOUT_G3D_GLB		20
+#define CLK_MOUT_G3D_NOCD		21
+#define CLK_MOUT_G3D_SWITCH		22
+#define CLK_GOUT_G3D_GLB		23
+#define CLK_GOUT_G3D_NOCD		24
+#define CLK_GOUT_G3D_SWITCH		25
+#define CLK_DOUT_G3D_GLB		26
+#define CLK_DOUT_G3D_NOCD		27
+#define CLK_DOUT_G3D_SWITCH		28
+
+/* CMU_HSI0: USI2, the touchscreen's SPI. */
+#define CLK_GOUT_HSI0_ALT		1
+#define CLK_MOUT_HSI0_NOC_USER		2
+#define CLK_MOUT_HSI0_ALT_USER		3
+#define CLK_MOUT_HSI0_NOC_LOCAL		4
+#define CLK_MOUT_HSI0_PERI_USER		5
+#define CLK_MOUT_HSI0_USI2		6
+#define CLK_GOUT_HSI0_USI2_SOURCE	7
+#define CLK_DOUT_HSI0_USI2		8
+#define CLK_GOUT_HSI0_USI2_IP		9
+#define CLK_GOUT_HSI0_USI2_PCLK		10
+
+/* CMU_APM: the APM mailbox, its SRAM and the always-on GPIO banks. */
+#define CLK_APM_PLL_ALV_DIV2		1
+#define CLK_APM_PLL_ALV_DIV4		2
+#define CLK_APM_PLL_ALV_DIV8		3
+#define CLK_APM_PLL_ALV_DIV16		4
+#define CLK_MOUT_APM_FUNCSRC		5
+#define CLK_MOUT_APM_FUNC		6
+#define CLK_GOUT_APM_FUNC		7
+#define CLK_DOUT_APM_NOC		8
+#define CLK_GOUT_APM_MAILBOX_AP		9
+#define CLK_GOUT_APM_INTMEM_ACLK	10
+#define CLK_GOUT_APM_INTMEM_PCLK	11
+#define CLK_GOUT_APM_GPIO_ALIVE		12
+#define CLK_GOUT_APM_GPIO_FAR_ALIVE	13
+#define CLK_GOUT_APM_GPIO_CUSTOM_ALIVE	14
+
+/* CMU_G3D: the GPU. */
+#define CLK_FOUT_G3D			1
+#define CLK_FOUT_G3D_L2			2
+#define CLK_MOUT_G3D_SWITCH_USER	3
+#define CLK_MOUT_G3D_GLB_USER		4
+#define CLK_MOUT_G3D_NOCD_USER		5
+#define CLK_MOUT_G3D_L2_GLB		6
+#define CLK_MOUT_G3D_STACKS		7
+#define CLK_MOUT_G3D_TOP		8
+#define CLK_DOUT_G3D_L2_GLB		9
+#define CLK_DOUT_G3D_STACKS		10
+#define CLK_DOUT_G3D_TOP		11
+#define CLK_MOUT_G3D_COREGROUP_USER	12
+#define CLK_MOUT_G3D_STACKS_USER	13
+#define CLK_MOUT_G3D_TOP_USER		14
+#define CLK_DOUT_G3D_NOCP		15
+#define CLK_GOUT_G3D_CMU		16
+#define CLK_GOUT_G3D_CORE		17
+#define CLK_GOUT_G3D_COREGROUP		18
+#define CLK_GOUT_G3D_STACKS		19
+
+#endif /* _DT_BINDINGS_CLOCK_GOOGLE_ZUMA_H */

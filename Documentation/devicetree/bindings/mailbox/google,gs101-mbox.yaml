@@ -27,6 +27,7 @@ properties:
       - items:
           - enum:
               - google,gs201-mbox
+              - google,zuma-mbox
               - google,zumapro-mbox
           - const: google,gs101-mbox
 
