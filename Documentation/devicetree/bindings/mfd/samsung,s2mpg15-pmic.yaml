@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/mfd/samsung,s2mpg15-pmic.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Samsung S2MPG15 Power Management IC
+
+maintainers:
+  - W4HO <87742609+W4HO-ham@users.noreply.github.com>
+
+description: |
+  S2MPG15 is the sub PMIC paired with Google's Tensor G4 and is reached
+  through ACPM. Its LDOs supply the AoC sensors, the camera sensors and
+  the fingerprint sensor.
+  Interrupt, meter, GPIO and RTC functions are not described here.
+
+properties:
+  compatible:
+    const: samsung,s2mpg15-pmic
+
+  regulators:
+    type: object
+    $ref: /schemas/regulator/samsung,s2mpg15-regulator.yaml
+
+required:
+  - compatible
+  - regulators
+
+additionalProperties: false
+
+examples:
+  - |
+    pmic-2 {
+        compatible = "samsung,s2mpg15-pmic";
+
+        regulators {
+            ldo5s {
+                regulator-name = "sensor-3v3";
+            };
+
+            ldo7s {
+                regulator-name = "sensor-1v8";
+            };
+        };
+    };

@@ -22,6 +22,7 @@
 #include <linux/mfd/samsung/s2mpg12.h>
 #include <linux/mfd/samsung/s2mpg13.h>
 #include <linux/mfd/samsung/s2mpg14.h>
+#include <linux/mfd/samsung/s2mpg15.h>
 #include <linux/mfd/samsung/s2mps11.h>
 #include <linux/mfd/samsung/s2mps13.h>
 #include <linux/mfd/samsung/s2mps14.h>
@@ -2365,6 +2366,139 @@ static const struct regulator_desc s2mpg14_regulators[] = {
 	},
 };
 
+/*
+ * S2MPG15 (the Tensor G4's sub-PMIC): the LDOs Linux consumers use, from
+ * Google's GPL s2mpg15-regulator.c (voltage groups 7, 6, 6 and 7).
+ */
+static const struct regulator_desc s2mpg15_regulators[] = {
+	{
+		/* AoC sensors, 3.3 V */
+		.name = "ldo5s",
+		.id = 4,
+		.of_match = of_match_ptr("ldo5s"),
+		.regulators_node = of_match_ptr("regulators"),
+		.ops = &s2mpg14_ldo_ops,
+		.type = REGULATOR_VOLTAGE,
+		.owner = THIS_MODULE,
+		.min_uV = 1800000,
+		.uV_step = 25000,
+		.n_voltages = 64,
+		.vsel_reg = S2MPG15_PMIC_L5S_CTRL,
+		.vsel_mask = GENMASK(5, 0),
+		.enable_reg = S2MPG15_PMIC_L5S_CTRL,
+		.enable_mask = BIT(7),
+		.enable_time = 128,
+	},
+	{
+		/* AoC sensors, 1.8 V */
+		.name = "ldo7s",
+		.id = 6,
+		.of_match = of_match_ptr("ldo7s"),
+		.regulators_node = of_match_ptr("regulators"),
+		.ops = &s2mpg14_ldo_ops,
+		.type = REGULATOR_VOLTAGE,
+		.owner = THIS_MODULE,
+		.min_uV = 700000,
+		.uV_step = 25000,
+		.n_voltages = 64,
+		.vsel_reg = S2MPG15_PMIC_L7S_CTRL,
+		.vsel_mask = GENMASK(5, 0),
+		.enable_reg = S2MPG15_PMIC_L7S_CTRL,
+		.enable_mask = BIT(7),
+		.enable_time = 128,
+	},
+	{
+		/* the GNSS core */
+		.name = "ldo9s",
+		.id = 8,
+		.of_match = of_match_ptr("ldo9s"),
+		.regulators_node = of_match_ptr("regulators"),
+		.ops = &s2mpg14_ldo_ops,
+		.type = REGULATOR_VOLTAGE,
+		.owner = THIS_MODULE,
+		.min_uV = 725000,
+		.uV_step = 12500,
+		.n_voltages = 64,
+		.vsel_reg = S2MPG15_PMIC_L9S_CTRL,
+		.vsel_mask = GENMASK(5, 0),
+		.enable_reg = S2MPG15_PMIC_L9S_CTRL,
+		.enable_mask = BIT(7),
+		.enable_time = 128,
+	},
+	{
+		/* the GNSS RF front end */
+		.name = "ldo10s",
+		.id = 9,
+		.of_match = of_match_ptr("ldo10s"),
+		.regulators_node = of_match_ptr("regulators"),
+		.ops = &s2mpg14_ldo_ops,
+		.type = REGULATOR_VOLTAGE,
+		.owner = THIS_MODULE,
+		.min_uV = 700000,
+		.uV_step = 25000,
+		.n_voltages = 64,
+		.vsel_reg = S2MPG15_PMIC_L10S_CTRL,
+		.vsel_mask = GENMASK(5, 0),
+		.enable_reg = S2MPG15_PMIC_L10S_CTRL,
+		.enable_mask = BIT(7),
+		.enable_time = 128,
+	},
+	{
+		/* the GNSS auxiliary supply */
+		.name = "ldo11s",
+		.id = 10,
+		.of_match = of_match_ptr("ldo11s"),
+		.regulators_node = of_match_ptr("regulators"),
+		.ops = &s2mpg14_ldo_ops,
+		.type = REGULATOR_VOLTAGE,
+		.owner = THIS_MODULE,
+		.min_uV = 700000,
+		.uV_step = 25000,
+		.n_voltages = 64,
+		.vsel_reg = S2MPG15_PMIC_L11S_CTRL,
+		.vsel_mask = GENMASK(5, 0),
+		.enable_reg = S2MPG15_PMIC_L11S_CTRL,
+		.enable_mask = BIT(7),
+		.enable_time = 128,
+	},
+	{
+		/* the camera sensors' shared 1.8 V */
+		.name = "ldo12s",
+		.id = 11,
+		.of_match = of_match_ptr("ldo12s"),
+		.regulators_node = of_match_ptr("regulators"),
+		.ops = &s2mpg14_ldo_ops,
+		.type = REGULATOR_VOLTAGE,
+		.owner = THIS_MODULE,
+		.min_uV = 700000,
+		.uV_step = 25000,
+		.n_voltages = 64,
+		.vsel_reg = S2MPG15_PMIC_L12S_CTRL,
+		.vsel_mask = GENMASK(5, 0),
+		.enable_reg = S2MPG15_PMIC_L12S_CTRL,
+		.enable_mask = BIT(7),
+		.enable_time = 128,
+	},
+	{
+		/* the fingerprint sensor's 3.3 V */
+		.name = "ldo15s",
+		.id = 14,
+		.of_match = of_match_ptr("ldo15s"),
+		.regulators_node = of_match_ptr("regulators"),
+		.ops = &s2mpg14_ldo_ops,
+		.type = REGULATOR_VOLTAGE,
+		.owner = THIS_MODULE,
+		.min_uV = 1800000,
+		.uV_step = 25000,
+		.n_voltages = 64,
+		.vsel_reg = S2MPG15_PMIC_L15S_CTRL,
+		.vsel_mask = GENMASK(5, 0),
+		.enable_reg = S2MPG15_PMIC_L15S_CTRL,
+		.enable_mask = BIT(7),
+		.enable_time = 128,
+	},
+};
+
 static int s2mps11_handle_ext_control(struct s2mps11_info *s2mps11,
 				      struct regulator_dev *rdev)
 {
@@ -2452,6 +2586,10 @@ static int s2mps11_pmic_probe(struct platform_device *pdev)
 		rdev_num = ARRAY_SIZE(s2mpg14_regulators);
 		regulators = s2mpg14_regulators;
 		break;
+	case S2MPG15:
+		rdev_num = ARRAY_SIZE(s2mpg15_regulators);
+		regulators = s2mpg15_regulators;
+		break;
 	case S2MPS11X:
 		rdev_num = ARRAY_SIZE(s2mps11_regulators);
 		regulators = s2mps11_regulators;
@@ -2515,7 +2653,7 @@ static int s2mps11_pmic_probe(struct platform_device *pdev)
 		else
 			rdesc = &regulators[i];
 
-		if (s2mps11->dev_type == S2MPG14 &&
+		if ((s2mps11->dev_type == S2MPG14 || s2mps11->dev_type == S2MPG15) &&
 		    !s2mpg14_regulator_is_described(&pdev->dev, rdesc))
 			continue;
 
@@ -2540,6 +2678,7 @@ static const struct platform_device_id s2mps11_pmic_id[] = {
 	{ .name = "s2mpg12-regulator", .driver_data = S2MPG12 },
 	{ .name = "s2mpg13-regulator", .driver_data = S2MPG13 },
 	{ .name = "s2mpg14-regulator", .driver_data = S2MPG14 },
+	{ .name = "s2mpg15-regulator", .driver_data = S2MPG15 },
 	{ .name = "s2mps11-regulator", .driver_data = S2MPS11X },
 	{ .name = "s2mps13-regulator", .driver_data = S2MPS13X },
 	{ .name = "s2mps14-regulator", .driver_data = S2MPS14X },
