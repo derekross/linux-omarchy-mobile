@@ -7749,7 +7749,7 @@ static int brcmf_setup_wiphy(struct wiphy *wiphy, struct brcmf_if *ifp)
 	struct ieee80211_supported_band *band;
 	u16 max_interfaces = 0;
 	bool gscan;
-	__le32 bandlist[3];
+	__le32 bandlist[4];	/* count, then up to 2.4, 5 and 6 GHz */
 	u32 n_bands;
 	int err, i;
 
