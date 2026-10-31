@@ -108,9 +108,8 @@
 
 	/*
 	 * The GPU's levels: the shader rates of the Pixel 8 Pro's GPU DVFS
-	 * table up to 649 MHz, each with its paired L2 rate through the ACPM
-	 * "gpu" clock. The levels above, to 890 MHz, wait for a GPU thermal
-	 * zone.
+	 * table, each with its paired L2 rate through the ACPM "gpu" clock,
+	 * up to stock's 890 MHz. gpu-thermal throttles them.
 	 */
 	gpu_opp: opp-table-gpu {
 		compatible = "operating-points-v2";
@@ -149,6 +148,22 @@
 
 		opp-649000000 {
 			opp-hz = /bits/ 64 <649000000>;
+		};
+
+		opp-723000000 {
+			opp-hz = /bits/ 64 <723000000>;
+		};
+
+		opp-807000000 {
+			opp-hz = /bits/ 64 <807000000>;
+		};
+
+		opp-850000000 {
+			opp-hz = /bits/ 64 <850000000>;
+		};
+
+		opp-890000000 {
+			opp-hz = /bits/ 64 <890000000>;
 		};
 	};
 
