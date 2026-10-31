@@ -1645,6 +1645,86 @@
 			status = "disabled";
 		};
 
+		/*
+		 * The ISP front end: its camera receiver links, their MIPI
+		 * DC-PHY slaves and the CSIS core that writes frames to memory
+		 * through logical channels. The bootloader leaves the block
+		 * powered and its CMU_ISPFE gates on; there's no power domain
+		 * or CMU_ISPFE driver yet.
+		 */
+		sysreg_ispfe: syscon@1c020000 {
+			compatible = "google,zumapro-ispfe-sysreg", "syscon";
+			reg = <0x0 0x1c020000 0x10000>;
+			status = "disabled";
+		};
+
+		/*
+		 * Link n's registers are at 0x1c040000 + n * 0x10000 and its
+		 * interrupt is SPI 467 + n; all links share the CSIS core and
+		 * its interrupt. Only the links the Pixel 9a's cameras use are
+		 * described.
+		 */
+		csis0: csis@1c040000 {
+			compatible = "google,zumapro-csis";
+			reg = <0x0 0x1c040000 0x1000>, <0x0 0x1c320000 0x2000>;
+			reg-names = "link", "core";
+			interrupts = <GIC_SPI 467 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 479 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "link", "core";
+			/* INT DVFS (the ISP-FE NOC clock's rail), then the clock */
+			clocks = <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_INT>,
+				 <&cmu_top CLK_DOUT_ISPFE_NOC>;
+			clock-names = "int", "fe";
+			phys = <&csis_dcphy 0>;
+			google,csis-link = <0>;
+			status = "disabled";
+		};
+
+		csis1: csis@1c050000 {
+			compatible = "google,zumapro-csis";
+			reg = <0x0 0x1c050000 0x1000>, <0x0 0x1c320000 0x2000>;
+			reg-names = "link", "core";
+			interrupts = <GIC_SPI 468 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 479 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "link", "core";
+			clocks = <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_INT>,
+				 <&cmu_top CLK_DOUT_ISPFE_NOC>;
+			clock-names = "int", "fe";
+			phys = <&csis_dcphy 1>;
+			google,csis-link = <1>;
+			status = "disabled";
+		};
+
+		/* Four D-PHY lanes on slave 5 with slave 6's clock lane. */
+		csis6: csis@1c0a0000 {
+			compatible = "google,zumapro-csis";
+			reg = <0x0 0x1c0a0000 0x1000>, <0x0 0x1c320000 0x2000>;
+			reg-names = "link", "core";
+			interrupts = <GIC_SPI 473 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 479 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "link", "core";
+			clocks = <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_INT>,
+				 <&cmu_top CLK_DOUT_ISPFE_NOC>;
+			clock-names = "int", "fe";
+			phys = <&csis_dcphy 6>;
+			google,csis-link = <6>;
+			status = "disabled";
+		};
+
+		/*
+		 * The DC-PHY slaves (bias at +0x1000), their resets in the
+		 * ISP-FE sysreg at 0x500 (bit n for slave n), and their PMU
+		 * isolation at 0x3ebc as on gs201.
+		 */
+		csis_dcphy: phy@1c100000 {
+			compatible = "google,zumapro-mipi-dcphy-rx";
+			reg = <0x0 0x1c100000 0x4000>;
+			#phy-cells = <1>;
+			samsung,pmu-syscon = <&pmu_system_controller 0x3ebc>;
+			google,reset-sysreg = <&sysreg_ispfe 0x500>;
+			status = "disabled";
+		};
+
 		/* The bootloader leaves G3D powered; there's no power domain yet. */
 		cmu_g3d: clock-controller@1ee00000 {
 			compatible = "google,zumapro-cmu-g3d";
