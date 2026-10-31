@@ -12,6 +12,7 @@
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/linux-event-codes.h>
 #include <dt-bindings/leds/common.h>
+#include <dt-bindings/media/video-interfaces.h>
 #include <dt-bindings/usb/pd.h>
 #include "../exynos-pinctrl.h"
 #include "zumapro.dtsi"
@@ -288,6 +289,51 @@
 	status = "okay";
 };
 
+/* The main camera's receiver: three C-PHY trios on DC-PHY slave 0. */
+&csis0 {
+	/* without them the link decodes frame starts and nothing else */
+	google,lrte-packet-delimiters;
+	status = "okay";
+
+	port {
+		csis0_in: endpoint {
+			remote-endpoint = <&cam_main_out>;
+			bus-type = <MEDIA_BUS_TYPE_CSI2_CPHY>;
+			data-lanes = <1 2 3>;
+		};
+	};
+};
+
+/* The ultrawide's receiver: four D-PHY lanes on slave 1. */
+&csis1 {
+	status = "okay";
+
+	port {
+		csis1_in: endpoint {
+			remote-endpoint = <&cam_uw_out>;
+			data-lanes = <1 2 3 4>;
+		};
+	};
+};
+
+/* The front camera's receiver. */
+&csis6 {
+	status = "okay";
+
+	port {
+		csis6_in: endpoint {
+			remote-endpoint = <&cam_front_out>;
+			data-lanes = <1 2 3 4>;
+		};
+	};
+};
+
+/* The receive settings are a data file taken from the owner's own phone. */
+&csis_dcphy {
+	firmware-name = "omamobile/camera/zumapro-dcphy.bin";
+	status = "okay";
+};
+
 /*
  * DECON0 scans out to DSIM0, so gs-decon can switch the link and the
  * panel between 60 and 120 Hz.
@@ -365,6 +411,91 @@
 		 <&cmu_g3d CLK_GOUT_G3D_STACKS>;
 	operating-points-v2 = <&gpu_opp>;
 	status = "okay";
+};
+
+/*
+ * The ultrawide, a Sony IMX712 (stock's sensor-leshen-uw), powered in stock's
+ * order: PP3200_CAM_BB, PP1350, LDO12S, LDO3, LDO6, reset, master clock.
+ * Master clock: CMU_TOP CIS_CLK0 from OSCCLK (24.576 MHz; stock asks for
+ * 24 MHz), out on gpp3-0.
+ */
+&hsi2c2 {
+	clock-frequency = <400000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&hsi2c2_bus>;
+	status = "okay";
+
+	cam_uw: camera@1a {
+		compatible = "sony,imx712";
+		reg = <0x1a>;
+		clocks = <&cmu_top CLK_DOUT_CIS_CLK0>;
+		assigned-clocks = <&cmu_top CLK_MOUT_CIS_CLK0>,
+				  <&cmu_top CLK_DOUT_CIS_CLK0>;
+		assigned-clock-parents = <&oscclk>, <0>;
+		assigned-clock-rates = <0>, <24576000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_uw_mclk>;
+		/* high runs the sensor */
+		reset-gpios = <&gpp4 2 GPIO_ACTIVE_LOW>;
+		vbb-supply = <&cam_bb>;
+		vbuck-supply = <&cam_1v35>;
+		vif-supply = <&cam_1v8>;
+		vdig-supply = <&cam_ldo6>;
+		vana-supply = <&cam_ldo3>;
+		firmware-name = "omamobile/camera/imx712-uw.bin";
+		orientation = <1>;	/* back */
+
+		port {
+			cam_uw_out: endpoint {
+				remote-endpoint = <&csis1_in>;
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <552960000 479232000>;
+			};
+		};
+	};
+};
+
+/*
+ * The front camera, a second IMX712 (stock's sensor-leshen), powered in
+ * stock's order: PP3200_CAM_BB, PP1350, LDO12S, LDO2, LDO7, reset, master
+ * clock (CMU_TOP CIS_CLK1 from OSCCLK, out on gpp5-0). This bus has no
+ * external pull-ups; stock turns the internal ones on.
+ */
+&hsi2c3 {
+	clock-frequency = <400000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&hsi2c3_bus>;
+	status = "okay";
+
+	cam_front: camera@1a {
+		compatible = "sony,imx712";
+		reg = <0x1a>;
+		clocks = <&cmu_top CLK_DOUT_CIS_CLK1>;
+		assigned-clocks = <&cmu_top CLK_MOUT_CIS_CLK1>,
+				  <&cmu_top CLK_DOUT_CIS_CLK1>;
+		assigned-clock-parents = <&oscclk>, <0>;
+		assigned-clock-rates = <0>, <24576000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_front_mclk>;
+		/* high runs the sensor */
+		reset-gpios = <&gpp6 2 GPIO_ACTIVE_LOW>;
+		vbb-supply = <&cam_bb>;
+		vbuck-supply = <&cam_1v35>;
+		vif-supply = <&cam_1v8>;
+		vdig-supply = <&cam_ldo7>;
+		vana-supply = <&cam_ldo2>;
+		/* the same sensor and modes as the ultrawide */
+		firmware-name = "omamobile/camera/imx712-uw.bin";
+		orientation = <0>;	/* front */
+
+		port {
+			cam_front_out: endpoint {
+				remote-endpoint = <&csis6_in>;
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <552960000 479232000>;
+			};
+		};
+	};
 };
 
 /*
@@ -461,6 +592,53 @@
 		regulator-min-microvolt = <3200000>;
 		regulator-max-microvolt = <3200000>;
 		regulator-enable-ramp-delay = <2000>;
+	};
+};
+
+/*
+ * The main camera, a Samsung GN8 (stock's sensor-barghest), on three C-PHY
+ * trios, powered in stock's order: PP3200_CAM_BB, PP1350, LDO12S, LDO5,
+ * LDO4, LDO1, the digital supply, reset, master clock. Master clock:
+ * CMU_TOP CIS_CLK3 from OSCCLK (24.576 MHz; stock asks for 26 MHz), out on
+ * gpp9-0. Bus pins pulled up internally, as stock.
+ */
+&hsi2c5 {
+	clock-frequency = <400000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&hsi2c5_bus>;
+	status = "okay";
+
+	cam_main: camera@56 {
+		compatible = "samsung,s5kgn8";
+		reg = <0x56>;
+		clocks = <&cmu_top CLK_DOUT_CIS_CLK3>;
+		assigned-clocks = <&cmu_top CLK_MOUT_CIS_CLK3>,
+				  <&cmu_top CLK_DOUT_CIS_CLK3>;
+		assigned-clock-parents = <&oscclk>, <0>;
+		assigned-clock-rates = <0>, <24576000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_main_mclk>;
+		reset-gpios = <&gpp10 2 GPIO_ACTIVE_LOW>;
+		vbb-supply = <&cam_bb>;
+		vbuck-supply = <&cam_1v35>;
+		vio-supply = <&cam_1v8>;
+		vaux-supply = <&cam_ldo5>;
+		vaux2-supply = <&cam_ldo4>;
+		vana-supply = <&cam_ldo1>;
+		vdig-supply = <&cam_main_vdig>;
+		firmware-name = "omamobile/camera/s5kgn8-main.bin";
+		/* its lines burst at over 2 GB/s; 550 MB/s lines land cleanly */
+		samsung,max-line-throughput = <500>;
+		orientation = <1>;	/* back */
+
+		port {
+			cam_main_out: endpoint {
+				remote-endpoint = <&csis0_in>;
+				bus-type = <MEDIA_BUS_TYPE_CSI2_CPHY>;
+				data-lanes = <1 2 3>;
+				link-frequencies = /bits/ 64 <1370112000>;
+			};
+		};
 	};
 };
 
@@ -570,10 +748,52 @@
 &pinctrl_peric0 {
 	status = "okay";
 
+	cam_front_mclk: cam-front-mclk-pins {
+		samsung,pins = "gpp5-0";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <1>;
+	};
+
+	cam_main_mclk: cam-main-mclk-pins {
+		samsung,pins = "gpp9-0";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <1>;
+	};
+
+	cam_uw_mclk: cam-uw-mclk-pins {
+		samsung,pins = "gpp3-0";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <1>;
+	};
+
+	hsi2c2_bus: hsi2c2-bus-pins {
+		samsung,pins = "gpp4-0", "gpp4-1";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_3>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
+
+	hsi2c3_bus: hsi2c3-bus-pins {
+		samsung,pins = "gpp6-0", "gpp6-1";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_3>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
+		samsung,pin-drv = <0>;
+	};
+
 	hsi2c4_bus: hsi2c4-bus-pins {
 		samsung,pins = "gpp8-0", "gpp8-1";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_3>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
+
+	hsi2c5_bus: hsi2c5-bus-pins {
+		samsung,pins = "gpp10-0", "gpp10-1";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_3>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
 		samsung,pin-drv = <0>;
 	};
 
@@ -641,6 +861,10 @@
 	status = "okay";
 };
 
+&sysreg_ispfe {
+	status = "okay";
+};
+
 &sysreg_peric0 {
 	status = "okay";
 };
@@ -694,6 +918,10 @@
 	status = "okay";
 };
 
+&usi2 {
+	status = "okay";
+};
+
 /*
  * Hold the touchscreen in reset before the USI's probe switches it to SPI;
  * the touch driver releases it.
@@ -704,7 +932,15 @@
 	status = "okay";
 };
 
+&usi3 {
+	status = "okay";
+};
+
 &usi4 {
+	status = "okay";
+};
+
+&usi5 {
 	status = "okay";
 };
 
