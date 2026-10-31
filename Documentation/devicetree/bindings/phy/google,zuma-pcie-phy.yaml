@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/phy/google,zuma-pcie-phy.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Google zuma PCIe Gen3 PHY
+
+maintainers:
+  - Brett-Michael Green <brett@bmgvisualtech.com>
+
+description:
+  The one-lane PCIe Gen3 PHY of the Google zuma (Tensor G3) SoC's second
+  PCIe controller, which connects the Wi-Fi chip on Pixel 8 phones. Its
+  reference clock comes from an external PLL in the UDBG block, selected as
+  the PHY's input clock in the controller's SOC block. The PMU isolates the
+  PHY until it is released.
+
+properties:
+  compatible:
+    const: google,zuma-pcie-phy
+
+  reg:
+    items:
+      - description: PMA registers
+      - description: PCS registers
+      - description: PHY reset registers in the controller's sub-control space
+      - description: UDBG (external PLL) registers
+      - description: SOC (PHY input clock selection) registers
+
+  reg-names:
+    items:
+      - const: pma
+      - const: pcs
+      - const: rst
+      - const: udbg
+      - const: soc
+
+  "#phy-cells":
+    const: 0
+
+  samsung,pmu-syscon:
+    $ref: /schemas/types.yaml#/definitions/phandle-array
+    items:
+      - items:
+          - description: phandle of the PMU system controller
+          - description: offset of this PHY's control (isolation) register
+    description:
+      The PMU and the offset of this PHY's isolation control.
+
+required:
+  - compatible
+  - reg
+  - reg-names
+  - "#phy-cells"
+  - samsung,pmu-syscon
+
+additionalProperties: false
+
+examples:
+  - |
+    phy@13160000 {
+        compatible = "google,zuma-pcie-phy";
+        reg = <0x13160000 0x3000>, <0x13140000 0x5000>,
+              <0x13121400 0x10>, <0x13150000 0xd000>,
+              <0x13130000 0x5000>;
+        reg-names = "pma", "pcs", "rst", "udbg", "soc";
+        samsung,pmu-syscon = <&pmu_system_controller 0x3ec8>;
+        #phy-cells = <0>;
+    };
