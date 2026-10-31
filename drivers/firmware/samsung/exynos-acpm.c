@@ -738,9 +738,15 @@ static int acpm_channels_init(struct acpm_info *acpm)
 
 		achan->chan = mbox_request_channel(cl, 0);
 		if (IS_ERR(achan->chan)) {
-			dev_warn(dev, "chan %d: no mailbox channel (%pe), skipped\n",
-				 i, achan->chan);
+			ret = PTR_ERR(achan->chan);
 			achan->chan = NULL;
+			/* The mailbox may simply not have probed yet. */
+			if (ret == -EPROBE_DEFER)
+				return dev_err_probe(dev, ret,
+						     "chan %d: no mailbox channel yet\n",
+						     i);
+			dev_warn(dev, "chan %d: no mailbox channel (%pe), skipped\n",
+				 i, ERR_PTR(ret));
 			continue;
 		}
 
