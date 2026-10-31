@@ -625,6 +625,35 @@ static const struct regmap_config s2mpg14_regmap_config_pmic = {
 	.wr_table = &s2mpg14_pmic_wr_table,
 };
 
+/* GPIO block: masks, status and the SET registers; INT1-2 (clear on read) stay out. */
+static const struct regmap_range s2mpg14_gpio_rd_registers[] = {
+	regmap_reg_range(S2MPG14_GPIO_INT1M, S2MPG14_GPIO_5_SET),
+};
+
+static const struct regmap_range s2mpg14_gpio_wr_registers[] = {
+	regmap_reg_range(S2MPG14_GPIO_0_SET, S2MPG14_GPIO_5_SET),
+};
+
+static const struct regmap_access_table s2mpg14_gpio_rd_table = {
+	.yes_ranges = s2mpg14_gpio_rd_registers,
+	.n_yes_ranges = ARRAY_SIZE(s2mpg14_gpio_rd_registers),
+};
+
+static const struct regmap_access_table s2mpg14_gpio_wr_table = {
+	.yes_ranges = s2mpg14_gpio_wr_registers,
+	.n_yes_ranges = ARRAY_SIZE(s2mpg14_gpio_wr_registers),
+};
+
+static const struct regmap_config s2mpg14_regmap_config_gpio = {
+	.name = "gpio",
+	.reg_bits = ACPM_ADDR_BITS,
+	.val_bits = 8,
+	.max_register = S2MPG14_GPIO_5_SET,
+	.wr_table = &s2mpg14_gpio_wr_table,
+	.rd_table = &s2mpg14_gpio_rd_table,
+	.cache_type = REGCACHE_NONE,
+};
+
 /* The sub-PMIC's revision and the LDO controls its consumers use. */
 static const struct regmap_range s2mpg15_common_registers[] = {
 	regmap_reg_range(S2MPG15_COMMON_CHIPID, S2MPG15_COMMON_CHIPID),
@@ -665,6 +694,35 @@ static const struct regmap_range s2mpg15_pmic_registers[] = {
 static const struct regmap_access_table s2mpg15_pmic_table = {
 	.yes_ranges = s2mpg15_pmic_registers,
 	.n_yes_ranges = ARRAY_SIZE(s2mpg15_pmic_registers),
+};
+
+/* GPIO block: masks, status and the SET registers; INT1-3 (clear on read) stay out. */
+static const struct regmap_range s2mpg15_gpio_rd_registers[] = {
+	regmap_reg_range(S2MPG15_GPIO_INT1M, S2MPG15_GPIO_9_SET),
+};
+
+static const struct regmap_range s2mpg15_gpio_wr_registers[] = {
+	regmap_reg_range(S2MPG15_GPIO_0_SET, S2MPG15_GPIO_9_SET),
+};
+
+static const struct regmap_access_table s2mpg15_gpio_rd_table = {
+	.yes_ranges = s2mpg15_gpio_rd_registers,
+	.n_yes_ranges = ARRAY_SIZE(s2mpg15_gpio_rd_registers),
+};
+
+static const struct regmap_access_table s2mpg15_gpio_wr_table = {
+	.yes_ranges = s2mpg15_gpio_wr_registers,
+	.n_yes_ranges = ARRAY_SIZE(s2mpg15_gpio_wr_registers),
+};
+
+static const struct regmap_config s2mpg15_regmap_config_gpio = {
+	.name = "gpio",
+	.reg_bits = ACPM_ADDR_BITS,
+	.val_bits = 8,
+	.max_register = S2MPG15_GPIO_9_SET,
+	.wr_table = &s2mpg15_gpio_wr_table,
+	.rd_table = &s2mpg15_gpio_rd_table,
+	.cache_type = REGCACHE_NONE,
 };
 
 static const struct regmap_config s2mpg15_regmap_config_pmic = {
@@ -911,6 +969,7 @@ static const struct sec_pmic_acpm_platform_data s2mpg14_data = {
 	.speedy_channel = 0,
 	.regmap_cfg_common = &s2mpg14_regmap_config_common,
 	.regmap_cfg_pmic = &s2mpg14_regmap_config_pmic,
+	.regmap_cfg_gpio = &s2mpg14_regmap_config_gpio,
 	.no_irq = true,
 };
 
@@ -920,6 +979,7 @@ static const struct sec_pmic_acpm_platform_data s2mpg15_data = {
 	.speedy_channel = 1,
 	.regmap_cfg_common = &s2mpg15_regmap_config_common,
 	.regmap_cfg_pmic = &s2mpg15_regmap_config_pmic,
+	.regmap_cfg_gpio = &s2mpg15_regmap_config_gpio,
 	.no_irq = true,
 };
 

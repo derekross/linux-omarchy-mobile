@@ -75,14 +75,16 @@ static const struct mfd_cell s2mpg13_devs[] = {
 	MFD_CELL_OF("s2mpg13-gpio", NULL, NULL, 0, 0, "samsung,s2mpg13-gpio"),
 };
 
-/* Only the qualified LDOs; no RTC, interrupt, GPIO or protection writes. */
+/* The qualified LDOs and the GPIOs; no RTC, interrupt or protection writes. */
 static const struct mfd_cell s2mpg14_devs[] = {
 	MFD_CELL_NAME("s2mpg14-regulator"),
+	MFD_CELL_OF("s2mpg14-gpio", NULL, NULL, 0, 0, "samsung,s2mpg14-gpio"),
 };
 
-/* The sub-PMIC's LDOs; no interrupt, meter, GPIO or RTC. */
+/* The sub-PMIC's LDOs and GPIOs; no interrupt, meter or RTC. */
 static const struct mfd_cell s2mpg15_devs[] = {
 	MFD_CELL_NAME("s2mpg15-regulator"),
+	MFD_CELL_OF("s2mpg15-gpio", NULL, NULL, 0, 0, "samsung,s2mpg15-gpio"),
 };
 
 static const struct resource s2mps11_rtc_resources[] = {
