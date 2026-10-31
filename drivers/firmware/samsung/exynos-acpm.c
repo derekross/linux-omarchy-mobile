@@ -379,9 +379,6 @@ static int acpm_dequeue_by_polling(struct acpm_chan *achan,
 		udelay(20);
 	} while (ktime_before(ktime_get(), timeout));
 
-	dev_err(dev, "Timeout! ch:%u s:%u bitmap:%lx.\n",
-		achan->id, seqnum, achan->bitmap_seqnum[0]);
-
 	/*
 	 * Abandon the request rather than hold its sequence slot for good:
 	 * acpm_get_rx() releases the slot if the firmware answers later, and
@@ -389,9 +386,26 @@ static int acpm_dequeue_by_polling(struct acpm_chan *achan,
 	 * would be handed to the next request while the firmware still owes
 	 * an answer carrying the same sequence number, and that answer would
 	 * then be delivered as the new request's.
+	 *
+	 * Decide under rx_lock, after one more look at completed: another
+	 * thread draining the queue may have saved this answer just before
+	 * the deadline, and marking the slot abandoned after that would leak
+	 * it, since no further answer will come to release it. In that case
+	 * the request has in fact succeeded, late.
 	 */
-	/* Pairs with smp_load_acquire() in acpm_get_rx(). */
-	smp_store_release(&achan->rx_data[seqnum - 1].abandoned, true);
+	scoped_guard(mutex, &achan->rx_lock) {
+		/* Pairs with smp_store_release() in acpm_get_rx(). */
+		if (smp_load_acquire(&achan->rx_data[seqnum - 1].completed)) {
+			if (!native_match)
+				acpm_get_saved_rx(achan, xfer, seqnum);
+			clear_bit_unlock(seqnum - 1, achan->bitmap_seqnum);
+			return 0;
+		}
+		dev_err(dev, "Timeout! ch:%u s:%u bitmap:%lx.\n",
+			achan->id, seqnum, achan->bitmap_seqnum[0]);
+		/* Pairs with smp_load_acquire() in acpm_get_rx(). */
+		smp_store_release(&achan->rx_data[seqnum - 1].abandoned, true);
+	}
 
 	return -ETIME;
 }
