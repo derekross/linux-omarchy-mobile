@@ -237,6 +237,39 @@ static const struct acpm_clk_driver_data acpm_clk_zumapro = {
 	.mbox_chan_id = 0,
 };
 
+/*
+ * Tensor G3 (zuma): the same 17 DVFS domains as zumapro (Google's
+ * enum acpm_dvfs_id is zuma's), and the Pixel 8 Pro's GPU DVFS table (its
+ * stock gpu_dvfs_table_v2) is the 9a's, pair for pair. Stock stops at
+ * 890 MHz (gpu_dvfs_max_freq in Google's zuma-gpu.dtsi), so the 940 MHz
+ * level is left out.
+ */
+static unsigned int zuma_gpu_max_khz;
+module_param(zuma_gpu_max_khz, uint, 0644);
+MODULE_PARM_DESC(zuma_gpu_max_khz,
+		 "zuma: highest GPU shader rate in kHz, 0 = read-only (default)");
+
+static const struct acpm_clk_paired zuma_acpm_paired[] = {
+	{
+		.name = "gpu",
+		.id = 7,	/* G3D: shader cores */
+		.id2 = 8,	/* G3DL2: top level and L2 */
+		.pairs = zumapro_gpu_pairs,
+		.nr_pairs = ARRAY_SIZE(zumapro_gpu_pairs) - 1,
+		.max_khz = &zuma_gpu_max_khz,
+	},
+};
+
+static const struct acpm_clk_driver_data acpm_clk_zuma = {
+	.clks = zumapro_acpm_clks,
+	.nr_clks = ARRAY_SIZE(zumapro_acpm_clks),
+	.paired = zuma_acpm_paired,
+	.nr_paired = ARRAY_SIZE(zuma_acpm_paired),
+	/* Show the firmware's rate, not the last one asked for. */
+	.flags = CLK_GET_RATE_NOCACHE,
+	.mbox_chan_id = 0,
+};
+
 static unsigned long acpm_clk_recalc_rate(struct clk_hw *hw,
 					  unsigned long parent_rate)
 {
@@ -476,6 +509,9 @@ static const struct platform_device_id acpm_clk_id[] = {
 	}, {
 		.name = "gs201-acpm-clk",
 		.driver_data = (kernel_ulong_t)&acpm_clk_gs201,
+	}, {
+		.name = "zuma-acpm-clk",
+		.driver_data = (kernel_ulong_t)&acpm_clk_zuma,
 	}, {
 		.name = "zumapro-acpm-clk",
 		.driver_data = (kernel_ulong_t)&acpm_clk_zumapro,
