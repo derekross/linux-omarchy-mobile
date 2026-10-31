@@ -147,6 +147,18 @@
 		regulator-boot-on;
 		regulator-always-on;
 	};
+
+	/*
+	 * WL_REG_ON (gph3-4), the Wi-Fi chip's power enable (stock's
+	 * pcie,wlan-gpio), raised 150 ms before the PCIe PHY is configured.
+	 */
+	wlan_reg_on: regulator-wlan-reg-on {
+		compatible = "regulator-fixed";
+		regulator-name = "wlan-reg-on";
+		gpio = <&gph3 4 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <150000>;
+	};
 };
 
 &{/reserved-memory} {
@@ -168,6 +180,19 @@
 		size = <0x04000000>;
 		alignment = <0x0 0x00200000>;
 		alloc-ranges = <0x0 0x98000000 0x06000000>;
+	};
+
+	/*
+	 * All of the Wi-Fi chip's DMA buffers come from this pool. It keeps
+	 * driver bugs away from the rest of RAM; it does not confine the
+	 * chip's own firmware, as the HSI2 System MMU and S2MPU see PCIe and
+	 * UFS on the same VID and cannot enforce on it.
+	 */
+	wifi_dma_pool: wifi-dma-pool {
+		compatible = "restricted-dma-pool";
+		size = <0x01000000>;
+		alignment = <0x0 0x00200000>;
+		alloc-ranges = <0x0 0x80000000 0x80000000>;
 	};
 };
 
@@ -406,6 +431,22 @@
 		cirrus,lra-f0-hz = <162>;
 		cirrus,lra-redc-micro-ohms = <14100007>;
 		cirrus,vpbr-threshold-microvolt = <3008000>;
+	};
+};
+
+&pcie_1 {
+	reset-gpios = <&gph3 0 GPIO_ACTIVE_LOW>;
+	status = "okay";
+};
+
+&pcie_1_rp {
+	vpcie3v3-supply = <&wlan_reg_on>;
+
+	wifi@0,0 {
+		compatible = "pci14e4,4449";
+		reg = <0x10000 0x0 0x0 0x0 0x0>;
+		brcm,board-type = "google,zumapro-tegu";
+		memory-region = <&wifi_dma_pool>;
 	};
 };
 
