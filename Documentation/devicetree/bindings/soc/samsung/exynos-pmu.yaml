@@ -63,6 +63,10 @@ properties:
 
   '#clock-cells':
     const: 1
+    description:
+      On the Exynos SoCs, one clock per CLKOUT mux input. On the Tensor G4
+      PMU (google,zumapro-pmu), clock 0 is the NFC controller's reference
+      clock pad.
 
   clock-names:
     description:
