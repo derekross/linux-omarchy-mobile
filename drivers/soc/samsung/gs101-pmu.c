@@ -342,6 +342,7 @@ const struct exynos_pmu_data gs101_pmu_data = {
 #define ZUMA_CLUSTER1_NONCPU_OUT	0x1520
 #define ZUMA_CLUSTER1_NONCPU_INT_EN	0x1544
 #define ZUMA_HSI0_STATUS		0x2a84
+#define ZUMA_PAD_CTRL_NFC_CLK		0x3e84
 #define ZUMA_PHY_CTRL_UFS		0x3ec0
 
 static const struct regmap_range zuma_pmu_registers[] = {
@@ -360,6 +361,8 @@ static const struct regmap_range zuma_pmu_registers[] = {
 	regmap_reg_range(ZUMA_PHY_CTRL_UFS, ZUMA_PHY_CTRL_UFS),
 	/* a hint TF-A reads, not a status register: see zuma_pmu_regmap_init() */
 	regmap_reg_range(ZUMA_PMU_INFORM0, ZUMA_PMU_INFORM0),
+	/* Tensor G4's NFC reference clock pad, a clock of clk-exynos-clkout */
+	regmap_reg_range(ZUMA_PAD_CTRL_NFC_CLK, ZUMA_PAD_CTRL_NFC_CLK),
 };
 
 static const struct regmap_range zuma_pmu_ro_registers[] = {
