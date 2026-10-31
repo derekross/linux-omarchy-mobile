@@ -6,12 +6,24 @@
 #ifndef __LINUX_MFD_S2MPG14_H
 #define __LINUX_MFD_S2MPG14_H
 
+#include <linux/bits.h>
+
 #define S2MPG14_COMMON_CHIPID		0x0b
+#define S2MPG14_PMIC_STATUS2		0x0b
 #define S2MPG14_PMIC_L4M_CTRL		0x2e
 #define S2MPG14_PMIC_L8M_CTRL		0x32
 #define S2MPG14_PMIC_L9M_CTRL		0x33
 #define S2MPG14_PMIC_L19M_CTRL		0x3d
 #define S2MPG14_PMIC_L25M_CTRL		0x43
 #define S2MPG14_PMIC_LDO_CTRL1		0x44
+
+/* S2MPG14_PMIC_STATUS2: the alarm flag sits where it does on S2MPG12 */
+#define S2MPG14_STATUS2_RTCA0E		BIT(2)
+
+/*
+ * The RTC block has S2MPG10's register layout (S2MPG10_RTC_* in rtc.h):
+ * CTRL at 0x00 through OSC_CTRL at 0x1b, then two nonces to 0x2b and
+ * five scratch registers to 0x30.
+ */
 
 #endif /* __LINUX_MFD_S2MPG14_H */

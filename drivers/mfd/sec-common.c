@@ -75,9 +75,13 @@ static const struct mfd_cell s2mpg13_devs[] = {
 	MFD_CELL_OF("s2mpg13-gpio", NULL, NULL, 0, 0, "samsung,s2mpg13-gpio"),
 };
 
-/* Only the qualified LDOs; no RTC, interrupt, GPIO or protection writes. */
+/*
+ * The qualified LDOs and the RTC. No interrupt line is described yet, so
+ * the RTC keeps time without an alarm; no GPIO or protection writes.
+ */
 static const struct mfd_cell s2mpg14_devs[] = {
 	MFD_CELL_NAME("s2mpg14-regulator"),
+	MFD_CELL_NAME("s2mpg14-rtc"),
 };
 
 static const struct resource s2mps11_rtc_resources[] = {
