@@ -270,8 +270,13 @@ static int zumapro_ufs_drv_init(struct exynos_ufs *ufs)
 {
 	u32 reg;
 
-	/* Keep the initial link active: no WriteBooster or idle clock gating. */
+	/*
+	 * No WriteBooster yet. Idle clock gating with the link in Hibern8, as
+	 * on gs101 and gs201: it also drops the CPU latency request the core
+	 * holds while the clocks are on.
+	 */
 	ufs->hba->spm_lvl = UFS_PM_LVL_5;
+	ufs->hba->caps |= UFSHCD_CAP_CLK_GATING | UFSHCD_CAP_HIBERN8_WITH_CLK_GATING;
 	reg = hci_readl(ufs, HCI_IOP_ACG_DISABLE);
 	hci_writel(ufs, reg & ~HCI_IOP_ACG_DISABLE_EN, HCI_IOP_ACG_DISABLE);
 
