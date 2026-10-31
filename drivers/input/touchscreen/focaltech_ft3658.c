@@ -3,7 +3,10 @@
  * FocalTech FT3658 touchscreen driver (SPI)
  *
  * The FT3658 is the touch controller of the Google Pixel 7. The protocol
- * follows Google's GPL FocalTech driver for Pixel devices:
+ * follows Google's GPL FocalTech driver for Pixel devices
+ * (kernel/google-modules/touch/focaltech_touch, ft3658/, branch
+ * android-gs-pantah-6.1-android16: focaltech_spi.c for the framing,
+ * focaltech_core.c for the power sequence and the report):
  *   Copyright (c) 2012-2020, FocalTech Systems, Ltd.
  *
  * The controller runs its own firmware from flash; this driver only powers
@@ -77,9 +80,10 @@ struct ft3658 {
 	struct regulator *vdd;
 	struct regulator *avdd;
 	struct touchscreen_properties prop;
-	u8 tx[FT3658_BUF_LEN];
-	u8 rx[FT3658_BUF_LEN];
 	u8 report[FT3658_REPORT_LEN];
+	/* SPI buffers, DMA-safe: each starts its own cache line */
+	u8 tx[FT3658_BUF_LEN] ____cacheline_aligned;
+	u8 rx[FT3658_BUF_LEN] ____cacheline_aligned;
 };
 
 static int ft3658_read(struct ft3658 *ts, u8 addr, u8 *data, size_t len)
@@ -109,7 +113,7 @@ static int ft3658_read(struct ft3658 *ts, u8 addr, u8 *data, size_t len)
 	xfer.len = xfer_len;
 
 	ret = spi_sync_transfer(ts->spi, &xfer, 1);
-	udelay(FT3658_CS_HIGH_US);
+	fsleep(FT3658_CS_HIGH_US);
 	if (ret)
 		return ret;
 
