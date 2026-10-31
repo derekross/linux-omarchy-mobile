@@ -1469,7 +1469,36 @@ brcmf_run_escan(struct brcmf_cfg80211_info *cfg, struct brcmf_if *ifp,
 
 	params->version = cpu_to_le32(BRCMF_ESCAN_REQ_VERSION_V2);
 
-	if (!brcmf_feat_is_enabled(ifp, BRCMF_FEAT_SCAN_V2)) {
+	if (brcmf_feat_is_enabled(ifp, BRCMF_FEAT_SCAN_V3)) {
+		/* The v2 layout; its pad byte is ssid_type, 0 for the default */
+		params->version = cpu_to_le32(BRCMF_ESCAN_REQ_VERSION_V3);
+		params->params_v2_le.version =
+			cpu_to_le16(BRCMF_SCAN_PARAMS_VERSION_V3);
+	} else if (brcmf_feat_is_enabled(ifp, BRCMF_FEAT_SCAN_V4)) {
+		struct brcmf_escan_params_le *params_v4;
+		u8 *v2 = (u8 *)&params->params_v2_le;
+		u16 len = le16_to_cpu(params->params_v2_le.length);
+		u8 *v4;
+
+		params_size += sizeof(__le32);
+		params_v4 = kzalloc(params_size, GFP_KERNEL);
+		if (!params_v4) {
+			err = -ENOMEM;
+			goto exit_params;
+		}
+		params_v4->version = cpu_to_le32(BRCMF_ESCAN_REQ_VERSION_V4);
+		v4 = (u8 *)&params_v4->params_v2_le;
+		memcpy(v4, v2, BRCMF_SCAN_PARAMS_V4_EXT_OFFSET);
+		memcpy(v4 + BRCMF_SCAN_PARAMS_V4_EXT_OFFSET + sizeof(__le32),
+		       v2 + BRCMF_SCAN_PARAMS_V4_EXT_OFFSET,
+		       len - BRCMF_SCAN_PARAMS_V4_EXT_OFFSET);
+		params_v4->params_v2_le.version =
+			cpu_to_le16(BRCMF_SCAN_PARAMS_VERSION_V4);
+		params_v4->params_v2_le.length =
+			cpu_to_le16(len + sizeof(__le32));
+		kfree(params);
+		params = params_v4;
+	} else if (!brcmf_feat_is_enabled(ifp, BRCMF_FEAT_SCAN_V2)) {
 		struct brcmf_escan_params_le *params_v1;
 
 		params_size -= BRCMF_SCAN_PARAMS_V2_FIXED_SIZE;
