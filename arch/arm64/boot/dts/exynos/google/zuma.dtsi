@@ -5,13 +5,17 @@
  * Addresses, interrupts and reservations are the ones a retail Pixel 8 Pro
  * (husky) runs with: its live device tree and Google's GPL zuma tree
  * (android-gs-shusky-6.1-android16). Nothing here is copied from gs101 or
- * gs201. No clock, pinctrl or power-domain providers yet: the bootloader
- * leaves what first light needs running, and the board's bootargs carry
- * clk_ignore_unused and pd_ignore_unused.
+ * gs201. The clock providers describe only the touchscreen SPI's path, and
+ * there are no power-domain providers yet: the bootloader leaves what the
+ * rest needs running, and the board's bootargs carry clk_ignore_unused and
+ * pd_ignore_unused.
  */
 
+#include <dt-bindings/clock/google,zuma.h>
+#include <dt-bindings/clock/google,zuma-acpm.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/soc/samsung,exynos-usi.h>
 
 / {
 	compatible = "google,zuma";
@@ -22,8 +26,10 @@
 	/* The pin controllers are numbered as in Tensor G4's driver data. */
 	aliases {
 		pinctrl0 = &pinctrl_gpio_alive;
+		pinctrl1 = &pinctrl_custom_alive;
 		pinctrl10 = &pinctrl_hsi2ufs;
 		pinctrl11 = &pinctrl_peric0;
+		pinctrl12 = &pinctrl_peric1;
 	};
 
 	/*
@@ -87,6 +93,10 @@
 			reg = <0x000>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <193>;
+			dynamic-power-coefficient = <70>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL0>;
+			operating-points-v2 = <&cpucl0_opp>;
 		};
 		cpu1: cpu@100 {
 			device_type = "cpu";
@@ -94,6 +104,10 @@
 			reg = <0x100>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <193>;
+			dynamic-power-coefficient = <70>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL0>;
+			operating-points-v2 = <&cpucl0_opp>;
 		};
 		cpu2: cpu@200 {
 			device_type = "cpu";
@@ -101,6 +115,10 @@
 			reg = <0x200>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <193>;
+			dynamic-power-coefficient = <70>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL0>;
+			operating-points-v2 = <&cpucl0_opp>;
 		};
 		cpu3: cpu@300 {
 			device_type = "cpu";
@@ -108,6 +126,10 @@
 			reg = <0x300>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <193>;
+			dynamic-power-coefficient = <70>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL0>;
+			operating-points-v2 = <&cpucl0_opp>;
 		};
 		cpu4: cpu@400 {
 			device_type = "cpu";
@@ -115,6 +137,10 @@
 			reg = <0x400>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <927>;
+			dynamic-power-coefficient = <513>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL1>;
+			operating-points-v2 = <&cpucl1_opp>;
 		};
 		cpu5: cpu@500 {
 			device_type = "cpu";
@@ -122,6 +148,10 @@
 			reg = <0x500>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <927>;
+			dynamic-power-coefficient = <513>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL1>;
+			operating-points-v2 = <&cpucl1_opp>;
 		};
 		cpu6: cpu@600 {
 			device_type = "cpu";
@@ -129,6 +159,10 @@
 			reg = <0x600>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <927>;
+			dynamic-power-coefficient = <513>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL1>;
+			operating-points-v2 = <&cpucl1_opp>;
 		};
 		cpu7: cpu@700 {
 			device_type = "cpu";
@@ -136,6 +170,10 @@
 			reg = <0x700>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <927>;
+			dynamic-power-coefficient = <513>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL1>;
+			operating-points-v2 = <&cpucl1_opp>;
 		};
 		cpu8: cpu@800 {
 			device_type = "cpu";
@@ -143,12 +181,369 @@
 			reg = <0x800>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <1024>;
+			dynamic-power-coefficient = <757>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL2>;
+			operating-points-v2 = <&cpucl2_opp>;
+		};
+	};
+
+	/*
+	 * CPU levels: the ACPM firmware's own DVFS levels, from the ECT that the
+	 * bootloader leaves at 0x90000000, up to each cluster's max-freq in
+	 * stock's exynos-acme domains (Google's zuma-cpu.dtsi). The levels
+	 * above, listed in each table, are left out as stock leaves them.
+	 */
+	cpucl0_opp: opp-table-cpucl0 {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-324000000 {
+			opp-hz = /bits/ 64 <324000000>;
+		};
+
+		opp-610000000 {
+			opp-hz = /bits/ 64 <610000000>;
+		};
+
+		opp-820000000 {
+			opp-hz = /bits/ 64 <820000000>;
+		};
+
+		opp-955000000 {
+			opp-hz = /bits/ 64 <955000000>;
+		};
+
+		opp-1098000000 {
+			opp-hz = /bits/ 64 <1098000000>;
+		};
+
+		opp-1197000000 {
+			opp-hz = /bits/ 64 <1197000000>;
+		};
+
+		opp-1328000000 {
+			opp-hz = /bits/ 64 <1328000000>;
+		};
+
+		opp-1425000000 {
+			opp-hz = /bits/ 64 <1425000000>;
+		};
+
+		opp-1548000000 {
+			opp-hz = /bits/ 64 <1548000000>;
+		};
+
+		opp-1704000000 {
+			opp-hz = /bits/ 64 <1704000000>;
+		};
+
+		/* 1785, 1950, 2024, 2098, 2147 and 2253 MHz stay off, as on stock. */
+	};
+
+	cpucl1_opp: opp-table-cpucl1 {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-402000000 {
+			opp-hz = /bits/ 64 <402000000>;
+		};
+
+		opp-578000000 {
+			opp-hz = /bits/ 64 <578000000>;
+		};
+
+		opp-697000000 {
+			opp-hz = /bits/ 64 <697000000>;
+		};
+
+		opp-712000000 {
+			opp-hz = /bits/ 64 <712000000>;
+		};
+
+		opp-910000000 {
+			opp-hz = /bits/ 64 <910000000>;
+		};
+
+		opp-1065000000 {
+			opp-hz = /bits/ 64 <1065000000>;
+		};
+
+		opp-1221000000 {
+			opp-hz = /bits/ 64 <1221000000>;
+		};
+
+		opp-1328000000 {
+			opp-hz = /bits/ 64 <1328000000>;
+		};
+
+		opp-1418000000 {
+			opp-hz = /bits/ 64 <1418000000>;
+		};
+
+		opp-1572000000 {
+			opp-hz = /bits/ 64 <1572000000>;
+		};
+
+		opp-1836000000 {
+			opp-hz = /bits/ 64 <1836000000>;
+		};
+
+		opp-1945000000 {
+			opp-hz = /bits/ 64 <1945000000>;
+		};
+
+		opp-2130000000 {
+			opp-hz = /bits/ 64 <2130000000>;
+		};
+
+		opp-2245000000 {
+			opp-hz = /bits/ 64 <2245000000>;
+		};
+
+		opp-2367000000 {
+			opp-hz = /bits/ 64 <2367000000>;
+		};
+
+		/* 2450 and 2600 MHz stay off, as on stock. */
+	};
+
+	cpucl2_opp: opp-table-cpucl2 {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-500000000 {
+			opp-hz = /bits/ 64 <500000000>;
+		};
+
+		opp-880000000 {
+			opp-hz = /bits/ 64 <880000000>;
+		};
+
+		opp-1164000000 {
+			opp-hz = /bits/ 64 <1164000000>;
+		};
+
+		opp-1298000000 {
+			opp-hz = /bits/ 64 <1298000000>;
+		};
+
+		opp-1557000000 {
+			opp-hz = /bits/ 64 <1557000000>;
+		};
+
+		opp-1745000000 {
+			opp-hz = /bits/ 64 <1745000000>;
+		};
+
+		opp-1885000000 {
+			opp-hz = /bits/ 64 <1885000000>;
+		};
+
+		opp-2049000000 {
+			opp-hz = /bits/ 64 <2049000000>;
+		};
+
+		opp-2147000000 {
+			opp-hz = /bits/ 64 <2147000000>;
+		};
+
+		opp-2294000000 {
+			opp-hz = /bits/ 64 <2294000000>;
+		};
+
+		opp-2363000000 {
+			opp-hz = /bits/ 64 <2363000000>;
+		};
+
+		opp-2556000000 {
+			opp-hz = /bits/ 64 <2556000000>;
+		};
+
+		opp-2687000000 {
+			opp-hz = /bits/ 64 <2687000000>;
+		};
+
+		opp-2850000000 {
+			opp-hz = /bits/ 64 <2850000000>;
+		};
+
+		opp-2914000000 {
+			opp-hz = /bits/ 64 <2914000000>;
+		};
+
+		/* 2943, 2970 and 3015 MHz stay off, as on stock. */
+	};
+
+	firmware {
+		acpm_ipc: power-management {
+			compatible = "google,zuma-acpm-ipc";
+			#clock-cells = <1>;
+			mboxes = <&ap2apm_mailbox>;
+			shmem = <&apm_sram>;
+
+			acpm_tmu: thermal-sensor {
+				compatible = "google,zuma-acpm-tmu";
+				#thermal-sensor-cells = <1>;
+			};
 		};
 	};
 
 	psci {
 		compatible = "arm,psci-1.0";
 		method = "smc";
+	};
+
+	thermal-zones {
+		/*
+		 * The CPU zones throttle their cluster from 80 C and force its
+		 * lowest level from 95 C, as on zumapro.
+		 */
+		big-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
+			thermal-sensors = <&acpm_tmu 0>;
+
+			trips {
+				big_alert: big-alert {
+					temperature = <80000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+
+				big_hot: big-hot {
+					temperature = <95000>;
+					hysteresis = <10000>;
+					type = "passive";
+				};
+
+				big_crit: big-crit {
+					temperature = <105000>;
+					hysteresis = <2000>;
+					type = "critical";
+				};
+			};
+
+			cooling-maps {
+				map0 {
+					trip = <&big_alert>;
+					cooling-device = <&cpu8 0xffffffff 0xffffffff>;
+				};
+
+				map1 {
+					trip = <&big_hot>;
+					cooling-device = <&cpu8 14 0xffffffff>;
+				};
+			};
+		};
+
+		mid-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
+			thermal-sensors = <&acpm_tmu 1>;
+
+			trips {
+				mid_alert: mid-alert {
+					temperature = <80000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+
+				mid_hot: mid-hot {
+					temperature = <95000>;
+					hysteresis = <10000>;
+					type = "passive";
+				};
+
+				mid_crit: mid-crit {
+					temperature = <105000>;
+					hysteresis = <2000>;
+					type = "critical";
+				};
+			};
+
+			cooling-maps {
+				map0 {
+					trip = <&mid_alert>;
+					cooling-device = <&cpu4 0xffffffff 0xffffffff>;
+				};
+
+				map1 {
+					trip = <&mid_hot>;
+					cooling-device = <&cpu4 14 0xffffffff>;
+				};
+			};
+		};
+
+		little-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
+			thermal-sensors = <&acpm_tmu 2>;
+
+			trips {
+				little_alert: little-alert {
+					temperature = <80000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+
+				little_hot: little-hot {
+					temperature = <95000>;
+					hysteresis = <10000>;
+					type = "passive";
+				};
+
+				little_crit: little-crit {
+					temperature = <105000>;
+					hysteresis = <2000>;
+					type = "critical";
+				};
+			};
+
+			cooling-maps {
+				map0 {
+					trip = <&little_alert>;
+					cooling-device = <&cpu0 0xffffffff 0xffffffff>;
+				};
+
+				map1 {
+					trip = <&little_hot>;
+					cooling-device = <&cpu0 9 0xffffffff>;
+				};
+			};
+		};
+
+		/*
+		 * Below stock's own GPU trips (passive from 100 C, hot at
+		 * 115 C), as on zumapro.
+		 */
+		gpu-thermal {
+			polling-delay-passive = <1000>;
+			polling-delay = <2000>;
+			thermal-sensors = <&acpm_tmu 3>;
+
+			trips {
+				gpu_alert: gpu-alert {
+					temperature = <85000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+
+				gpu_crit: gpu-crit {
+					temperature = <105000>;
+					hysteresis = <2000>;
+					type = "critical";
+				};
+			};
+
+			/* panthor's devfreq cooling: step_wise walks the GPU down its OPPs. */
+			cooling-maps {
+				map0 {
+					trip = <&gpu_alert>;
+					cooling-device = <&gpu 0xffffffff 0xffffffff>;
+				};
+			};
+		};
 	};
 
 	timer {
@@ -269,6 +664,21 @@
 		clock-output-names = "ufs_ref_stub";
 	};
 
+	oscclk: clock-oscclk {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <24576000>;
+		clock-output-names = "oscclk";
+	};
+
+	/* The CAL's nominal I_CLK_HSI0_ALT rate. */
+	hsi0_alt: clock-hsi0-alt {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <213000000>;
+		clock-output-names = "hsi0-alt";
+	};
+
 	soc: soc@0 {
 		compatible = "simple-bus";
 		#address-cells = <1>;
@@ -318,6 +728,28 @@
 			interrupts = <GIC_SPI 634 IRQ_TYPE_LEVEL_HIGH>;
 		};
 
+		pinctrl_peric1: pinctrl@10c40000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x10c40000 0x1000>;
+			clocks = <&clk_gpio_stub>;
+			clock-names = "pclk";
+			interrupts = <GIC_SPI 649 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		cmu_hsi0: clock-controller@11000000 {
+			compatible = "google,zuma-cmu-hsi0";
+			reg = <0x11000000 0x8000>;
+			#clock-cells = <1>;
+			clocks = <&oscclk>, <&cmu_top CLK_DOUT_HSI0_NOC>,
+				 <&cmu_top CLK_DOUT_HSI0_PERI>, <&hsi0_alt>;
+			clock-names = "oscclk", "bus", "peri", "alt";
+		};
+
+		sysreg_hsi0: syscon@11020000 {
+			compatible = "google,zuma-hsi0-sysreg", "syscon";
+			reg = <0x11020000 0x10000>;
+		};
+
 		/*
 		 * USB control block: Exynos 2200's link registers, with the
 		 * eUSB2 PHY below as its high-speed PHY. The USB3/DP combo PHY
@@ -344,6 +776,33 @@
 			clock-names = "ref", "bus", "ctrl";
 			#phy-cells = <0>;
 			status = "disabled";
+		};
+
+		usi2_hsi0: usi@111d00c0 {
+			compatible = "google,zuma-usi", "samsung,exynos850-usi";
+			reg = <0x111d00c0 0x20>;
+			clocks = <&cmu_hsi0 CLK_GOUT_HSI0_USI2_PCLK>,
+				 <&cmu_hsi0 CLK_GOUT_HSI0_USI2_IP>;
+			clock-names = "pclk", "ipclk";
+			samsung,sysreg = <&sysreg_hsi0 0x101c>;
+			samsung,mode = <USI_MODE_SPI>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+			status = "disabled";
+
+			spi20: spi@111d0000 {
+				compatible = "google,zuma-spi", "google,gs101-spi";
+				/* USI control starts at 0xc0; do not claim it twice. */
+				reg = <0x111d0000 0xc0>;
+				interrupts = <GIC_SPI 408 IRQ_TYPE_LEVEL_HIGH>;
+				clocks = <&cmu_hsi0 CLK_GOUT_HSI0_USI2_PCLK>,
+					 <&cmu_hsi0 CLK_GOUT_HSI0_USI2_IP>;
+				clock-names = "spi", "spi_busclk0";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				status = "disabled";
+			};
 		};
 
 		/*
@@ -413,6 +872,35 @@
 			status = "disabled";
 		};
 
+		pinctrl_custom_alive: pinctrl@15060000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x15060000 0x1000>;
+			clocks = <&cmu_apm CLK_GOUT_APM_GPIO_CUSTOM_ALIVE>;
+			clock-names = "pclk";
+
+			wakeup-interrupt-controller {
+				compatible = "google,zuma-wakeup-eint",
+					     "google,zumapro-wakeup-eint";
+			};
+		};
+
+		ap2apm_mailbox: mailbox@15110000 {
+			compatible = "google,zuma-mbox", "google,gs101-mbox";
+			reg = <0x15110000 0x1000>;
+			clocks = <&cmu_apm CLK_GOUT_APM_MAILBOX_AP>;
+			clock-names = "pclk";
+			interrupts = <GIC_SPI 80 IRQ_TYPE_LEVEL_HIGH>;
+			#mbox-cells = <0>;
+		};
+
+		cmu_apm: clock-controller@15400000 {
+			compatible = "google,zuma-cmu-apm";
+			reg = <0x15400000 0x8000>;
+			#clock-cells = <1>;
+			clocks = <&oscclk>;
+			clock-names = "oscclk";
+		};
+
 		/* Writes go through EL3 (SMC), as on gs101. */
 		pmu_system_controller: system-controller@15460000 {
 			compatible = "google,zuma-pmu";
@@ -442,6 +930,56 @@
 				compatible = "google,zuma-wakeup-eint",
 					     "google,zumapro-wakeup-eint";
 			};
+		};
+
+		apm_sram: sram@15700000 {
+			compatible = "mmio-sram";
+			reg = <0x15700000 0x58000>;
+			clocks = <&cmu_apm CLK_GOUT_APM_INTMEM_ACLK>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges = <0x0 0x15700000 0x58000>;
+			no-memory-wc;
+
+			/* The APM firmware's window, as one block. */
+			firmware-sram@0 {
+				reg = <0x0 0x58000>;
+			};
+		};
+
+		/* The bootloader leaves G3D powered; there's no power domain yet. */
+		cmu_g3d: clock-controller@1ee00000 {
+			compatible = "google,zuma-cmu-g3d";
+			reg = <0x1ee00000 0x8000>;
+			#clock-cells = <1>;
+			clocks = <&oscclk>, <&cmu_top CLK_DOUT_G3D_NOCD>,
+				 <&cmu_top CLK_DOUT_G3D_GLB>,
+				 <&cmu_top CLK_DOUT_G3D_SWITCH>;
+			clock-names = "oscclk", "bus", "glb", "switch";
+			status = "disabled";
+		};
+
+		gpu: gpu@1f000000 {
+			compatible = "google,zuma-mali", "arm,mali-valhall-csf";
+			reg = <0x1f000000 0x480000>;
+			interrupts = <GIC_SPI 347 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 348 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 346 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "job", "mmu", "gpu";
+			clocks = <&cmu_g3d CLK_GOUT_G3D_CORE>,
+				 <&cmu_g3d CLK_GOUT_G3D_COREGROUP>,
+				 <&cmu_g3d CLK_GOUT_G3D_STACKS>;
+			clock-names = "core", "coregroup", "stacks";
+			#cooling-cells = <2>;
+			status = "disabled";
+		};
+
+		cmu_top: clock-controller@26040000 {
+			compatible = "google,zuma-cmu-top";
+			reg = <0x26040000 0x8000>;
+			#clock-cells = <1>;
+			clocks = <&oscclk>;
+			clock-names = "oscclk";
 		};
 	};
 };

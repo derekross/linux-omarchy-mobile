@@ -11166,6 +11166,7 @@ P:	Documentation/process/maintainer-soc-clean-dts.rst
 C:	irc://irc.oftc.net/pixel6-kernel-dev
 F:	Documentation/devicetree/bindings/clock/google,gs101-clock.yaml
 F:	Documentation/devicetree/bindings/clock/google,gs201-clock.yaml
+F:	Documentation/devicetree/bindings/clock/google,zuma-clock.yaml
 F:	Documentation/devicetree/bindings/clock/google,zumapro*
 F:	Documentation/devicetree/bindings/phy/google,lga-usb-phy.yaml
 F:	Documentation/devicetree/bindings/soc/google/google,gs101-dtzpc.yaml
@@ -11175,6 +11176,7 @@ F:	Documentation/devicetree/bindings/usb/google,lga-dwc3.yaml
 F:	arch/arm64/boot/dts/exynos/google/
 F:	drivers/clk/samsung/clk-gs101.c
 F:	drivers/clk/samsung/clk-gs201.c
+F:	drivers/clk/samsung/clk-zuma.c
 F:	drivers/clk/samsung/clk-zumapro.c
 F:	drivers/phy/phy-google-usb.c
 F:	drivers/soc/samsung/gs101-pmu.c
@@ -11184,6 +11186,8 @@ F:	drivers/thermal/samsung/gs101_acpm_tmu.c
 F:	drivers/usb/dwc3/dwc3-google.c
 F:	include/dt-bindings/clock/google,gs101*
 F:	include/dt-bindings/clock/google,gs201*
+F:	include/dt-bindings/clock/google,zuma-acpm.h
+F:	include/dt-bindings/clock/google,zuma.h
 F:	include/dt-bindings/clock/google,zumapro*
 K:	[gG]oogle.?[tT]ensor
 

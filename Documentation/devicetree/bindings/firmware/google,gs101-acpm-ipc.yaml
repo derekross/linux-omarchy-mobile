@@ -25,6 +25,7 @@ properties:
     enum:
       - google,gs101-acpm-ipc
       - google,gs201-acpm-ipc
+      - google,zuma-acpm-ipc
       - google,zumapro-acpm-ipc
 
   "#clock-cells":
@@ -77,7 +78,7 @@ properties:
     description:
       The SoC's thermal sensors, which the ACPM firmware reads on the
       kernel's behalf. Cells are the sensor index (0 big, 1 mid, 2 little
-      CPU cluster, 3 GPU, 4 ISP, 5 TPU, and on zumapro 6 AUR).
+      CPU cluster, 3 GPU, 4 ISP, 5 TPU, and on zuma and zumapro 6 AUR).
     type: object
     $ref: /schemas/thermal/thermal-sensor.yaml#
     unevaluatedProperties: false
@@ -86,6 +87,7 @@ properties:
       compatible:
         enum:
           - google,gs101-acpm-tmu
+          - google,zuma-acpm-tmu
           - google,zumapro-acpm-tmu
 
       "#thermal-sensor-cells":
@@ -111,7 +113,9 @@ allOf:
   - if:
       properties:
         compatible:
-          const: google,zumapro-acpm-ipc
+          enum:
+            - google,zuma-acpm-ipc
+            - google,zumapro-acpm-ipc
     then:
       properties:
         pmic: false

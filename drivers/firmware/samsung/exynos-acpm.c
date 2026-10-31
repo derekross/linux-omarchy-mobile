@@ -42,6 +42,7 @@
 
 #define ACPM_GS101_INITDATA_BASE	0xa000
 #define ACPM_GS201_INITDATA_BASE	0xa000
+#define ACPM_ZUMA_INITDATA_BASE		0xa000
 #define ACPM_ZUMAPRO_INITDATA_BASE	0xa000
 
 /* Sanity limit for the channel count read from SRAM. */
@@ -738,9 +739,15 @@ static int acpm_channels_init(struct acpm_info *acpm)
 
 		achan->chan = mbox_request_channel(cl, 0);
 		if (IS_ERR(achan->chan)) {
-			dev_warn(dev, "chan %d: no mailbox channel (%pe), skipped\n",
-				 i, achan->chan);
+			ret = PTR_ERR(achan->chan);
 			achan->chan = NULL;
+			/* The mailbox may simply not have probed yet. */
+			if (ret == -EPROBE_DEFER)
+				return dev_err_probe(dev, ret,
+						     "chan %d: no mailbox channel yet\n",
+						     i);
+			dev_warn(dev, "chan %d: no mailbox channel (%pe), skipped\n",
+				 i, ERR_PTR(ret));
 			continue;
 		}
 
@@ -975,6 +982,11 @@ static const struct acpm_match_data acpm_gs201 = {
 	.acpm_clk_dev_name = "gs201-acpm-clk",
 };
 
+static const struct acpm_match_data acpm_zuma = {
+	.initdata_base = ACPM_ZUMA_INITDATA_BASE,
+	.acpm_clk_dev_name = "zuma-acpm-clk",
+};
+
 static const struct acpm_match_data acpm_zumapro = {
 	.initdata_base = ACPM_ZUMAPRO_INITDATA_BASE,
 	.acpm_clk_dev_name = "zumapro-acpm-clk",
@@ -987,6 +999,9 @@ static const struct of_device_id acpm_match[] = {
 	}, {
 		.compatible = "google,gs201-acpm-ipc",
 		.data = &acpm_gs201,
+	}, {
+		.compatible = "google,zuma-acpm-ipc",
+		.data = &acpm_zuma,
 	}, {
 		.compatible = "google,zumapro-acpm-ipc",
 		.data = &acpm_zumapro,

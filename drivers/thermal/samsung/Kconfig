@@ -12,7 +12,7 @@ config EXYNOS_THERMAL
 	  data from the supported SoCs.
 
 config GS101_ACPM_THERMAL
-	tristate "Google gs101 and Tensor G4 thermal sensors through ACPM"
+	tristate "Google gs101, Tensor G3 and G4 thermal sensors through ACPM"
 	depends on THERMAL_OF
 	depends on EXYNOS_ACPM_PROTOCOL
 	help

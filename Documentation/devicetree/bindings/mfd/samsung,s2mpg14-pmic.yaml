@@ -10,8 +10,9 @@ maintainers:
   - W4HO <87742609+W4HO-ham@users.noreply.github.com>
 
 description: |
-  S2MPG14 is the main PMIC paired with Google's Tensor G4. Its LDO4M and
-  LDO25M outputs supply the analog and digital touchscreen power rails.
+  S2MPG14 is the main PMIC paired with Google's Tensor G3 and Tensor G4.
+  Its LDO4M and LDO25M outputs supply the analog and digital touchscreen
+  power rails.
 
 properties:
   compatible:

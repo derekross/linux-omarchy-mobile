@@ -19,6 +19,7 @@ properties:
       - items:
           - enum:
               - google,gs201-mali         # G710
+              - google,zuma-mali          # G715
               - google,zumapro-mali       # G715 family
               - mediatek,mt8196-mali
               - nxp,imx95-mali            # G310
