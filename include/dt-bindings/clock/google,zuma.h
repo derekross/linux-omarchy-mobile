@@ -19,6 +19,21 @@
 #define CLK_GOUT_HSI0_PERI		14
 #define CLK_DOUT_HSI0_PERI		15
 
+/* CMU_TOP: the G3D paths, and the shared PLL dividers they take. */
+#define CLK_SHARED0_D2			16
+#define CLK_SHARED0_D3			17
+#define CLK_SHARED1_D2			18
+#define CLK_SHARED1_D3			19
+#define CLK_MOUT_G3D_GLB		20
+#define CLK_MOUT_G3D_NOCD		21
+#define CLK_MOUT_G3D_SWITCH		22
+#define CLK_GOUT_G3D_GLB		23
+#define CLK_GOUT_G3D_NOCD		24
+#define CLK_GOUT_G3D_SWITCH		25
+#define CLK_DOUT_G3D_GLB		26
+#define CLK_DOUT_G3D_NOCD		27
+#define CLK_DOUT_G3D_SWITCH		28
+
 /* CMU_HSI0: USI2, the touchscreen's SPI. */
 #define CLK_GOUT_HSI0_ALT		1
 #define CLK_MOUT_HSI0_NOC_USER		2
@@ -46,5 +61,26 @@
 #define CLK_GOUT_APM_GPIO_ALIVE		12
 #define CLK_GOUT_APM_GPIO_FAR_ALIVE	13
 #define CLK_GOUT_APM_GPIO_CUSTOM_ALIVE	14
+
+/* CMU_G3D: the GPU. */
+#define CLK_FOUT_G3D			1
+#define CLK_FOUT_G3D_L2			2
+#define CLK_MOUT_G3D_SWITCH_USER	3
+#define CLK_MOUT_G3D_GLB_USER		4
+#define CLK_MOUT_G3D_NOCD_USER		5
+#define CLK_MOUT_G3D_L2_GLB		6
+#define CLK_MOUT_G3D_STACKS		7
+#define CLK_MOUT_G3D_TOP		8
+#define CLK_DOUT_G3D_L2_GLB		9
+#define CLK_DOUT_G3D_STACKS		10
+#define CLK_DOUT_G3D_TOP		11
+#define CLK_MOUT_G3D_COREGROUP_USER	12
+#define CLK_MOUT_G3D_STACKS_USER	13
+#define CLK_MOUT_G3D_TOP_USER		14
+#define CLK_DOUT_G3D_NOCP		15
+#define CLK_GOUT_G3D_CMU		16
+#define CLK_GOUT_G3D_CORE		17
+#define CLK_GOUT_G3D_COREGROUP		18
+#define CLK_GOUT_G3D_STACKS		19
 
 #endif /* _DT_BINDINGS_CLOCK_GOOGLE_ZUMA_H */
