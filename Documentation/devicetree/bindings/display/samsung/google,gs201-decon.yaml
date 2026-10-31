@@ -10,9 +10,9 @@ maintainers:
   - Derek Ross <derekross@gmail.com>
 
 description:
-  The DECON is the display controller of the gs201 (Tensor G2) and zumapro
-  (Tensor G4) display pipelines. It blends up to six or fourteen windows,
-  respectively, each fed by a DPP read DMA
+  The DECON is the display controller of the gs201 (Tensor G2), zuma
+  (Tensor G3) and zumapro (Tensor G4) display pipelines. It blends up to
+  six (gs201) or fourteen windows, each fed by a DPP read DMA
   channel, compresses the result with DSC and hands it to a DSIM. In
   command mode a frame is sent on each tearing effect (TE) pulse of the
   panel; register writes are double-buffered and take effect at the
@@ -22,6 +22,7 @@ properties:
   compatible:
     enum:
       - google,gs201-decon
+      - google,zuma-decon
       - google,zumapro-decon
 
   reg:
