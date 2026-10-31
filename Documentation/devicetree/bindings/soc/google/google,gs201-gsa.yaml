@@ -17,7 +17,9 @@ description:
 
 properties:
   compatible:
-    const: google,gs201-gsa
+    enum:
+      - google,gs201-gsa
+      - google,zumapro-gsa
 
   reg:
     minItems: 1
@@ -41,6 +43,21 @@ required:
   - compatible
   - reg
   - interrupts
+
+allOf:
+  - if:
+      properties:
+        compatible:
+          const: google,zumapro-gsa
+    then:
+      description:
+        On zumapro the GSA reads an image without Linux touching its
+        stage-2 MPU, so only the mailbox is described.
+      properties:
+        reg:
+          maxItems: 1
+        reg-names:
+          maxItems: 1
 
 additionalProperties: false
 
