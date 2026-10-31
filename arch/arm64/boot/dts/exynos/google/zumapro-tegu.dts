@@ -345,8 +345,8 @@
 };
 
 /*
- * The MAX77779's bus: its fuel gauge and its USB-C port controller, a sink
- * with no link to the USB controller's role yet.
+ * The MAX77779's bus: its USB-C port controller, a sink with no link to the
+ * USB controller's role yet, its fuel gauge and its charger.
  */
 &hsi2c6 {
 	clock-frequency = <950000>;
@@ -377,6 +377,12 @@
 		compatible = "maxim,max77779-fg";
 		reg = <0x36>;
 		shunt-resistor-micro-ohms = <2000>;
+		power-supplies = <&charger>;
+	};
+
+	charger: charger@69 {
+		compatible = "maxim,max77779-charger";
+		reg = <0x69>;
 	};
 };
 
