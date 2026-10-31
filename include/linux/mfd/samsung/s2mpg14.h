@@ -42,4 +42,17 @@
  */
 #define S2MPG14_VGPIO2AP_INTC0_IPEND	0x290
 
+/* GPIO registers (access type 0x0c): INT1-2 clear on read, then masks, status, SET */
+enum s2mpg14_gpio_reg {
+	S2MPG14_GPIO_INT1,
+	S2MPG14_GPIO_INT2,
+	S2MPG14_GPIO_INT1M,
+	S2MPG14_GPIO_INT2M,
+	S2MPG14_GPIO_STATUS,
+	S2MPG14_GPIO_0_SET,
+	S2MPG14_GPIO_5_SET = S2MPG14_GPIO_0_SET + 5,
+};
+
+#define S2MPG14_GPIO_NUM		6
+
 #endif /* __LINUX_MFD_S2MPG14_H */
