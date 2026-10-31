@@ -12,6 +12,7 @@
  */
 
 #include <dt-bindings/clock/google,zuma.h>
+#include <dt-bindings/clock/google,zuma-acpm.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/soc/samsung,exynos-usi.h>
@@ -92,6 +93,10 @@
 			reg = <0x000>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <193>;
+			dynamic-power-coefficient = <70>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL0>;
+			operating-points-v2 = <&cpucl0_opp>;
 		};
 		cpu1: cpu@100 {
 			device_type = "cpu";
@@ -99,6 +104,10 @@
 			reg = <0x100>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <193>;
+			dynamic-power-coefficient = <70>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL0>;
+			operating-points-v2 = <&cpucl0_opp>;
 		};
 		cpu2: cpu@200 {
 			device_type = "cpu";
@@ -106,6 +115,10 @@
 			reg = <0x200>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <193>;
+			dynamic-power-coefficient = <70>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL0>;
+			operating-points-v2 = <&cpucl0_opp>;
 		};
 		cpu3: cpu@300 {
 			device_type = "cpu";
@@ -113,6 +126,10 @@
 			reg = <0x300>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <193>;
+			dynamic-power-coefficient = <70>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL0>;
+			operating-points-v2 = <&cpucl0_opp>;
 		};
 		cpu4: cpu@400 {
 			device_type = "cpu";
@@ -120,6 +137,10 @@
 			reg = <0x400>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <927>;
+			dynamic-power-coefficient = <513>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL1>;
+			operating-points-v2 = <&cpucl1_opp>;
 		};
 		cpu5: cpu@500 {
 			device_type = "cpu";
@@ -127,6 +148,10 @@
 			reg = <0x500>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <927>;
+			dynamic-power-coefficient = <513>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL1>;
+			operating-points-v2 = <&cpucl1_opp>;
 		};
 		cpu6: cpu@600 {
 			device_type = "cpu";
@@ -134,6 +159,10 @@
 			reg = <0x600>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <927>;
+			dynamic-power-coefficient = <513>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL1>;
+			operating-points-v2 = <&cpucl1_opp>;
 		};
 		cpu7: cpu@700 {
 			device_type = "cpu";
@@ -141,6 +170,10 @@
 			reg = <0x700>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <927>;
+			dynamic-power-coefficient = <513>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL1>;
+			operating-points-v2 = <&cpucl1_opp>;
 		};
 		cpu8: cpu@800 {
 			device_type = "cpu";
@@ -148,7 +181,198 @@
 			reg = <0x800>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <1024>;
+			dynamic-power-coefficient = <757>;
+			#cooling-cells = <2>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_CPUCL2>;
+			operating-points-v2 = <&cpucl2_opp>;
 		};
+	};
+
+	/*
+	 * CPU levels: the ACPM firmware's own DVFS levels, from the ECT that the
+	 * bootloader leaves at 0x90000000, up to each cluster's max-freq in
+	 * stock's exynos-acme domains (Google's zuma-cpu.dtsi). The levels
+	 * above, listed in each table, are left out as stock leaves them.
+	 */
+	cpucl0_opp: opp-table-cpucl0 {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-324000000 {
+			opp-hz = /bits/ 64 <324000000>;
+		};
+
+		opp-610000000 {
+			opp-hz = /bits/ 64 <610000000>;
+		};
+
+		opp-820000000 {
+			opp-hz = /bits/ 64 <820000000>;
+		};
+
+		opp-955000000 {
+			opp-hz = /bits/ 64 <955000000>;
+		};
+
+		opp-1098000000 {
+			opp-hz = /bits/ 64 <1098000000>;
+		};
+
+		opp-1197000000 {
+			opp-hz = /bits/ 64 <1197000000>;
+		};
+
+		opp-1328000000 {
+			opp-hz = /bits/ 64 <1328000000>;
+		};
+
+		opp-1425000000 {
+			opp-hz = /bits/ 64 <1425000000>;
+		};
+
+		opp-1548000000 {
+			opp-hz = /bits/ 64 <1548000000>;
+		};
+
+		opp-1704000000 {
+			opp-hz = /bits/ 64 <1704000000>;
+		};
+
+		/* 1785, 1950, 2024, 2098, 2147 and 2253 MHz stay off, as on stock. */
+	};
+
+	cpucl1_opp: opp-table-cpucl1 {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-402000000 {
+			opp-hz = /bits/ 64 <402000000>;
+		};
+
+		opp-578000000 {
+			opp-hz = /bits/ 64 <578000000>;
+		};
+
+		opp-697000000 {
+			opp-hz = /bits/ 64 <697000000>;
+		};
+
+		opp-712000000 {
+			opp-hz = /bits/ 64 <712000000>;
+		};
+
+		opp-910000000 {
+			opp-hz = /bits/ 64 <910000000>;
+		};
+
+		opp-1065000000 {
+			opp-hz = /bits/ 64 <1065000000>;
+		};
+
+		opp-1221000000 {
+			opp-hz = /bits/ 64 <1221000000>;
+		};
+
+		opp-1328000000 {
+			opp-hz = /bits/ 64 <1328000000>;
+		};
+
+		opp-1418000000 {
+			opp-hz = /bits/ 64 <1418000000>;
+		};
+
+		opp-1572000000 {
+			opp-hz = /bits/ 64 <1572000000>;
+		};
+
+		opp-1836000000 {
+			opp-hz = /bits/ 64 <1836000000>;
+		};
+
+		opp-1945000000 {
+			opp-hz = /bits/ 64 <1945000000>;
+		};
+
+		opp-2130000000 {
+			opp-hz = /bits/ 64 <2130000000>;
+		};
+
+		opp-2245000000 {
+			opp-hz = /bits/ 64 <2245000000>;
+		};
+
+		opp-2367000000 {
+			opp-hz = /bits/ 64 <2367000000>;
+		};
+
+		/* 2450 and 2600 MHz stay off, as on stock. */
+	};
+
+	cpucl2_opp: opp-table-cpucl2 {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-500000000 {
+			opp-hz = /bits/ 64 <500000000>;
+		};
+
+		opp-880000000 {
+			opp-hz = /bits/ 64 <880000000>;
+		};
+
+		opp-1164000000 {
+			opp-hz = /bits/ 64 <1164000000>;
+		};
+
+		opp-1298000000 {
+			opp-hz = /bits/ 64 <1298000000>;
+		};
+
+		opp-1557000000 {
+			opp-hz = /bits/ 64 <1557000000>;
+		};
+
+		opp-1745000000 {
+			opp-hz = /bits/ 64 <1745000000>;
+		};
+
+		opp-1885000000 {
+			opp-hz = /bits/ 64 <1885000000>;
+		};
+
+		opp-2049000000 {
+			opp-hz = /bits/ 64 <2049000000>;
+		};
+
+		opp-2147000000 {
+			opp-hz = /bits/ 64 <2147000000>;
+		};
+
+		opp-2294000000 {
+			opp-hz = /bits/ 64 <2294000000>;
+		};
+
+		opp-2363000000 {
+			opp-hz = /bits/ 64 <2363000000>;
+		};
+
+		opp-2556000000 {
+			opp-hz = /bits/ 64 <2556000000>;
+		};
+
+		opp-2687000000 {
+			opp-hz = /bits/ 64 <2687000000>;
+		};
+
+		opp-2850000000 {
+			opp-hz = /bits/ 64 <2850000000>;
+		};
+
+		opp-2914000000 {
+			opp-hz = /bits/ 64 <2914000000>;
+		};
+
+		/* 2943, 2970 and 3015 MHz stay off, as on stock. */
 	};
 
 	firmware {
@@ -171,6 +395,124 @@
 	};
 
 	thermal-zones {
+		/*
+		 * The CPU zones throttle their cluster from 80 C and force its
+		 * lowest level from 95 C, as on zumapro.
+		 */
+		big-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
+			thermal-sensors = <&acpm_tmu 0>;
+
+			trips {
+				big_alert: big-alert {
+					temperature = <80000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+
+				big_hot: big-hot {
+					temperature = <95000>;
+					hysteresis = <10000>;
+					type = "passive";
+				};
+
+				big_crit: big-crit {
+					temperature = <105000>;
+					hysteresis = <2000>;
+					type = "critical";
+				};
+			};
+
+			cooling-maps {
+				map0 {
+					trip = <&big_alert>;
+					cooling-device = <&cpu8 0xffffffff 0xffffffff>;
+				};
+
+				map1 {
+					trip = <&big_hot>;
+					cooling-device = <&cpu8 14 0xffffffff>;
+				};
+			};
+		};
+
+		mid-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
+			thermal-sensors = <&acpm_tmu 1>;
+
+			trips {
+				mid_alert: mid-alert {
+					temperature = <80000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+
+				mid_hot: mid-hot {
+					temperature = <95000>;
+					hysteresis = <10000>;
+					type = "passive";
+				};
+
+				mid_crit: mid-crit {
+					temperature = <105000>;
+					hysteresis = <2000>;
+					type = "critical";
+				};
+			};
+
+			cooling-maps {
+				map0 {
+					trip = <&mid_alert>;
+					cooling-device = <&cpu4 0xffffffff 0xffffffff>;
+				};
+
+				map1 {
+					trip = <&mid_hot>;
+					cooling-device = <&cpu4 14 0xffffffff>;
+				};
+			};
+		};
+
+		little-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
+			thermal-sensors = <&acpm_tmu 2>;
+
+			trips {
+				little_alert: little-alert {
+					temperature = <80000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+
+				little_hot: little-hot {
+					temperature = <95000>;
+					hysteresis = <10000>;
+					type = "passive";
+				};
+
+				little_crit: little-crit {
+					temperature = <105000>;
+					hysteresis = <2000>;
+					type = "critical";
+				};
+			};
+
+			cooling-maps {
+				map0 {
+					trip = <&little_alert>;
+					cooling-device = <&cpu0 0xffffffff 0xffffffff>;
+				};
+
+				map1 {
+					trip = <&little_hot>;
+					cooling-device = <&cpu0 9 0xffffffff>;
+				};
+			};
+		};
+
 		/*
 		 * Below stock's own GPU trips (passive from 100 C, hot at
 		 * 115 C), as on zumapro.
