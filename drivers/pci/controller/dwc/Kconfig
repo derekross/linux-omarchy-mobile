@@ -411,9 +411,10 @@ config PCIE_GS201
 	select PCI_PWRCTRL_GENERIC
 	help
 	  Say Y here to enable support for the PCIe controller of the Google
-	  gs201 (Tensor G2) SoC in host mode. Pixel 7 phones connect their
-	  Wi-Fi chip to it. The controller uses the DesignWare core plus a
-	  Samsung wrapper, and needs the gs201 PCIe PHY driver.
+	  gs201 (Tensor G2) and zuma (Tensor G3) SoCs in host mode. Pixel 7
+	  and Pixel 8 phones connect their Wi-Fi chip to it. The controller
+	  uses the DesignWare core plus a Samsung wrapper, and needs the gs201
+	  or zuma PCIe PHY driver.
 
 config PCIE_GS201_SYSMMU
 	tristate "Google gs201 PCIe System MMU as a DMA window"
