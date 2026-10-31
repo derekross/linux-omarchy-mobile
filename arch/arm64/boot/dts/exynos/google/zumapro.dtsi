@@ -1185,6 +1185,62 @@
 			};
 		};
 
+		pcie_1: pcie@13120000 {
+			compatible = "google,zumapro-pcie";
+			reg = <0x0 0x13120000 0x2000>, <0x0 0x13130000 0x5000>,
+			      <0x0 0x13150000 0xd000>, <0x0 0x13160000 0x3000>,
+			      <0x0 0x13140000 0x5000>, <0x0 0x13100000 0x1000>,
+			      <0x0 0x13400000 0x381000>, <0x0 0x60ffe000 0x2000>;
+			reg-names = "elbi", "soc", "udbg", "phy", "pcs", "ia", "dbi",
+				    "config";
+			#address-cells = <3>;
+			#size-cells = <2>;
+			device_type = "pci";
+			ranges = <0x82000000 0x0 0x60000000 0x0 0x60000000 0x0 0xff0000>;
+			bus-range = <0x00 0xff>;
+			interrupts = <GIC_SPI 439 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 441 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 442 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 443 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 444 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 445 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "ctrl", "msi0", "msi1", "msi2", "msi3",
+					  "msi4";
+			clocks = <&cmu_hsi2 CLK_GOUT_PCIE1_CTL_APB>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_DBI_ACLK>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_SLV_ACLK>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_MSTR_ACLK>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_PHY_UDBG_APB>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_PHY_PAL_APB>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_PHY_REF>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_PHY_BRIDGE_APB>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_PHY_TEST_APB>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_IA_CLK>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_SSMT_IA_ACLK>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_SSMT_IA_PCLK>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_SYSMMU_CLK>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_PMMU_CLK>;
+			clock-names = "ctl-apb", "dbi-aclk", "slv-aclk", "mstr-aclk",
+				      "phy-udbg-apb", "phy-pal-apb", "phy-ref",
+				      "phy-bridge-apb", "phy-test-apb", "ia-clk",
+				      "ssmt-ia-aclk", "ssmt-ia-pclk", "sysmmu-clk",
+				      "pmmu-clk";
+			samsung,pmu-syscon = <&pmu_system_controller 0x3ec8>;
+			num-lanes = <1>;
+			max-link-speed = <2>;
+			status = "disabled";
+
+			pcie_1_rp: pcie@0,0 {
+				compatible = "pciclass,0604";
+				reg = <0x0 0x0 0x0 0x0 0x0>;
+				#address-cells = <3>;
+				#size-cells = <2>;
+				device_type = "pci";
+				bus-range = <0x01 0xff>;
+				ranges;
+			};
+		};
+
 		ufs: ufs@13200000 {
 			compatible = "google,zumapro-ufs";
 			reg = <0x0 0x13200000 0x200>,
