@@ -80,6 +80,11 @@ static const struct mfd_cell s2mpg14_devs[] = {
 	MFD_CELL_NAME("s2mpg14-regulator"),
 };
 
+/* The sub-PMIC's LDOs; no interrupt, meter, GPIO or RTC. */
+static const struct mfd_cell s2mpg15_devs[] = {
+	MFD_CELL_NAME("s2mpg15-regulator"),
+};
+
 static const struct resource s2mps11_rtc_resources[] = {
 	DEFINE_RES_IRQ_NAMED(S2MPS11_IRQ_RTCA0, "alarm"),
 };
@@ -152,6 +157,7 @@ static void sec_pmic_dump_rev(struct sec_pmic_dev *sec_pmic)
 	case S2MPG12:
 	case S2MPG13:
 	case S2MPG14:
+	case S2MPG15:
 		/* For s2mpg1x, the revision is in a different regmap */
 		return;
 	case S2MU005:
@@ -285,6 +291,10 @@ int sec_pmic_probe(struct device *dev, int device_type, unsigned int irq,
 	case S2MPG14:
 		sec_devs = s2mpg14_devs;
 		num_sec_devs = ARRAY_SIZE(s2mpg14_devs);
+		break;
+	case S2MPG15:
+		sec_devs = s2mpg15_devs;
+		num_sec_devs = ARRAY_SIZE(s2mpg15_devs);
 		break;
 	case S2MPS11X:
 		sec_devs = s2mps11_devs;
