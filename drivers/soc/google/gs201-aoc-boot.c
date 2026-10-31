@@ -1,0 +1,1056 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * gs201 AoC firmware boot, for bring-up
+ *
+ * Boots the AoC (audio and sensor DSP) the way Google's aoc driver does
+ * (google-modules/aoc/aoc.c aoc_fw_callback(), aoc_v1.c), one debugfs step
+ * at a time, and stops once the firmware publishes its services. It does
+ * not run the service rings or the mailboxes: that is the AoC core driver's
+ * job, which replaces this one.
+ *
+ *   info     aoc_req and its acknowledge, the GSA's AoC state, chip id,
+ *            board, carve-out (no BLK_AOC register is read)
+ *   power    write 1: ask the APM to power BLK_AOC (aoc_req = 1) and wait
+ *            for the acknowledge; write 0: drop the request
+ *   blk      only while the acknowledge is set: the AoC System MMU
+ *            registers and the AoC S2MPU's CTRL0
+ *   load     write a firmware name: validate it, power BLK_AOC, open the
+ *            AoC S2MPU, install the System MMU windows from the image
+ *            header, copy the body to the carve-out, have the GSA
+ *            authenticate and lock it, write the boot parameters (the AoC
+ *            S2MPU's CTRL0 = 0 lets all its traffic through). The AoC
+ *            stays in reset (GSA state "loaded").
+ *   start    write 1: GSA_AOC_START, then wait up to 5 s for the firmware's
+ *            control block (magic 0xa0c00a0c) and list its services
+ *   control  the control block and the service names
+ *   shutdown write 1: GSA_AOC_SHUTDOWN (back to "loaded")
+ *   cmd      write a GSA AoC command number (0 get state, 1 start,
+ *            4 shutdown, 5 release reset, 6 reset)
+ *   ramdump  the firmware's ramdump header (boot breadcrumbs) and the
+ *            start of the IPC area
+ *   pcu      the A32 reset control and revision, only with diag_pcu=1 (the
+ *            read aborted on cheetah with the AoC in reset)
+ *   mbox     the three AoC mailboxes, AP side: doorbells the AoC rang and
+ *            the shared registers (also around start with diag_mbox=1);
+ *            found through the node's mboxes
+ *
+ * Around start and release reset the kernel log gets the S2MPU, the System
+ * MMU and the IPC area (the PCU and the breadcrumbs with diag_pcu and
+ * diag_ramdump); with "reapply" (the
+ * default) an S2MPU or System MMU setting that a block reset cleared is
+ * put back first. The AoC watchdog interrupt, if described, is logged.
+ *   unload   write 1: GSA_AOC_SHUTDOWN if running, then unload (the GSA
+ *            unlocks the carve-out, state "inactive"), System MMU off. The
+ *            order of Google's aoc_take_offline(); load and start can then
+ *            run again.
+ *
+ * Image format: a 4 KiB signed header (auth header with an image config:
+ * load address, size, reset trampoline, IOMMU windows), then the "superbin"
+ * (magic 0xaabbccdd) whose image_size is the offset of the IPC area in the
+ * carve-out (google-modules/aoc/aoc_firmware.c).
+ *
+ * Copyright (c) 2019-2023 Google LLC
+ */
+
+#include <linux/bits.h>
+#include <linux/debugfs.h>
+#include <linux/delay.h>
+#include <linux/dma-mapping.h>
+#include <linux/firmware.h>
+#include <linux/interrupt.h>
+#include <linux/io.h>
+#include <linux/iopoll.h>
+#include <linux/module.h>
+#include <linux/mutex.h>
+#include <linux/of.h>
+#include <linux/of_address.h>
+#include <linux/of_reserved_mem.h>
+#include <linux/platform_device.h>
+#include <linux/random.h>
+#include <linux/seq_file.h>
+#include <linux/sizes.h>
+#include <linux/soc/google/gs201-aoc-sysmmu.h>
+#include <linux/soc/google/gsa.h>
+#include <linux/uaccess.h>
+
+#define AOC_REQ_ACK			0x40
+
+#define AOC_S2MPU_CTRL0			0x0000
+
+#define AUTH_HEADER_MAGIC		0x00434f41	/* "AOC" */
+#define AUTH_HEADER_SIZE		4096
+#define SUPERBIN_MAGIC			0xaabbccdd
+
+/* The AoC sees its carve-out at this address (AOC_BINARY_DRAM_BASE) */
+#define AOC_DRAM_BASE			0x98000000
+
+#define AOC_PARAMETER_MAGIC		0x0a0cda7a
+#define AOC_CONTROL_MAGIC		0xa0c00a0c
+
+/* Heaps at the top of the carve-out (aoc.h) */
+#define SENSOR_DIRECT_HEAP_SIZE		SZ_4M
+#define PLAYBACK_HEAP_SIZE		SZ_16K
+#define CAPTURE_HEAP_SIZE		SZ_64K
+
+/* enum AOC_FIRMWARE_INFORMATION (aoc.h) */
+enum {
+	kAOCBoardID = 0x1001,
+	kAOCBoardRevision = 0x1002,
+	kAOCSRAMRepaired = 0x1003,
+	kAOCCarveoutAddress = 0x1005,
+	kAOCCarveoutSize = 0x1006,
+	kAOCSensorDirectHeapAddress = 0x1007,
+	kAOCSensorDirectHeapSize = 0x1008,
+	kAOCForceVNOM = 0x1009,
+	kAOCDisableMM = 0x100a,
+	kAOCEnableUART = 0x100b,
+	kAOCPlaybackHeapAddress = 0x100c,
+	kAOCPlaybackHeapSize = 0x100d,
+	kAOCCaptureHeapAddress = 0x100e,
+	kAOCCaptureHeapSize = 0x100f,
+	kAOCForceSpeakerUltrasonic = 0x1010,
+	kAOCRandSeed = 0x1011,
+	kAOCChipRevision = 0x1012,
+	kAOCChipType = 0x1013,
+	kAOCGnssType = 0x1014,
+	kAOCVolteReleaseMif = 0x1015,
+	kAOCChipProductId = 0x1016,
+	kAOCWifiChip = 0x1017,
+};
+
+/* chipid block (gs-chipid.c, gs201 variant) */
+#define CHIPID_PRODUCT			0x00
+#define CHIPID_REV			0x10
+#define GS201_TYPE_MASK			0x00f00000
+#define GS201_TYPE_SHIFT		20
+
+#define MAX_WINDOWS			16
+
+/* AoC PCU (aoc.h): reset control at +0, revision at +0xf000 */
+#define AOC_PCU_RESET_CONTROL		0x0000
+#define AOC_PCU_REVISION		0xf000
+
+/* aoc_ramdump_regions.h: header at carve-out + 32 MiB */
+#define RAMDUMP_HEADER_OFFSET		0x2000000
+#define RAMDUMP_BREADCRUMBS		0x318	/* after 17 section headers */
+#define RAMDUMP_DUMP_SIZE		0x360
+
+/*
+ * Optional diagnostic reads, each off by default until it has been seen to
+ * work on the phone. The PCU read aborted (synchronous external abort) on
+ * the first try, with BLK_AOC on and the AoC in reset.
+ */
+static bool diag_pcu;
+module_param(diag_pcu, bool, 0644);
+MODULE_PARM_DESC(diag_pcu, "Read the AoC PCU (A32 reset control, revision); aborted on cheetah with the AoC in reset");
+
+static bool diag_ramdump;
+module_param(diag_ramdump, bool, 0644);
+MODULE_PARM_DESC(diag_ramdump, "Read the ramdump header (carve-out + 32 MiB) in the start diagnostics");
+
+static bool diag_mbox;
+module_param(diag_mbox, bool, 0644);
+MODULE_PARM_DESC(diag_mbox, "Read the three AoC mailboxes in the start diagnostics");
+
+static bool reapply = true;
+module_param(reapply, bool, 0644);
+MODULE_PARM_DESC(reapply, "Before start, put back an AoC S2MPU or System MMU setting a block reset cleared");
+
+struct aoc_auth_header_v1 {
+	u8 signature[512];
+	u8 key[512];
+	u32 magic;
+	u32 generation;
+	u32 rollback_info;
+	u32 length;
+	u8 flags[16];
+	u8 hash[32];
+	u8 chip_id[32];
+	u8 auth_config[256];
+	u8 image_config[256];
+} __packed;
+
+struct aoc_auth_header_v2 {
+	u8 signature[512];
+	u8 key[512];
+	u32 magic;
+	u32 generation;
+	u32 rollback_info;
+	u32 length;
+	u8 flags[16];
+	u8 hash[64];
+	u8 chip_id[32];
+	u8 auth_config[256];
+	u8 image_config[256];
+} __packed;
+
+struct aoc_image_config {
+	u32 version;
+	u32 fw_start;
+	u32 fw_size;
+	u32 privilege_level;
+	u16 bl_offset;
+	u16 bl_size;
+	u16 iommu_offset;
+	u16 iommu_size;
+} __packed;
+
+struct aoc_superbin_header {
+	u32 magic;
+	u32 release_type;
+	u32 reserved0;
+	u32 image_size;
+	u32 bootloader_low;
+	u32 bootloader_high;
+	u32 bootloader_offset;
+	u32 bootloader_size;
+	u32 uuid_table_offset;
+	u32 uuid_table_size;
+	u8 version_prefix[8];
+	u8 version_string[64];
+} __packed;
+
+/* aoc_ipc_core_internal.h */
+struct aoc_control_block {
+	u32 magic;
+	u32 fw_version;
+	u32 hw_version;
+	u32 status;
+	u64 supported_features;
+	u32 services;
+	u32 service_size;
+	u32 services_offset;
+	u8 fw_version_name[48];
+	u8 hw_version_name[48];
+	u64 system_clock_offset;
+} __packed;
+
+struct aoc_boot {
+	struct device *dev;
+	struct device *gsa;
+	struct aoc_sysmmu *mmu;
+	void __iomem *req;
+	void __iomem *s2mpu;
+	void __iomem *chipid;
+	void __iomem *pcu;	/* optional, in BLK_AOC */
+	void __iomem *mbox[3];	/* optional: AoC <-> AP mailboxes (A32, F1, P6) */
+	int wdt_irq;		/* optional: the AoC watchdog */
+	bool wdt_on;
+	phys_addr_t dram_base;
+	size_t dram_size;
+	void *dram;		/* the carve-out, write-combined */
+	u32 ipc_offset;
+	u32 board_id, board_rev;
+	struct aoc_sysmmu_window win[MAX_WINDOWS];
+	unsigned int nwin;
+	struct mutex lock;
+	struct dentry *debugfs;
+	bool loaded;
+};
+
+static const char *aoc_state_name(int state)
+{
+	static const char * const names[] = { "inactive", "loaded", "running" };
+
+	return state >= 0 && state < ARRAY_SIZE(names) ? names[state] : "?";
+}
+
+static bool aoc_blk_on(struct aoc_boot *ab)
+{
+	return readl(ab->req + AOC_REQ_ACK) & 1;
+}
+
+static int aoc_power(struct aoc_boot *ab, bool on)
+{
+	u32 ack;
+	int ret;
+
+	writel(on, ab->req);
+	/* aoc_v1.c wait_for_aoc_status(): up to 2 s */
+	ret = readl_poll_timeout(ab->req + AOC_REQ_ACK, ack, (ack & 1) == on,
+				 1000, 2 * USEC_PER_SEC);
+	dev_info(ab->dev, "aoc_req %u: ack %#x%s\n", on, ack,
+		 ret ? " (timed out)" : "");
+	return ret;
+}
+
+static void aoc_chip_info(struct aoc_boot *ab, u32 *product, u32 *type,
+			  u32 *rev)
+{
+	u32 r0 = readl(ab->chipid + CHIPID_PRODUCT);
+	u32 r10 = readl(ab->chipid + CHIPID_REV);
+
+	*product = r0 & 0xfffff000;
+	*type = (r0 | ((r10 & GS201_TYPE_MASK) >> GS201_TYPE_SHIFT)) & 0xff;
+	*rev = (((r10 >> 20) & 0xf) << 4) | ((r10 >> 16) & 0xf);
+}
+
+/* The ramdump header: magic, valid flag, the first eight boot breadcrumbs */
+static void aoc_diag_ramdump(struct aoc_boot *ab, const char *when)
+{
+	void __iomem *rd = (void __iomem *)(ab->dram + RAMDUMP_HEADER_OFFSET);
+	void __iomem *bc = rd + RAMDUMP_BREADCRUMBS;
+	char magic[8];
+
+	memcpy_fromio(magic, rd, sizeof(magic));
+	magic[7] = 0;
+	dev_info(ab->dev, "%s: ramdump magic %s valid %#x crumbs %08x %08x %08x %08x %08x %08x %08x %08x\n",
+		 when, magic, readl(rd + 8), readl(bc), readl(bc + 4),
+		 readl(bc + 8), readl(bc + 12), readl(bc + 16), readl(bc + 20),
+		 readl(bc + 24), readl(bc + 28));
+}
+
+/* The PCU: A32 reset control and revision. Only with diag_pcu. */
+static void aoc_diag_pcu(struct aoc_boot *ab, const char *when)
+{
+	if (!ab->pcu || !diag_pcu || !aoc_blk_on(ab))
+		return;
+	dev_info(ab->dev, "%s: about to read the PCU\n", when);
+	dev_info(ab->dev, "%s: pcu reset %#x\n", when,
+		 readl(ab->pcu + AOC_PCU_RESET_CONTROL));
+	dev_info(ab->dev, "%s: pcu rev %#x\n", when,
+		 readl(ab->pcu + AOC_PCU_REVISION));
+}
+
+/*
+ * Log what tells a running AoC from a stuck one. Groups that read fine on
+ * the phone (S2MPU CTRL0, System MMU registers, the IPC area) always; the
+ * PCU and the ramdump header only when their parameter is set. Each group
+ * logs on its own line, so an abort points at its group.
+ */
+static void aoc_diag(struct aoc_boot *ab, const char *when)
+{
+	void __iomem *ipc = (void __iomem *)(ab->dram + ab->ipc_offset);
+
+	if (!aoc_blk_on(ab)) {
+		dev_info(ab->dev, "%s: BLK_AOC off (aoc_req %#x ack %#x)\n", when,
+			 readl(ab->req), readl(ab->req + AOC_REQ_ACK));
+	} else {
+		dev_info(ab->dev, "%s: aoc s2mpu CTRL0 %#x\n", when,
+			 readl(ab->s2mpu + AOC_S2MPU_CTRL0));
+		aoc_sysmmu_dump(ab->mmu, when);
+	}
+	if (ab->ipc_offset)
+		dev_info(ab->dev, "%s: ipc %08x %08x %08x %08x %08x %08x\n", when,
+			 readl(ipc), readl(ipc + 4), readl(ipc + 8), readl(ipc + 12),
+			 readl(ipc + 16), readl(ipc + 20));
+}
+
+/*
+ * The AoC mailboxes, AP side (mailbox-wc.c): which doorbells the AoC rang
+ * (INTSR1, masked by INTMR1) and the shared registers it left. Read only.
+ */
+static const char * const aoc_mbox_names[] = { "a32", "f1", "p6" };
+
+static void aoc_diag_mbox(struct aoc_boot *ab, const char *when)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(ab->mbox); i++) {
+		void __iomem *b = ab->mbox[i];
+
+		if (!b)
+			continue;
+		dev_info(ab->dev, "%s: about to read mailbox %s\n", when,
+			 aoc_mbox_names[i]);
+		dev_info(ab->dev, "%s: mbox %s intmr0 %#x intsr0 %#x intmr1 %#x intsr1 %#x sr %08x %08x %08x %08x %08x %08x %08x %08x\n",
+			 when, aoc_mbox_names[i], readl(b + 0x28), readl(b + 0x2c),
+			 readl(b + 0x48), readl(b + 0x4c), readl(b + 0x80),
+			 readl(b + 0x84), readl(b + 0x88), readl(b + 0x8c),
+			 readl(b + 0x90), readl(b + 0x94), readl(b + 0x98),
+			 readl(b + 0x9c));
+	}
+}
+
+static int aoc_mbox_show(struct seq_file *s, void *unused)
+{
+	aoc_diag_mbox(s->private, "mbox");
+	seq_puts(s, "see the kernel log\n");
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(aoc_mbox);
+
+/* The optional groups; called without the lock held */
+static void aoc_diag_extra(struct aoc_boot *ab, const char *when)
+{
+	if (diag_mbox)
+		aoc_diag_mbox(ab, when);
+	aoc_diag_pcu(ab, when);
+	if (diag_ramdump)
+		aoc_diag_ramdump(ab, when);
+}
+
+static irqreturn_t aoc_wdt_irq(int irq, void *data)
+{
+	struct aoc_boot *ab = data;
+
+	disable_irq_nosync(irq);
+	ab->wdt_on = false;
+	dev_err(ab->dev, "AoC watchdog interrupt: the firmware ran and stopped\n");
+	return IRQ_HANDLED;
+}
+
+/* Put back what a block reset may have cleared (see aoc_take_offline()) */
+static void aoc_check_setup(struct aoc_boot *ab)
+{
+	u32 ctrl0 = readl(ab->s2mpu + AOC_S2MPU_CTRL0);
+
+	if (ctrl0) {
+		dev_warn(ab->dev, "AoC S2MPU CTRL0 is %#x again%s\n", ctrl0,
+			 reapply ? ", setting 0" : "");
+		if (reapply)
+			writel(0, ab->s2mpu + AOC_S2MPU_CTRL0);
+	}
+	if (aoc_sysmmu_lost(ab->mmu)) {
+		dev_warn(ab->dev, "System MMU setup was cleared%s\n",
+			 reapply ? ", programming it again" : "");
+		if (reapply)
+			aoc_sysmmu_reprogram(ab->mmu);
+	}
+}
+
+static int aoc_info_show(struct seq_file *s, void *unused)
+{
+	struct aoc_boot *ab = s->private;
+	u32 product, type, rev;
+	int state;
+
+	state = gsa_send_aoc_cmd(ab->gsa, GSA_AOC_GET_STATE);
+	aoc_chip_info(ab, &product, &type, &rev);
+	seq_printf(s, "aoc_req %#x ack %#x (BLK_AOC %s)\n", readl(ab->req),
+		   readl(ab->req + AOC_REQ_ACK), aoc_blk_on(ab) ? "on" : "off");
+	seq_printf(s, "gsa aoc state %d (%s)\n", state, aoc_state_name(state));
+	seq_printf(s, "chip product %#x type %#x revision %#x\n", product, type, rev);
+	seq_printf(s, "board id %#x rev %#x\n", ab->board_id, ab->board_rev);
+	seq_printf(s, "carve-out %pa + %#zx\n", &ab->dram_base, ab->dram_size);
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(aoc_info);
+
+static ssize_t aoc_power_write(struct file *file, const char __user *ubuf,
+			       size_t count, loff_t *ppos)
+{
+	struct aoc_boot *ab = file->private_data;
+	bool on;
+	int ret;
+
+	ret = kstrtobool_from_user(ubuf, count, &on);
+	if (ret)
+		return ret;
+	mutex_lock(&ab->lock);
+	ret = aoc_power(ab, on);
+	mutex_unlock(&ab->lock);
+	return ret ?: count;
+}
+
+static const struct file_operations aoc_power_fops = {
+	.open = simple_open,
+	.write = aoc_power_write,
+};
+
+/*
+ * Read-only views take no lock: if a read aborts, the reading task dies,
+ * and a held lock would wedge load and start for the rest of the boot.
+ */
+static int aoc_blk_show(struct seq_file *s, void *unused)
+{
+	struct aoc_boot *ab = s->private;
+
+	if (!aoc_blk_on(ab)) {
+		seq_puts(s, "BLK_AOC is off (no acknowledge): not read\n");
+		return 0;
+	}
+	seq_printf(s, "aoc s2mpu CTRL0 %#x\n", readl(ab->s2mpu + AOC_S2MPU_CTRL0));
+	aoc_sysmmu_dump(ab->mmu, "blk");
+	seq_puts(s, "System MMU: see the kernel log\n");
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(aoc_blk);
+
+static int aoc_pcu_show(struct seq_file *s, void *unused)
+{
+	struct aoc_boot *ab = s->private;
+
+	if (!ab->pcu || !diag_pcu || !aoc_blk_on(ab)) {
+		seq_puts(s, "not read (needs the pcu range, diag_pcu=1 and BLK_AOC on)\n");
+		return 0;
+	}
+	aoc_diag_pcu(ab, "pcu");
+	seq_puts(s, "see the kernel log\n");
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(aoc_pcu);
+
+/* Validate the image and pick the windows. Returns the image config. */
+static int aoc_parse(struct aoc_boot *ab, const struct firmware *fw)
+{
+	const struct aoc_auth_header_v1 *h1 = (const void *)fw->data;
+	const struct aoc_auth_header_v2 *h2 = (const void *)fw->data;
+	const struct aoc_superbin_header *sb;
+	const struct aoc_image_config *cfg;
+	const u8 *cfg_raw;
+	const __le64 *ent;
+	unsigned int i, n;
+
+	if (fw->size < AUTH_HEADER_SIZE + sizeof(*sb))
+		return -EINVAL;
+
+	if (le32_to_cpu(h1->magic) == AUTH_HEADER_MAGIC &&
+	    le32_to_cpu(h1->generation) == 1)
+		cfg_raw = h1->image_config;
+	else if (le32_to_cpu(h2->magic) == AUTH_HEADER_MAGIC &&
+		 le32_to_cpu(h2->generation) == 2)
+		cfg_raw = h2->image_config;
+	else
+		return dev_err_probe(ab->dev, -EINVAL, "not a signed AoC image\n");
+	cfg = (const void *)cfg_raw;
+
+	sb = (const void *)(fw->data + AUTH_HEADER_SIZE);
+	if (le32_to_cpu(sb->magic) != SUPERBIN_MAGIC)
+		return dev_err_probe(ab->dev, -EINVAL, "bad superbin magic\n");
+
+	if (le32_to_cpu(cfg->fw_start) != ab->dram_base ||
+	    le32_to_cpu(cfg->fw_size) > ab->dram_size ||
+	    fw->size - AUTH_HEADER_SIZE > le32_to_cpu(cfg->fw_size))
+		return dev_err_probe(ab->dev, -EINVAL,
+				     "image wants %#x + %#x, carve-out is %pa + %#zx\n",
+				     le32_to_cpu(cfg->fw_start),
+				     le32_to_cpu(cfg->fw_size), &ab->dram_base,
+				     ab->dram_size);
+
+	ab->ipc_offset = le32_to_cpu(sb->image_size);
+	if (ab->ipc_offset < le32_to_cpu(cfg->fw_size) ||
+	    ab->ipc_offset + SZ_64K > ab->dram_size - SENSOR_DIRECT_HEAP_SIZE -
+	    PLAYBACK_HEAP_SIZE - CAPTURE_HEAP_SIZE)
+		return dev_err_probe(ab->dev, -EINVAL, "bad IPC offset %#x\n",
+				     ab->ipc_offset);
+
+	n = le16_to_cpu(cfg->iommu_size) / sizeof(u64);
+	if (le16_to_cpu(cfg->iommu_offset) + n * sizeof(u64) > 256 ||
+	    le16_to_cpu(cfg->iommu_size) % sizeof(u64) || !n || n > MAX_WINDOWS)
+		return dev_err_probe(ab->dev, -EINVAL, "bad IOMMU table\n");
+
+	ent = (const void *)(cfg_raw + le16_to_cpu(cfg->iommu_offset));
+	for (i = 0; i < n; i++) {
+		u64 v = le64_to_cpu(ent[i]);
+
+		/* aoc_firmware.h IOMMU_VADDR/PADDR/SIZE */
+		ab->win[i].iova = (v & 0xfffff) << 12;
+		ab->win[i].pa = ((v >> 20) & 0xffffff) << 12;
+		ab->win[i].size = ((v >> 44) & 0xfffff) << 12;
+	}
+	ab->nwin = n;
+
+	dev_info(ab->dev, "image %.8s%.56s (%s), body %#zx bytes at %#x, IPC at +%#x, %u windows\n",
+		 sb->version_prefix, sb->version_string,
+		 le32_to_cpu(sb->release_type) == 1 ? "release" : "development",
+		 fw->size - AUTH_HEADER_SIZE, le32_to_cpu(cfg->fw_start),
+		 ab->ipc_offset, n);
+	return 0;
+}
+
+static u32 aoc_dram_to_aoc(struct aoc_boot *ab, phys_addr_t pa)
+{
+	return AOC_DRAM_BASE + (pa - ab->dram_base);
+}
+
+static void aoc_write_parameters(struct aoc_boot *ab)
+{
+	phys_addr_t top = ab->dram_base + ab->dram_size;
+	phys_addr_t sensor = top - SENSOR_DIRECT_HEAP_SIZE;
+	phys_addr_t playback = sensor - PLAYBACK_HEAP_SIZE;
+	phys_addr_t capture = playback - CAPTURE_HEAP_SIZE;
+	u32 product, type, rev;
+	u32 __iomem *p;
+	unsigned int i;
+
+	aoc_chip_info(ab, &product, &type, &rev);
+	{
+		const u32 kv[][2] = {
+			{ kAOCBoardID, ab->board_id },
+			{ kAOCBoardRevision, ab->board_rev },
+			{ kAOCSRAMRepaired, 0 },
+			{ kAOCCarveoutAddress, (u32)ab->dram_base },
+			{ kAOCCarveoutSize, (u32)ab->dram_size },
+			{ kAOCSensorDirectHeapAddress, aoc_dram_to_aoc(ab, sensor) },
+			{ kAOCSensorDirectHeapSize, SENSOR_DIRECT_HEAP_SIZE },
+			{ kAOCPlaybackHeapAddress, aoc_dram_to_aoc(ab, playback) },
+			{ kAOCPlaybackHeapSize, PLAYBACK_HEAP_SIZE },
+			{ kAOCCaptureHeapAddress, aoc_dram_to_aoc(ab, capture) },
+			{ kAOCCaptureHeapSize, CAPTURE_HEAP_SIZE },
+			{ kAOCForceVNOM, 0 },
+			{ kAOCDisableMM, 0 },
+			{ kAOCEnableUART, 0 },
+			{ kAOCForceSpeakerUltrasonic, 0 },
+			{ kAOCRandSeed, get_random_u32() },
+			{ kAOCChipRevision, rev },
+			{ kAOCChipType, type },
+			{ kAOCGnssType, 0 },
+			{ kAOCVolteReleaseMif, 0 },
+			{ kAOCChipProductId, product },
+			{ kAOCWifiChip, 0 },
+		};
+
+		/* aoc_pass_fw_information() */
+		p = (u32 __iomem *)(ab->dram + ab->ipc_offset);
+		writel_relaxed(AOC_PARAMETER_MAGIC, p++);
+		writel_relaxed(ARRAY_SIZE(kv), p++);
+		writel_relaxed(12 + ARRAY_SIZE(kv) * 3 * sizeof(u32), p++);
+		for (i = 0; i < ARRAY_SIZE(kv); i++) {
+			writel_relaxed(kv[i][0], p++);
+			writel_relaxed(sizeof(u32), p++);
+			writel_relaxed(kv[i][1], p++);
+		}
+		/* The parameters are in memory before the AoC is started */
+		wmb();
+		dev_info(ab->dev, "parameters: board %#x/%#x chip %#x type %#x rev %#x\n",
+			 ab->board_id, ab->board_rev, product, type, rev);
+	}
+}
+
+static int aoc_load(struct aoc_boot *ab, const char *name)
+{
+	const struct firmware *fw;
+	dma_addr_t hdr_dma;
+	void *hdr;
+	u32 ctrl0;
+	int ret, state;
+
+	state = gsa_send_aoc_cmd(ab->gsa, GSA_AOC_GET_STATE);
+	if (state != GSA_AOC_STATE_INACTIVE) {
+		dev_err(ab->dev, "GSA AoC state is %d (%s), not inactive: not loading\n",
+			state, aoc_state_name(state));
+		return state < 0 ? state : -EBUSY;
+	}
+
+	ret = request_firmware(&fw, name, ab->dev);
+	if (ret)
+		return ret;
+	ret = aoc_parse(ab, fw);
+	if (ret)
+		goto out_fw;
+
+	ret = aoc_power(ab, true);
+	if (ret)
+		goto out_fw;
+
+	/* Stock's hypervisor opens it at each power-up; nothing else does here */
+	ctrl0 = readl(ab->s2mpu + AOC_S2MPU_CTRL0);
+	writel(0, ab->s2mpu + AOC_S2MPU_CTRL0);
+	dev_info(ab->dev, "AoC S2MPU CTRL0 %#x -> %#x\n", ctrl0,
+		 readl(ab->s2mpu + AOC_S2MPU_CTRL0));
+
+	ret = aoc_sysmmu_enable(ab->mmu, ab->win, ab->nwin);
+	if (ret)
+		goto out_fw;
+
+	/* _aoc_fw_commit(): the body goes to the start of the carve-out */
+	memcpy(ab->dram, fw->data + AUTH_HEADER_SIZE, fw->size - AUTH_HEADER_SIZE);
+	/* The body is in memory before the GSA reads it */
+	wmb();
+
+	hdr = dma_alloc_coherent(ab->gsa, AUTH_HEADER_SIZE, &hdr_dma, GFP_KERNEL);
+	if (!hdr) {
+		ret = -ENOMEM;
+		goto out_mmu;
+	}
+	memcpy(hdr, fw->data, AUTH_HEADER_SIZE);
+	ret = gsa_load_aoc_fw_image(ab->gsa, hdr_dma, ab->dram_base);
+	dma_free_coherent(ab->gsa, AUTH_HEADER_SIZE, hdr, hdr_dma);
+	if (ret)
+		goto out_mmu;
+
+	/* After the GSA has locked the body: the IPC area is outside it */
+	aoc_write_parameters(ab);
+	ab->loaded = true;
+
+	state = gsa_send_aoc_cmd(ab->gsa, GSA_AOC_GET_STATE);
+	dev_info(ab->dev, "loaded; GSA AoC state %d (%s)\n", state,
+		 aoc_state_name(state));
+	release_firmware(fw);
+	return 0;
+
+out_mmu:
+	aoc_sysmmu_disable(ab->mmu);
+out_fw:
+	release_firmware(fw);
+	return ret;
+}
+
+static ssize_t aoc_load_write(struct file *file, const char __user *ubuf,
+			      size_t count, loff_t *ppos)
+{
+	struct aoc_boot *ab = file->private_data;
+	char name[64];
+	int ret;
+
+	if (count >= sizeof(name))
+		return -EINVAL;
+	if (copy_from_user(name, ubuf, count))
+		return -EFAULT;
+	name[count] = 0;
+	strim(name);
+
+	mutex_lock(&ab->lock);
+	ret = ab->loaded ? -EBUSY : aoc_load(ab, name);
+	mutex_unlock(&ab->lock);
+	return ret ?: count;
+}
+
+static const struct file_operations aoc_load_fops = {
+	.open = simple_open,
+	.write = aoc_load_write,
+};
+
+static struct aoc_control_block __iomem *aoc_control(struct aoc_boot *ab)
+{
+	return (void __iomem *)(ab->dram + ab->ipc_offset);
+}
+
+static void aoc_list(struct aoc_boot *ab, struct seq_file *s)
+{
+	struct aoc_control_block __iomem *cb = aoc_control(ab);
+	u32 n, size, off, i;
+	char name[33];
+
+	n = readl(&cb->services);
+	size = readl(&cb->service_size);
+	off = readl(&cb->services_offset);
+	memcpy_fromio(name, cb->fw_version_name, 32);
+	name[32] = 0;
+	seq_printf(s, "magic %#x status %#x fw %s, %u services (size %u at +%#x)\n",
+		   readl(&cb->magic), readl(&cb->status), name, n, size, off);
+
+	if (n > 256 || size < 32 ||
+	    ab->ipc_offset + off + (u64)n * size > ab->dram_size)
+		return;
+	for (i = 0; i < n; i++) {
+		memcpy_fromio(name, ab->dram + ab->ipc_offset + off + i * size, 32);
+		name[32] = 0;
+		seq_printf(s, "  %3u %s\n", i, name);
+	}
+}
+
+static int aoc_control_show(struct seq_file *s, void *unused)
+{
+	struct aoc_boot *ab = s->private;
+
+	if (READ_ONCE(ab->loaded))
+		aoc_list(ab, s);
+	else
+		seq_puts(s, "not loaded\n");
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(aoc_control);
+
+static int aoc_cmd(struct aoc_boot *ab, u32 cmd)
+{
+	bool boot = cmd == GSA_AOC_START || cmd == GSA_AOC_RELEASE_RESET;
+	u32 magic;
+	int ret;
+
+	if (boot)
+		aoc_diag_extra(ab, "before");
+	mutex_lock(&ab->lock);
+	if (!ab->loaded) {
+		ret = -ENOENT;
+		goto out;
+	}
+	/* aoc_take_offline(): wake the AoC before calling the GSA */
+	ret = aoc_power(ab, true);
+	if (ret)
+		goto out;
+	if (boot) {
+		aoc_diag(ab, "before");
+		aoc_check_setup(ab);
+		if (ab->wdt_irq > 0 && !ab->wdt_on) {
+			ab->wdt_on = true;
+			enable_irq(ab->wdt_irq);
+		}
+	}
+	ret = gsa_send_aoc_cmd(ab->gsa, cmd);
+	dev_info(ab->dev, "AoC command %u: GSA state %d (%s)\n", cmd, ret,
+		 aoc_state_name(ret));
+	if (ret < 0 || !boot)
+		goto out;
+	aoc_diag(ab, "after");
+
+	ret = readx_poll_timeout(readl, &aoc_control(ab)->magic, magic,
+				 magic == AOC_CONTROL_MAGIC, 20000,
+				 5 * USEC_PER_SEC);
+	if (ret) {
+		dev_err(ab->dev, "no control block after 5 s (magic %#x)\n", magic);
+		aoc_diag(ab, "5 s");
+	} else {
+		dev_info(ab->dev, "firmware up: %u services\n",
+			 readl(&aoc_control(ab)->services));
+	}
+out:
+	mutex_unlock(&ab->lock);
+	if (boot)
+		aoc_diag_extra(ab, "after");
+	return ret;
+}
+
+static ssize_t aoc_cmd_write(struct aoc_boot *ab, const char __user *ubuf,
+			     size_t count, u32 cmd)
+{
+	bool go;
+	int ret;
+
+	ret = kstrtobool_from_user(ubuf, count, &go);
+	if (ret || !go)
+		return ret ?: count;
+	ret = aoc_cmd(ab, cmd);
+	return ret < 0 ? ret : count;
+}
+
+static ssize_t aoc_start_write(struct file *file, const char __user *ubuf,
+			       size_t count, loff_t *ppos)
+{
+	return aoc_cmd_write(file->private_data, ubuf, count, GSA_AOC_START);
+}
+
+static ssize_t aoc_shutdown_write(struct file *file, const char __user *ubuf,
+				  size_t count, loff_t *ppos)
+{
+	return aoc_cmd_write(file->private_data, ubuf, count, GSA_AOC_SHUTDOWN);
+}
+
+static ssize_t aoc_unload_write(struct file *file, const char __user *ubuf,
+				size_t count, loff_t *ppos)
+{
+	struct aoc_boot *ab = file->private_data;
+	bool go;
+	int ret, state;
+
+	ret = kstrtobool_from_user(ubuf, count, &go);
+	if (ret || !go)
+		return ret ?: count;
+
+	mutex_lock(&ab->lock);
+	if (!ab->loaded) {
+		ret = -ENOENT;
+		goto out;
+	}
+	ret = aoc_power(ab, true);
+	if (ret)
+		goto out;
+	state = gsa_send_aoc_cmd(ab->gsa, GSA_AOC_GET_STATE);
+	if (state == GSA_AOC_STATE_RUNNING)
+		state = gsa_send_aoc_cmd(ab->gsa, GSA_AOC_SHUTDOWN);
+	if (state != GSA_AOC_STATE_LOADED) {
+		dev_err(ab->dev, "AoC state %d (%s), not unloading\n", state,
+			aoc_state_name(state));
+		ret = state < 0 ? state : -EBUSY;
+		goto out;
+	}
+	ret = gsa_unload_aoc_fw_image(ab->gsa);
+	if (ret)
+		goto out;
+	aoc_sysmmu_disable(ab->mmu);
+	ab->loaded = false;
+	state = gsa_send_aoc_cmd(ab->gsa, GSA_AOC_GET_STATE);
+	dev_info(ab->dev, "unloaded; GSA AoC state %d (%s)\n", state,
+		 aoc_state_name(state));
+out:
+	mutex_unlock(&ab->lock);
+	return ret < 0 ? ret : count;
+}
+
+static const struct file_operations aoc_unload_fops = {
+	.open = simple_open,
+	.write = aoc_unload_write,
+};
+
+/* Any GSA AoC command: 0 get state, 1 start, 4 shutdown, 5 release reset, 6 reset */
+static ssize_t aoc_rawcmd_write(struct file *file, const char __user *ubuf,
+				size_t count, loff_t *ppos)
+{
+	u32 cmd;
+	int ret;
+
+	ret = kstrtou32_from_user(ubuf, count, 0, &cmd);
+	if (ret)
+		return ret;
+	if (cmd != GSA_AOC_GET_STATE && cmd != GSA_AOC_START &&
+	    cmd != GSA_AOC_SHUTDOWN && cmd != GSA_AOC_RELEASE_RESET &&
+	    cmd != GSA_AOC_RESET)
+		return -EINVAL;
+	ret = aoc_cmd(file->private_data, cmd);
+	return ret < 0 ? ret : count;
+}
+
+static const struct file_operations aoc_rawcmd_fops = {
+	.open = simple_open,
+	.write = aoc_rawcmd_write,
+};
+
+static int aoc_ramdump_show(struct seq_file *s, void *unused)
+{
+	struct aoc_boot *ab = s->private;
+	u8 buf[RAMDUMP_DUMP_SIZE];
+
+	memcpy_fromio(buf, ab->dram + RAMDUMP_HEADER_OFFSET, sizeof(buf));
+	seq_printf(s, "ramdump header at carve-out + %#x:\n", RAMDUMP_HEADER_OFFSET);
+	seq_hex_dump(s, "", DUMP_PREFIX_OFFSET, 16, 4, buf, sizeof(buf), true);
+	if (ab->ipc_offset) {
+		memcpy_fromio(buf, ab->dram + ab->ipc_offset, 0x100);
+		seq_printf(s, "IPC area at carve-out + %#x:\n", ab->ipc_offset);
+		seq_hex_dump(s, "", DUMP_PREFIX_OFFSET, 16, 4, buf, 0x100, true);
+	}
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(aoc_ramdump);
+
+static const struct file_operations aoc_start_fops = {
+	.open = simple_open,
+	.write = aoc_start_write,
+};
+
+static const struct file_operations aoc_shutdown_fops = {
+	.open = simple_open,
+	.write = aoc_shutdown_write,
+};
+
+static int aoc_boot_probe(struct platform_device *pdev)
+{
+	struct device *dev = &pdev->dev;
+	struct reserved_mem *rmem;
+	struct device_node *np;
+	struct aoc_boot *ab;
+	unsigned int i;
+	int ret;
+
+	ab = devm_kzalloc(dev, sizeof(*ab), GFP_KERNEL);
+	if (!ab)
+		return -ENOMEM;
+	ab->dev = dev;
+	mutex_init(&ab->lock);
+
+	ab->req = devm_platform_ioremap_resource_byname(pdev, "aoc_req");
+	if (IS_ERR(ab->req))
+		return PTR_ERR(ab->req);
+	/* In BLK_AOC: only touched while the acknowledge is set */
+	ab->s2mpu = devm_platform_ioremap_resource_byname(pdev, "s2mpu");
+	if (IS_ERR(ab->s2mpu))
+		return PTR_ERR(ab->s2mpu);
+	ab->chipid = devm_platform_ioremap_resource_byname(pdev, "chipid");
+	if (IS_ERR(ab->chipid))
+		return PTR_ERR(ab->chipid);
+	/* Optional, in BLK_AOC: read only while the acknowledge is set */
+	if (platform_get_resource_byname(pdev, IORESOURCE_MEM, "pcu")) {
+		ab->pcu = devm_platform_ioremap_resource_byname(pdev, "pcu");
+		if (IS_ERR(ab->pcu))
+			return PTR_ERR(ab->pcu);
+	}
+	/*
+	 * The three mailboxes, from the first channel of each in "mboxes"
+	 * (16 per mailbox). Mapped without claiming the range: the mailbox
+	 * driver owns it once the AoC core runs.
+	 */
+	for (i = 0; i < ARRAY_SIZE(ab->mbox); i++) {
+		struct of_phandle_args args;
+		struct resource res;
+
+		if (of_parse_phandle_with_args(dev->of_node, "mboxes",
+					       "#mbox-cells", i * 16, &args))
+			continue;
+		ret = of_address_to_resource(args.np, 0, &res);
+		of_node_put(args.np);
+		if (ret)
+			continue;
+		ab->mbox[i] = devm_ioremap(dev, res.start, resource_size(&res));
+		if (!ab->mbox[i])
+			return -ENOMEM;
+	}
+	ab->wdt_irq = platform_get_irq_byname_optional(pdev, "watchdog");
+	if (ab->wdt_irq > 0) {
+		ret = devm_request_irq(dev, ab->wdt_irq, aoc_wdt_irq,
+				       IRQF_NO_AUTOEN, "aoc-watchdog", ab);
+		if (ret)
+			return ret;
+	}
+
+	np = of_parse_phandle(dev->of_node, "memory-region", 0);
+	if (!np)
+		return dev_err_probe(dev, -EINVAL, "no memory-region\n");
+	rmem = of_reserved_mem_lookup(np);
+	of_node_put(np);
+	if (!rmem)
+		return dev_err_probe(dev, -EINVAL, "carve-out not reserved\n");
+	ab->dram_base = rmem->base;
+	ab->dram_size = rmem->size;
+	ab->dram = devm_memremap(dev, rmem->base, rmem->size, MEMREMAP_WC);
+	if (IS_ERR(ab->dram))
+		return PTR_ERR(ab->dram);
+
+	ret = of_property_read_u32(dev->of_node, "google,board-id", &ab->board_id);
+	if (!ret)
+		ret = of_property_read_u32(dev->of_node, "google,board-rev",
+					   &ab->board_rev);
+	if (ret)
+		return dev_err_probe(dev, ret, "no board id/rev\n");
+
+	ab->gsa = gsa_get_device(dev);
+	if (IS_ERR(ab->gsa))
+		return dev_err_probe(dev, PTR_ERR(ab->gsa), "no GSA\n");
+	ab->mmu = aoc_sysmmu_get(dev);
+	if (IS_ERR(ab->mmu)) {
+		gsa_put_device(ab->gsa);
+		return dev_err_probe(dev, PTR_ERR(ab->mmu), "no System MMU\n");
+	}
+
+	platform_set_drvdata(pdev, ab);
+	ab->debugfs = debugfs_create_dir("aoc", NULL);
+	debugfs_create_file("info", 0400, ab->debugfs, ab, &aoc_info_fops);
+	debugfs_create_file("power", 0200, ab->debugfs, ab, &aoc_power_fops);
+	debugfs_create_file("blk", 0400, ab->debugfs, ab, &aoc_blk_fops);
+	debugfs_create_file("load", 0200, ab->debugfs, ab, &aoc_load_fops);
+	debugfs_create_file("start", 0200, ab->debugfs, ab, &aoc_start_fops);
+	debugfs_create_file("control", 0400, ab->debugfs, ab, &aoc_control_fops);
+	debugfs_create_file("shutdown", 0200, ab->debugfs, ab, &aoc_shutdown_fops);
+	debugfs_create_file("unload", 0200, ab->debugfs, ab, &aoc_unload_fops);
+	debugfs_create_file("cmd", 0200, ab->debugfs, ab, &aoc_rawcmd_fops);
+	debugfs_create_file("ramdump", 0400, ab->debugfs, ab, &aoc_ramdump_fops);
+	debugfs_create_file("pcu", 0400, ab->debugfs, ab, &aoc_pcu_fops);
+	debugfs_create_file("mbox", 0400, ab->debugfs, ab, &aoc_mbox_fops);
+
+	dev_info(dev, "ready: carve-out %pa + %#zx, nothing touched\n",
+		 &ab->dram_base, ab->dram_size);
+	return 0;
+}
+
+static void aoc_boot_remove(struct platform_device *pdev)
+{
+	struct aoc_boot *ab = platform_get_drvdata(pdev);
+
+	debugfs_remove_recursive(ab->debugfs);
+	/*
+	 * A loaded image stays locked by the GSA and the AoC may be running
+	 * from it: leave the System MMU translating.
+	 */
+	if (!ab->loaded)
+		aoc_sysmmu_put(ab->mmu);
+	gsa_put_device(ab->gsa);
+}
+
+static const struct of_device_id aoc_boot_of_match[] = {
+	{ .compatible = "google,gs201-aoc" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, aoc_boot_of_match);
+
+static struct platform_driver aoc_boot_driver = {
+	.probe = aoc_boot_probe,
+	.remove = aoc_boot_remove,
+	.driver = {
+		.name = "gs201-aoc-boot",
+		.of_match_table = aoc_boot_of_match,
+		.suppress_bind_attrs = true,
+	},
+};
+module_platform_driver(aoc_boot_driver);
+
+MODULE_DESCRIPTION("gs201 AoC firmware boot (bring-up)");
+MODULE_LICENSE("GPL");

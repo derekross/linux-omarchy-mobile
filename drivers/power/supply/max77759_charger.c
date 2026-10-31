@@ -158,8 +158,12 @@ static int charger_input_valid(struct max77759_charger *chg)
 	if (ret)
 		return ret;
 
-	return (val & MAX77759_CHGR_REG_CHG_INT_CHG) &&
-		(val & MAX77759_CHGR_REG_CHG_INT_CHGIN);
+	/*
+	 * CHGIN alone says whether the input is there. CHG_OK clears when a
+	 * charge is done (and on charger faults), which the status property
+	 * already reports.
+	 */
+	return !!(val & MAX77759_CHGR_REG_CHG_INT_CHGIN);
 }
 
 static int get_online(struct max77759_charger *chg)
@@ -651,6 +655,16 @@ static int max77759_charger_init(struct max77759_charger *chg)
 
 	ret = regmap_update_bits(chg->regmap, MAX77759_CHGR_REG_CHG_CNFG_18,
 				 MAX77759_CHGR_REG_CHG_CNFG_18_WDTEN, 0);
+	if (ret)
+		goto relock;
+
+	/*
+	 * Disable the fast-charge safety timer. At a low input limit a full
+	 * charge outlasts it, and the charger then stops in a timer fault
+	 * with the cable still in, until it is replugged or reset.
+	 */
+	ret = regmap_update_bits(chg->regmap, MAX77759_CHGR_REG_CHG_CNFG_01,
+				 MAX77759_CHGR_REG_CHG_CNFG_01_FCHGTIME, 0);
 	if (ret)
 		goto relock;
 

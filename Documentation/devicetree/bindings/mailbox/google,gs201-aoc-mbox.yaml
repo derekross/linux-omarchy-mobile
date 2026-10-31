@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/mailbox/google,gs201-aoc-mbox.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Google gs201 AoC mailbox
+
+maintainers:
+  - Derek Ross <derekross@gmail.com>
+
+description:
+  One of the three mailboxes between the application processor and the
+  AoC (audio and sensor DSP) of gs201. Each has 16 doorbell channels in
+  each direction and eight shared registers; the AoC's interrupts to the
+  AP arrive on one line.
+
+properties:
+  compatible:
+    const: google,gs201-aoc-mbox
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+
+  "#mbox-cells":
+    const: 1
+
+required:
+  - compatible
+  - reg
+  - interrupts
+  - "#mbox-cells"
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/interrupt-controller/arm-gic.h>
+    mailbox@18300000 {
+        compatible = "google,gs201-aoc-mbox";
+        reg = <0x18300000 0x1000>;
+        interrupts = <GIC_SPI 75 IRQ_TYPE_LEVEL_HIGH>;
+        #mbox-cells = <1>;
+    };

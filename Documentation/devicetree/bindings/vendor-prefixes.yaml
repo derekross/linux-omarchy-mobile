@@ -138,6 +138,8 @@ patternProperties:
     description: Anbernic
   "^andestech,.*":
     description: Andes Technology Corporation
+  "^android,.*":
+    description: Android Open Source Project
   "^anlogic,.*":
     description: Shanghai Anlogic Infotech Co., Ltd.
   "^anvo,.*":

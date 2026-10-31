@@ -230,6 +230,7 @@ source "drivers/fpga/Kconfig"
 source "drivers/fsi/Kconfig"
 
 source "drivers/tee/Kconfig"
+source "drivers/trusty/Kconfig"
 
 source "drivers/mux/Kconfig"
 

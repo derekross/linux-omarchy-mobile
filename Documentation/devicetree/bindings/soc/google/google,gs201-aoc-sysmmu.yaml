@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/soc/google/google,gs201-aoc-sysmmu.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Google gs201 AoC System MMU
+
+maintainers:
+  - Derek Ross <derekross@gmail.com>
+
+description:
+  The Samsung System MMU (version 8) in front of the gs201 AoC, the audio
+  and sensor DSP. Only the AoC is behind it. It is programmed with the fixed
+  translation windows the AoC firmware expects, by the AoC driver, while the
+  AoC block is powered.
+
+properties:
+  compatible:
+    const: google,gs201-aoc-sysmmu
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    description: the non-secure fault interrupt
+    maxItems: 1
+
+required:
+  - compatible
+  - reg
+  - interrupts
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/interrupt-controller/arm-gic.h>
+    sysmmu@1a090000 {
+        compatible = "google,gs201-aoc-sysmmu";
+        reg = <0x1a090000 0x10000>;
+        interrupts = <GIC_SPI 118 IRQ_TYPE_LEVEL_HIGH>;
+    };
