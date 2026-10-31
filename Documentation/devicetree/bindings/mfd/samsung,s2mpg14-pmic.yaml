@@ -13,9 +13,24 @@ description: |
   S2MPG14 is the main PMIC paired with Google's Tensor G4. Its LDO4M and
   LDO25M outputs supply the analog and digital touchscreen power rails.
 
+  It has no interrupt line of its own: it reports events in-band, and the
+  SoC's VGPIO2AP system registers turn them into one level interrupt with a
+  pending latch that the host acknowledges, as for the S2MPG12.
+
 properties:
   compatible:
     const: samsung,s2mpg14-pmic
+
+  interrupts:
+    maxItems: 1
+
+  google,vgpio2ap-sysreg:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description:
+      Phandle to the VGPIO2AP system registers, which latch the PMIC's
+      in-band interrupt.
+
+  wakeup-source: true
 
   regulators:
     type: object
@@ -23,14 +38,22 @@ properties:
 
 required:
   - compatible
+  - interrupts
+  - google,vgpio2ap-sysreg
   - regulators
 
 additionalProperties: false
 
 examples:
   - |
+    #include <dt-bindings/interrupt-controller/arm-gic.h>
+    #include <dt-bindings/interrupt-controller/irq.h>
+
     pmic-1 {
         compatible = "samsung,s2mpg14-pmic";
+        interrupts = <GIC_SPI 74 IRQ_TYPE_LEVEL_HIGH>;
+        google,vgpio2ap-sysreg = <&sysreg_vgpio2ap>;
+        wakeup-source;
 
         regulators {
             ldo4m {

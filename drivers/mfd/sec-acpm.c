@@ -563,9 +563,10 @@ static const struct regmap_config s2mpg13_regmap_config_gpio = {
 	.cache_type = REGCACHE_NONE,
 };
 
-/* Expose only the touchscreen and eUSB2 supply controls. */
+/* The revision and the in-band interrupt mask the driver writes. */
 static const struct regmap_range s2mpg14_common_registers[] = {
 	regmap_reg_range(S2MPG14_COMMON_CHIPID, S2MPG14_COMMON_CHIPID),
+	regmap_reg_range(S2MPG14_COMMON_IBIM1, S2MPG14_COMMON_IBIM1),
 };
 
 static const struct regmap_access_table s2mpg14_common_rd_table = {
@@ -573,25 +574,28 @@ static const struct regmap_access_table s2mpg14_common_rd_table = {
 	.n_yes_ranges = ARRAY_SIZE(s2mpg14_common_registers),
 };
 
-static const struct regmap_range s2mpg14_common_no_writes[] = {
-	regmap_reg_range(0, S2MPG14_COMMON_CHIPID),
+static const struct regmap_range s2mpg14_common_wr_registers[] = {
+	regmap_reg_range(S2MPG14_COMMON_IBIM1, S2MPG14_COMMON_IBIM1),
 };
 
 static const struct regmap_access_table s2mpg14_common_wr_table = {
-	.no_ranges = s2mpg14_common_no_writes,
-	.n_no_ranges = ARRAY_SIZE(s2mpg14_common_no_writes),
+	.yes_ranges = s2mpg14_common_wr_registers,
+	.n_yes_ranges = ARRAY_SIZE(s2mpg14_common_wr_registers),
 };
 
 static const struct regmap_config s2mpg14_regmap_config_common = {
 	.name = "common",
 	.reg_bits = ACPM_ADDR_BITS,
 	.val_bits = 8,
-	.max_register = S2MPG14_COMMON_CHIPID,
+	.max_register = S2MPG14_COMMON_IBIM1,
 	.rd_table = &s2mpg14_common_rd_table,
 	.wr_table = &s2mpg14_common_wr_table,
 };
 
+/* The interrupt block, the RTC alarm flag and the touchscreen and eUSB2 supply controls. */
 static const struct regmap_range s2mpg14_pmic_rd_registers[] = {
+	regmap_reg_range(S2MPG14_PMIC_INT1, S2MPG14_PMIC_INT5M), /* interrupts and their masks */
+	regmap_reg_range(S2MPG14_PMIC_STATUS2, S2MPG14_PMIC_STATUS2), /* RTC alarm flag */
 	regmap_reg_range(S2MPG14_PMIC_L4M_CTRL, S2MPG14_PMIC_L4M_CTRL),
 	regmap_reg_range(S2MPG14_PMIC_L8M_CTRL, S2MPG14_PMIC_L9M_CTRL),
 	regmap_reg_range(S2MPG14_PMIC_L19M_CTRL, S2MPG14_PMIC_L19M_CTRL),
@@ -599,6 +603,7 @@ static const struct regmap_range s2mpg14_pmic_rd_registers[] = {
 };
 
 static const struct regmap_range s2mpg14_pmic_wr_registers[] = {
+	regmap_reg_range(S2MPG14_PMIC_INT1M, S2MPG14_PMIC_INT5M),
 	regmap_reg_range(S2MPG14_PMIC_L4M_CTRL, S2MPG14_PMIC_L4M_CTRL),
 	regmap_reg_range(S2MPG14_PMIC_L9M_CTRL, S2MPG14_PMIC_L9M_CTRL),
 	regmap_reg_range(S2MPG14_PMIC_L19M_CTRL, S2MPG14_PMIC_L19M_CTRL),
@@ -615,6 +620,15 @@ static const struct regmap_access_table s2mpg14_pmic_wr_table = {
 	.n_yes_ranges = ARRAY_SIZE(s2mpg14_pmic_wr_registers),
 };
 
+static const struct regmap_range s2mpg14_pmic_precious_registers[] = {
+	regmap_reg_range(S2MPG14_PMIC_INT1, S2MPG14_PMIC_INT5), /* clear on read */
+};
+
+static const struct regmap_access_table s2mpg14_pmic_precious_table = {
+	.yes_ranges = s2mpg14_pmic_precious_registers,
+	.n_yes_ranges = ARRAY_SIZE(s2mpg14_pmic_precious_registers),
+};
+
 static const struct regmap_config s2mpg14_regmap_config_pmic = {
 	.name = "pmic",
 	.reg_bits = ACPM_ADDR_BITS,
@@ -622,6 +636,42 @@ static const struct regmap_config s2mpg14_regmap_config_pmic = {
 	.max_register = S2MPG14_PMIC_LDO_CTRL1,
 	.rd_table = &s2mpg14_pmic_rd_table,
 	.wr_table = &s2mpg14_pmic_wr_table,
+	.precious_table = &s2mpg14_pmic_precious_table,
+};
+
+/*
+ * The RTC: everything up to the oscillator control may be read. Writes
+ * only where rtc-s5m writes: CTRL, UPDATE, the time and alarm 0. SMPL,
+ * WTSR, CAP_SEL and OSC_CTRL (the power-loss and watchdog-reset
+ * protections and the oscillator tuning) stay read-only.
+ */
+static const struct regmap_range s2mpg14_rtc_rd_registers[] = {
+	regmap_reg_range(S2MPG10_RTC_CTRL, S2MPG10_RTC_OSC_CTRL),
+};
+
+static const struct regmap_access_table s2mpg14_rtc_rd_table = {
+	.yes_ranges = s2mpg14_rtc_rd_registers,
+	.n_yes_ranges = ARRAY_SIZE(s2mpg14_rtc_rd_registers),
+};
+
+static const struct regmap_range s2mpg14_rtc_wr_registers[] = {
+	regmap_reg_range(S2MPG10_RTC_CTRL, S2MPG10_RTC_UPDATE),
+	regmap_reg_range(S2MPG10_RTC_SEC, S2MPG10_RTC_A0YEAR),
+};
+
+static const struct regmap_access_table s2mpg14_rtc_wr_table = {
+	.yes_ranges = s2mpg14_rtc_wr_registers,
+	.n_yes_ranges = ARRAY_SIZE(s2mpg14_rtc_wr_registers),
+};
+
+static const struct regmap_config s2mpg14_regmap_config_rtc = {
+	.name = "rtc",
+	.reg_bits = ACPM_ADDR_BITS,
+	.val_bits = 8,
+	.max_register = S2MPG10_RTC_OSC_CTRL,
+	.rd_table = &s2mpg14_rtc_rd_table,
+	.wr_table = &s2mpg14_rtc_wr_table,
+	.cache_type = REGCACHE_NONE,
 };
 
 struct sec_pmic_acpm_shared_bus_context {
@@ -858,7 +908,7 @@ static const struct sec_pmic_acpm_platform_data s2mpg14_data = {
 	.speedy_channel = 0,
 	.regmap_cfg_common = &s2mpg14_regmap_config_common,
 	.regmap_cfg_pmic = &s2mpg14_regmap_config_pmic,
-	.no_irq = true,
+	.regmap_cfg_rtc = &s2mpg14_regmap_config_rtc,
 };
 
 static const struct of_device_id sec_pmic_acpm_of_match[] = {

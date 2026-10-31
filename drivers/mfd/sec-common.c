@@ -75,9 +75,14 @@ static const struct mfd_cell s2mpg13_devs[] = {
 	MFD_CELL_OF("s2mpg13-gpio", NULL, NULL, 0, 0, "samsung,s2mpg13-gpio"),
 };
 
-/* Only the qualified LDOs; no RTC, interrupt, GPIO or protection writes. */
+static const struct resource s2mpg14_rtc_resources[] = {
+	DEFINE_RES_IRQ_NAMED(S2MPG14_IRQ_RTCA0, "alarm"),
+};
+
+/* The qualified LDOs and the RTC with its alarm; no GPIO or protection writes. */
 static const struct mfd_cell s2mpg14_devs[] = {
 	MFD_CELL_NAME("s2mpg14-regulator"),
+	MFD_CELL_RES("s2mpg14-rtc", s2mpg14_rtc_resources),
 };
 
 static const struct resource s2mps11_rtc_resources[] = {
