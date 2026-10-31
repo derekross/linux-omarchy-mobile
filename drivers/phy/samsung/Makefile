@@ -3,6 +3,7 @@ obj-$(CONFIG_PHY_EXYNOS_DP_VIDEO)	+= phy-exynos-dp-video.o
 obj-$(CONFIG_PHY_EXYNOS_MIPI_VIDEO)	+= phy-exynos-mipi-video.o
 obj-$(CONFIG_PHY_EXYNOS_PCIE)		+= phy-exynos-pcie.o
 obj-$(CONFIG_PHY_GS201_PCIE)		+= phy-gs201-pcie.o
+obj-$(CONFIG_PHY_ZUMA_PCIE)		+= phy-zuma-pcie.o
 obj-$(CONFIG_PHY_GS201_MIPI_DCPHY)	+= phy-gs201-mipi-dcphy-rx.o
 obj-$(CONFIG_PHY_SAMSUNG_UFS)		+= phy-exynos-ufs.o
 phy-exynos-ufs-y			+= phy-gs101-ufs.o
