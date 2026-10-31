@@ -320,6 +320,30 @@
 	status = "okay";
 };
 
+/*
+ * The speaker amplifiers, two TAS2572s: top at 0x48 (reset gpp6-3) and
+ * bottom at 0x49 (reset gph2-1). One node each, since the tas2781 driver
+ * takes one register profile per node and TI's TAS2572 profiles cover one
+ * device. The AoC sound card names them Top and Bottom.
+ */
+&hsi2c19 {
+	status = "okay";
+
+	tas2572_top: amplifier@48 {
+		compatible = "ti,tas2572", "ti,tas2781";
+		reg = <0x48>;
+		reset-gpios = <&gpp6 3 GPIO_ACTIVE_HIGH>;
+		#sound-dai-cells = <0>;
+	};
+
+	tas2572_bottom: amplifier@49 {
+		compatible = "ti,tas2572", "ti,tas2781";
+		reg = <0x49>;
+		reset-gpios = <&gph2 1 GPIO_ACTIVE_HIGH>;
+		#sound-dai-cells = <0>;
+	};
+};
+
 /* The torch: a TI LM3644 flash driver, both LED outputs on one white LED. */
 &hsi2c4 {
 	clock-frequency = <100000>;
@@ -579,6 +603,10 @@
 };
 
 &usi4 {
+	status = "okay";
+};
+
+&usi4_hsi0 {
 	status = "okay";
 };
 
