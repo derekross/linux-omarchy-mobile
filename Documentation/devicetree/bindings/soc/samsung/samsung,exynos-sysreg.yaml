@@ -30,6 +30,7 @@ properties:
               - google,zuma-ufs-sysreg
               - google,zumapro-apm-sysreg
               - google,zumapro-hsi0-sysreg
+              - google,zumapro-ispfe-sysreg
               - google,zumapro-peric0-sysreg
               - google,zumapro-peric1-sysreg
               - google,zumapro-ufs-sysreg
