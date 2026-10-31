@@ -27543,6 +27543,13 @@ S:	Maintained
 F:	Documentation/devicetree/bindings/iio/adc/ti,tsc2046.yaml
 F:	drivers/iio/adc/ti-tsc2046.c
 
+TI TUSB2E11 EUSB2 REPEATER DRIVER
+M:	W4HO <87742609+W4HO-ham@users.noreply.github.com>
+L:	linux-phy@lists.infradead.org
+S:	Maintained
+F:	Documentation/devicetree/bindings/phy/ti,tusb2e11.yaml
+F:	drivers/phy/phy-ti-tusb2e11.c
+
 TI VPE/CAL DRIVERS
 M:	Yemike Abhilash Chandra <y-abhilashchandra@ti.com>
 L:	linux-media@vger.kernel.org
