@@ -33,8 +33,9 @@
  *
  * Register layout from Google's GPL display driver
  * (google-modules/display/samsung/cal_9845/regs-decon.h and regs-dpp.h),
- * which gs201 shares with gs101. G4 offsets and the fourteen-window mask
- * follow cal_9865/regs-decon.h and regs-dpp.h in the same GPL driver.
+ * which gs201 shares with gs101. G3 and G4 offsets and the fourteen-window
+ * mask follow cal_9865/regs-decon.h and regs-dpp.h in the same GPL driver,
+ * which builds that CAL for both.
  */
 
 #include <linux/aperture.h>
@@ -232,6 +233,30 @@ static const struct drm_display_mode tegu_decon_modes[] = {
 	TEGU_DECON_MODE(120),
 };
 
+/*
+ * The Pixel 8 Pro's HK3 at 1344x2992, from panel-gs-hk3.c, at 60 Hz (the
+ * bootloader's) and 120 Hz.
+ */
+#define HK3_DECON_MODE(hz) {						\
+	.clock = (1344 + 80 + 24 + 42) * (2992 + 12 + 4 + 22) * (hz) / 1000, \
+	.hdisplay = 1344,						\
+	.hsync_start = 1344 + 80,					\
+	.hsync_end = 1344 + 80 + 24,					\
+	.htotal = 1344 + 80 + 24 + 42,					\
+	.vdisplay = 2992,						\
+	.vsync_start = 2992 + 12,					\
+	.vsync_end = 2992 + 12 + 4,					\
+	.vtotal = 2992 + 12 + 4 + 22,					\
+	.width_mm = 70,							\
+	.height_mm = 155,						\
+	.type = DRM_MODE_TYPE_DRIVER,					\
+}
+
+static const struct drm_display_mode hk3_decon_modes[] = {
+	HK3_DECON_MODE(60),
+	HK3_DECON_MODE(120),
+};
+
 struct gs_decon_soc_data {
 	const struct drm_display_mode *modes;
 	unsigned int num_modes;
@@ -256,6 +281,19 @@ static const struct gs_decon_soc_data gs201_decon_data = {
 static const struct gs_decon_soc_data zumapro_decon_data = {
 	.modes = tegu_decon_modes,
 	.num_modes = ARRAY_SIZE(tegu_decon_modes),
+	.image_size_reg = 0x001c,
+	.source_offset_reg = 0x0018,
+	.shadow_update_mask = SHD_REG_UP_REQ_FLIP(0x3fff),
+	.separate_source_height = true,
+	.padded_pitch = true,
+	.start_hw_trigger = true,
+	.floors_optional = true,
+};
+
+/* G3 shares G4's CAL (cal_9865) and DECON0 registers. */
+static const struct gs_decon_soc_data zuma_decon_data = {
+	.modes = hk3_decon_modes,
+	.num_modes = ARRAY_SIZE(hk3_decon_modes),
 	.image_size_reg = 0x001c,
 	.source_offset_reg = 0x0018,
 	.shadow_update_mask = SHD_REG_UP_REQ_FLIP(0x3fff),
@@ -1542,6 +1580,7 @@ static void gs_decon_shutdown(struct platform_device *pdev)
 
 static const struct of_device_id gs_decon_of_match[] = {
 	{ .compatible = "google,gs201-decon", .data = &gs201_decon_data },
+	{ .compatible = "google,zuma-decon", .data = &zuma_decon_data },
 	{ .compatible = "google,zumapro-decon", .data = &zumapro_decon_data },
 	{ /* sentinel */ }
 };
