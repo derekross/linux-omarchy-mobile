@@ -53,6 +53,23 @@
 		};
 	};
 
+	/*
+	 * The Goodix under-display fingerprint sensor. Its SPI bus belongs to
+	 * the secure world (the trusted app drives it), so the node sits on
+	 * no bus and describes only the lines the AP drives: the event line
+	 * on gpa7-6 and the reset on gpp1-0, as Google's GPL
+	 * zumapro-tegu-udfps.dtsi. Its 3.3 V, S2MPG15 LDO15S, is always on, so
+	 * the node has no supply.
+	 */
+	fingerprint {
+		compatible = "goodix,g7-udfps";
+		interrupt-parent = <&gpa7>;
+		interrupts = <6 IRQ_TYPE_EDGE_RISING>;
+		reset-gpios = <&gpp1 0 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&fp_irq &fp_rst>;
+	};
+
 	gpio-keys {
 		compatible = "gpio-keys";
 
@@ -196,7 +213,7 @@
 		};
 	};
 
-	pmic-2 {
+	pmic_sub: pmic-2 {
 		compatible = "samsung,s2mpg15-pmic";
 
 		regulators {
@@ -206,6 +223,21 @@
 
 			sensor_1v8: ldo7s {
 				regulator-name = "sensor-1v8";
+			};
+
+			/*
+			 * The fingerprint sensor's 3.3 V, always on as on stock
+			 * (Google's GPL zumapro-tegu-udfps.dtsi). Off at hand-off:
+			 * the trusted app reads chip id 0 until it is on. The
+			 * selector is firmware-owned and reads 3.3 V at hand-off;
+			 * min = max records stock's value, and makes the core
+			 * refuse the rail if it ever reads anything else.
+			 */
+			udfps_3v3: ldo15s {
+				regulator-name = "udfps-3v3";
+				regulator-min-microvolt = <3300000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-always-on;
 			};
 		};
 	};
@@ -362,7 +394,10 @@
 		     <GIC_SPI 35 IRQ_TYPE_LEVEL_HIGH>;
 };
 
-/* The NFC controller's interrupt (gpa7-5). */
+/*
+ * The NFC controller's interrupt (gpa7-5) and the fingerprint sensor's
+ * event line (gpa7-6).
+ */
 &gpa7 {
 	interrupt-controller;
 	#interrupt-cells = <2>;
@@ -539,6 +574,11 @@
 &pinctrl_alive {
 	status = "okay";
 
+	fp_irq: fp-irq-pins {
+		samsung,pins = "gpa7-6";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+	};
+
 	usb_pd_irq: usb-pd-irq-pins {
 		samsung,pins = "gpa8-3";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
@@ -589,6 +629,17 @@
 
 &pinctrl_peric0 {
 	status = "okay";
+
+	/* Only pin 0: the touchscreen's reset is gpp1-1 in the same bank. */
+	fp_rst: fp-rst-pins {
+		samsung,pins = "gpp1-0";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
+		samsung,pin-pud-pdn = <EXYNOS_PIN_PULL_NONE>;
+		/* ZUMA_PIN_DRV_X1 in Google's header: 0 in stock's built DTBO */
+		samsung,pin-drv = <0>;
+	};
 
 	hsi2c4_bus: hsi2c4-bus-pins {
 		samsung,pins = "gpp8-0", "gpp8-1";
