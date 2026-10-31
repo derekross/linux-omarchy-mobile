@@ -8148,6 +8148,12 @@ T:	git https://gitlab.freedesktop.org/drm/misc/kernel.git
 F:	drivers/gpu/drm/gud/
 F:	include/drm/gud.h
 
+DRM DRIVER FOR GOOGLE HK3 PANELS
+M:	Brett-Michael Green <brett@bmgvisualtech.com>
+S:	Maintained
+F:	Documentation/devicetree/bindings/display/panel/google,hk3.yaml
+F:	drivers/gpu/drm/panel/panel-google-hk3.c
+
 DRM DRIVER FOR GOOGLE TG4C PANELS
 M:	W4HO <87742609+W4HO-ham@users.noreply.github.com>
 S:	Maintained
