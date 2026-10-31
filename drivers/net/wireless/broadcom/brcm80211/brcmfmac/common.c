@@ -412,8 +412,7 @@ int brcmf_c_preinit_dcmds(struct brcmf_if *ifp)
 	brcmf_c_set_joinpref_default(ifp);
 
 	/* Setup event_msgs, enable E_IF */
-	err = brcmf_fil_iovar_data_get(ifp, "event_msgs", fweh->event_mask,
-				       fweh->event_mask_len);
+	err = brcmf_fweh_get_event_mask(ifp);
 	if (err) {
 		bphy_err(drvr, "Get event_msgs error (%d)\n", err);
 		goto done;
@@ -425,8 +424,7 @@ int brcmf_c_preinit_dcmds(struct brcmf_if *ifp)
 	 * that all vendors have.
 	 */
 	setbit(fweh->event_mask, BRCMF_E_IF);
-	err = brcmf_fil_iovar_data_set(ifp, "event_msgs", fweh->event_mask,
-				       fweh->event_mask_len);
+	err = brcmf_fweh_set_event_mask(ifp);
 	if (err) {
 		bphy_err(drvr, "Set event_msgs error (%d)\n", err);
 		goto done;
