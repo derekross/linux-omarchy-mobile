@@ -5,13 +5,17 @@
  * Addresses, interrupts and reservations are the ones a retail Pixel 8 Pro
  * (husky) runs with: its live device tree and Google's GPL zuma tree
  * (android-gs-shusky-6.1-android16). Nothing here is copied from gs101 or
- * gs201. No clock, pinctrl or power-domain providers yet: the bootloader
- * leaves what first light needs running, and the board's bootargs carry
- * clk_ignore_unused and pd_ignore_unused.
+ * gs201. The clock providers describe only the touchscreen SPI's path, and
+ * there are no power-domain providers yet: the bootloader leaves what the
+ * rest needs running, and the board's bootargs carry clk_ignore_unused and
+ * pd_ignore_unused.
  */
 
+#include <dt-bindings/clock/google,zuma.h>
+#include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/soc/samsung,exynos-usi.h>
 
 / {
 	compatible = "google,zuma";
@@ -22,8 +26,12 @@
 	/* The pin controllers are numbered as in Tensor G4's driver data. */
 	aliases {
 		pinctrl0 = &pinctrl_gpio_alive;
+		pinctrl1 = &pinctrl_custom_alive;
+		pinctrl2 = &pinctrl_far_alive;
+		pinctrl9 = &pinctrl_hsi2;
 		pinctrl10 = &pinctrl_hsi2ufs;
 		pinctrl11 = &pinctrl_peric0;
+		pinctrl12 = &pinctrl_peric1;
 	};
 
 	/*
@@ -143,6 +151,15 @@
 			reg = <0x800>;
 			enable-method = "psci";
 			capacity-dmips-mhz = <1024>;
+		};
+	};
+
+	firmware {
+		acpm_ipc: power-management {
+			compatible = "google,zuma-acpm-ipc";
+			#clock-cells = <1>;
+			mboxes = <&ap2apm_mailbox>;
+			shmem = <&apm_sram>;
 		};
 	};
 
@@ -269,11 +286,27 @@
 		clock-output-names = "ufs_ref_stub";
 	};
 
+	oscclk: clock-oscclk {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <24576000>;
+		clock-output-names = "oscclk";
+	};
+
+	/* The CAL's nominal I_CLK_HSI0_ALT rate. */
+	hsi0_alt: clock-hsi0-alt {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <213000000>;
+		clock-output-names = "hsi0-alt";
+	};
+
 	soc: soc@0 {
 		compatible = "simple-bus";
 		#address-cells = <1>;
 		#size-cells = <1>;
-		ranges = <0x0 0x0 0x0 0x40000000>;
+		/* Registers below 1 GiB, PCIe windows at 0x40000000-0x7fffffff */
+		ranges = <0x0 0x0 0x0 0x80000000>;
 
 		/*
 		 * ABL hands over with both cluster watchdogs counting (30 s);
@@ -318,6 +351,28 @@
 			interrupts = <GIC_SPI 634 IRQ_TYPE_LEVEL_HIGH>;
 		};
 
+		pinctrl_peric1: pinctrl@10c40000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x10c40000 0x1000>;
+			clocks = <&clk_gpio_stub>;
+			clock-names = "pclk";
+			interrupts = <GIC_SPI 649 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		cmu_hsi0: clock-controller@11000000 {
+			compatible = "google,zuma-cmu-hsi0";
+			reg = <0x11000000 0x8000>;
+			#clock-cells = <1>;
+			clocks = <&oscclk>, <&cmu_top CLK_DOUT_HSI0_NOC>,
+				 <&cmu_top CLK_DOUT_HSI0_PERI>, <&hsi0_alt>;
+			clock-names = "oscclk", "bus", "peri", "alt";
+		};
+
+		sysreg_hsi0: syscon@11020000 {
+			compatible = "google,zuma-hsi0-sysreg", "syscon";
+			reg = <0x11020000 0x10000>;
+		};
+
 		/*
 		 * USB control block: Exynos 2200's link registers, with the
 		 * eUSB2 PHY below as its high-speed PHY. The USB3/DP combo PHY
@@ -346,6 +401,33 @@
 			status = "disabled";
 		};
 
+		usi2_hsi0: usi@111d00c0 {
+			compatible = "google,zuma-usi", "samsung,exynos850-usi";
+			reg = <0x111d00c0 0x20>;
+			clocks = <&cmu_hsi0 CLK_GOUT_HSI0_USI2_PCLK>,
+				 <&cmu_hsi0 CLK_GOUT_HSI0_USI2_IP>;
+			clock-names = "pclk", "ipclk";
+			samsung,sysreg = <&sysreg_hsi0 0x101c>;
+			samsung,mode = <USI_MODE_SPI>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+			status = "disabled";
+
+			spi20: spi@111d0000 {
+				compatible = "google,zuma-spi", "google,gs101-spi";
+				/* USI control starts at 0xc0; do not claim it twice. */
+				reg = <0x111d0000 0xc0>;
+				interrupts = <GIC_SPI 408 IRQ_TYPE_LEVEL_HIGH>;
+				clocks = <&cmu_hsi0 CLK_GOUT_HSI0_USI2_PCLK>,
+					 <&cmu_hsi0 CLK_GOUT_HSI0_USI2_IP>;
+				clock-names = "spi", "spi_busclk0";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				status = "disabled";
+			};
+		};
+
 		/*
 		 * The DWC3 controller, in peripheral mode as on stock (which
 		 * wraps it in Google's exynos9-dwusb glue). On a normal boot
@@ -371,12 +453,72 @@
 			reg = <0x13020000 0x1000>;
 		};
 
+		pinctrl_hsi2: pinctrl@13040000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x13040000 0x1000>;
+			clocks = <&clk_gpio_stub>;
+			clock-names = "pclk";
+			interrupts = <GIC_SPI 432 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
 		pinctrl_hsi2ufs: pinctrl@13060000 {
 			compatible = "google,zuma-pinctrl";
 			reg = <0x13060000 0x1000>;
 			clocks = <&clk_gpio_stub>;
 			clock-names = "pclk";
 			interrupts = <GIC_SPI 433 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		/*
+		 * The Wi-Fi chip's controller (stock's pcie_1, ch-num 1): one
+		 * Gen3 lane, at the addresses of stock's pcie@13120000. Its
+		 * interrupts are its legacy INTx; stock's MSI lines are unused.
+		 */
+		pcie_1: pcie@13120000 {
+			compatible = "google,zuma-pcie";
+			reg = <0x13120000 0x1400>,
+			      <0x13400000 0x381000>,
+			      <0x60ffe000 0x2000>;
+			reg-names = "elbi", "dbi", "config";
+			#address-cells = <3>;
+			#size-cells = <2>;
+			device_type = "pci";
+			ranges = <0x82000000 0x0 0x60000000 0x60000000 0x0 0xff0000>;
+			bus-range = <0x00 0xff>;
+			interrupts = <GIC_SPI 439 IRQ_TYPE_LEVEL_HIGH>;
+			#interrupt-cells = <1>;
+			interrupt-map-mask = <0 0 0 7>;
+			interrupt-map = <0 0 0 1 &pcie_1_intc 1>,
+					<0 0 0 2 &pcie_1_intc 2>,
+					<0 0 0 3 &pcie_1_intc 3>,
+					<0 0 0 4 &pcie_1_intc 4>;
+			phys = <&pcie_1_phy>;
+			phy-names = "pcie";
+			pinctrl-0 = <&pcie1_clkreq>, <&pcie1_perst>;
+			pinctrl-names = "default";
+			reset-gpios = <&gph3 0 GPIO_ACTIVE_LOW>;
+			num-lanes = <1>;
+			max-link-speed = <3>;
+			status = "disabled";
+
+			pcie_1_intc: legacy-interrupt-controller {
+				#address-cells = <0>;
+				interrupt-controller;
+				#interrupt-cells = <1>;
+			};
+		};
+
+		pcie_1_phy: phy@13160000 {
+			compatible = "google,zuma-pcie-phy";
+			reg = <0x13160000 0x3000>,
+			      <0x13140000 0x5000>,
+			      <0x13121400 0x10>,
+			      <0x13150000 0xd000>,
+			      <0x13130000 0x5000>;
+			reg-names = "pma", "pcs", "rst", "udbg", "soc";
+			samsung,pmu-syscon = <&pmu_system_controller 0x3ec8>;
+			#phy-cells = <0>;
+			status = "disabled";
 		};
 
 		ufs_0: ufs@13200000 {
@@ -413,6 +555,35 @@
 			status = "disabled";
 		};
 
+		pinctrl_custom_alive: pinctrl@15060000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x15060000 0x1000>;
+			clocks = <&cmu_apm CLK_GOUT_APM_GPIO_CUSTOM_ALIVE>;
+			clock-names = "pclk";
+
+			wakeup-interrupt-controller {
+				compatible = "google,zuma-wakeup-eint",
+					     "google,zumapro-wakeup-eint";
+			};
+		};
+
+		ap2apm_mailbox: mailbox@15110000 {
+			compatible = "google,zuma-mbox", "google,gs101-mbox";
+			reg = <0x15110000 0x1000>;
+			clocks = <&cmu_apm CLK_GOUT_APM_MAILBOX_AP>;
+			clock-names = "pclk";
+			interrupts = <GIC_SPI 80 IRQ_TYPE_LEVEL_HIGH>;
+			#mbox-cells = <0>;
+		};
+
+		cmu_apm: clock-controller@15400000 {
+			compatible = "google,zuma-cmu-apm";
+			reg = <0x15400000 0x8000>;
+			#clock-cells = <1>;
+			clocks = <&oscclk>;
+			clock-names = "oscclk";
+		};
+
 		/* Writes go through EL3 (SMC), as on gs101. */
 		pmu_system_controller: system-controller@15460000 {
 			compatible = "google,zuma-pmu";
@@ -442,6 +613,41 @@
 				compatible = "google,zuma-wakeup-eint",
 					     "google,zumapro-wakeup-eint";
 			};
+		};
+
+		pinctrl_far_alive: pinctrl@154e0000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x154e0000 0x1000>;
+			clocks = <&cmu_apm CLK_GOUT_APM_GPIO_FAR_ALIVE>;
+			clock-names = "pclk";
+
+			wakeup-interrupt-controller {
+				compatible = "google,zuma-wakeup-eint",
+					     "google,zumapro-wakeup-eint";
+			};
+		};
+
+		apm_sram: sram@15700000 {
+			compatible = "mmio-sram";
+			reg = <0x15700000 0x58000>;
+			clocks = <&cmu_apm CLK_GOUT_APM_INTMEM_ACLK>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges = <0x0 0x15700000 0x58000>;
+			no-memory-wc;
+
+			/* The APM firmware's window, as one block. */
+			firmware-sram@0 {
+				reg = <0x0 0x58000>;
+			};
+		};
+
+		cmu_top: clock-controller@26040000 {
+			compatible = "google,zuma-cmu-top";
+			reg = <0x26040000 0x8000>;
+			#clock-cells = <1>;
+			clocks = <&oscclk>;
+			clock-names = "oscclk";
 		};
 	};
 };

@@ -45,6 +45,7 @@ static const struct brcmf_feat_fwcap brcmf_fwcap_map[] = {
 	{ BRCMF_FEAT_SAE, "sae " },
 	{ BRCMF_FEAT_FWAUTH, "idauth" },
 	{ BRCMF_FEAT_SAE_EXT, "sae_ext" },
+	{ BRCMF_FEAT_HOST_SFHLLC, "host_sfhllc" },
 };
 
 #ifdef DEBUG
@@ -155,6 +156,23 @@ static void brcmf_feat_wlc_version_overrides(struct brcmf_pub *drv)
 	minor = le16_to_cpu(ver.wlc_ver_minor);
 
 	brcmf_dbg(INFO, "WLC version: %d.%d\n", major, minor);
+
+	/*
+	 * Versioned "join" parameters (wl_extjoin_params_v1_t), by the
+	 * same WLC version test as Broadcom's driver (bcmdhd
+	 * wl_cfg80211.c, MIN_JOINEXT_V1_*): 14.2 or 14.4, 16.1 and later
+	 * on 16, or 17 and later. The BCM4389 (its 20.101.90 firmware
+	 * reports 14.4 and rejects the unversioned layout) and the Pixel
+	 * 9a's BCM4383 (20.123.13: the unversioned "join" and SET_SSID
+	 * both fail with -52), and the Pixel 8 Pro's BCM4398 (24.100,
+	 * WLC version 18.2).
+	 */
+	if ((drv->bus_if->chip == BRCM_CC_4389_CHIP_ID ||
+	     drv->bus_if->chip == BRCM_CC_4383_CHIP_ID ||
+	     drv->bus_if->chip == BRCM_CC_4398_CHIP_ID) &&
+	    ((major == 14 && (minor == 2 || minor == 4)) ||
+	     (major == 16 && minor >= 1) || major >= 17))
+		feat_flags |= BIT(BRCMF_FEAT_JOIN_V1);
 
 	for (i = 0; i < ARRAY_SIZE(brcmf_feat_wlcfeat_map); i++) {
 		e = &brcmf_feat_wlcfeat_map[i];
@@ -340,11 +358,44 @@ void brcmf_feat_attach(struct brcmf_pub *drvr)
 
 	brcmf_feat_iovar_int_get(ifp, BRCMF_FEAT_FWSUP, "sup_wpa");
 	brcmf_feat_iovar_int_get(ifp, BRCMF_FEAT_SCAN_V2, "scan_ver");
+	if (brcmf_feat_is_enabled(ifp, BRCMF_FEAT_SCAN_V2)) {
+		struct {
+			__le16 version;
+			__le16 length;
+			__le16 major;
+		} scan_ver = {};
+
+		err = brcmf_fil_iovar_data_get(ifp, "scan_ver", &scan_ver,
+					       sizeof(scan_ver));
+		brcmf_dbg(INFO, "scan interface version %u\n",
+			  le16_to_cpu(scan_ver.major));
+		if (!err && le16_to_cpu(scan_ver.major) == 3)
+			ifp->drvr->feat_flags |= BIT(BRCMF_FEAT_SCAN_V3);
+		else if (!err && le16_to_cpu(scan_ver.major) >= 4)
+			ifp->drvr->feat_flags |= BIT(BRCMF_FEAT_SCAN_V4);
+	}
 
 	brcmf_feat_wlc_version_overrides(drvr);
 	brcmf_feat_firmware_overrides(drvr);
 
 	brcmf_fwvid_feat_attach(ifp);
+
+	/* Host-built 802.3 + LLC/SNAP TX headers: the BCM4389 and BCM4398 for now */
+	if (drvr->bus_if->chip != BRCM_CC_4389_CHIP_ID &&
+	    drvr->bus_if->chip != BRCM_CC_4398_CHIP_ID)
+		drvr->feat_flags &= ~BIT(BRCMF_FEAT_HOST_SFHLLC);
+
+	/*
+	 * The BCM4383's firmware (20.123.13 on the Pixel 9a) and the
+	 * BCM4398's (24.100 on the Pixel 8 Pro) advertise the supplicant
+	 * offload but refuse the key: brcmf_set_wsec() fails with "failed to
+	 * change PSK in firmware" and the join never gets past
+	 * authentication. Leave the handshakes to the host.
+	 */
+	if (drvr->bus_if->chip == BRCM_CC_4383_CHIP_ID ||
+	    drvr->bus_if->chip == BRCM_CC_4398_CHIP_ID)
+		drvr->feat_flags &= ~(BIT(BRCMF_FEAT_FWSUP) | BIT(BRCMF_FEAT_SAE) |
+				      BIT(BRCMF_FEAT_FWAUTH));
 
 	if (drvr->settings->feature_disable) {
 		brcmf_dbg(INFO, "Features: 0x%02x, disable: 0x%02x\n",

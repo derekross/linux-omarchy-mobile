@@ -87,6 +87,8 @@ struct brcmf_bus_dcmd {
  * @get_memdump: obtain device memory dump in provided buffer.
  * @get_blob: obtain a firmware blob.
  * @remove: initiate unbind of the device.
+ * @d2h_mb_data: mailbox data the device sent as a control message
+ *	(optional).
  *
  * This structure provides an abstract interface towards the
  * bus specific driver. For control messages to common driver
@@ -108,6 +110,7 @@ struct brcmf_bus_ops {
 	void (*debugfs_create)(struct device *dev);
 	int (*reset)(struct device *dev);
 	void (*remove)(struct device *dev);
+	void (*d2h_mb_data)(struct device *dev, u32 data);
 };
 
 
@@ -130,6 +133,7 @@ struct brcmf_bus_msgbuf {
 	u16 max_flowrings;
 	u16 max_submissionrings;
 	u16 max_completionrings;
+	u32 d2h_sync;
 };
 
 
@@ -280,6 +284,12 @@ int brcmf_bus_reset(struct brcmf_bus *bus)
 		return -EOPNOTSUPP;
 
 	return bus->ops->reset(bus->dev);
+}
+
+static inline void brcmf_bus_d2h_mb_data(struct brcmf_bus *bus, u32 data)
+{
+	if (bus->ops->d2h_mb_data)
+		bus->ops->d2h_mb_data(bus->dev, data);
 }
 
 static inline void brcmf_bus_remove(struct brcmf_bus *bus)

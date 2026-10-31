@@ -1469,7 +1469,36 @@ brcmf_run_escan(struct brcmf_cfg80211_info *cfg, struct brcmf_if *ifp,
 
 	params->version = cpu_to_le32(BRCMF_ESCAN_REQ_VERSION_V2);
 
-	if (!brcmf_feat_is_enabled(ifp, BRCMF_FEAT_SCAN_V2)) {
+	if (brcmf_feat_is_enabled(ifp, BRCMF_FEAT_SCAN_V3)) {
+		/* The v2 layout; its pad byte is ssid_type, 0 for the default */
+		params->version = cpu_to_le32(BRCMF_ESCAN_REQ_VERSION_V3);
+		params->params_v2_le.version =
+			cpu_to_le16(BRCMF_SCAN_PARAMS_VERSION_V3);
+	} else if (brcmf_feat_is_enabled(ifp, BRCMF_FEAT_SCAN_V4)) {
+		struct brcmf_escan_params_le *params_v4;
+		u8 *v2 = (u8 *)&params->params_v2_le;
+		u16 len = le16_to_cpu(params->params_v2_le.length);
+		u8 *v4;
+
+		params_size += sizeof(__le32);
+		params_v4 = kzalloc(params_size, GFP_KERNEL);
+		if (!params_v4) {
+			err = -ENOMEM;
+			goto exit_params;
+		}
+		params_v4->version = cpu_to_le32(BRCMF_ESCAN_REQ_VERSION_V4);
+		v4 = (u8 *)&params_v4->params_v2_le;
+		memcpy(v4, v2, BRCMF_SCAN_PARAMS_V4_EXT_OFFSET);
+		memcpy(v4 + BRCMF_SCAN_PARAMS_V4_EXT_OFFSET + sizeof(__le32),
+		       v2 + BRCMF_SCAN_PARAMS_V4_EXT_OFFSET,
+		       len - BRCMF_SCAN_PARAMS_V4_EXT_OFFSET);
+		params_v4->params_v2_le.version =
+			cpu_to_le16(BRCMF_SCAN_PARAMS_VERSION_V4);
+		params_v4->params_v2_le.length =
+			cpu_to_le16(len + sizeof(__le32));
+		kfree(params);
+		params = params_v4;
+	} else if (!brcmf_feat_is_enabled(ifp, BRCMF_FEAT_SCAN_V2)) {
 		struct brcmf_escan_params_le *params_v1;
 
 		params_size -= BRCMF_SCAN_PARAMS_V2_FIXED_SIZE;
@@ -2377,6 +2406,76 @@ static void brcmf_set_join_pref(struct brcmf_if *ifp,
 		bphy_err(drvr, "Set join_pref error (%d)\n", err);
 }
 
+static u32 ssid_len_of(struct cfg80211_connect_params *sme)
+{
+	return min_t(u32, sme->ssid_len, IEEE80211_MAX_SSID_LEN);
+}
+
+/*
+ * The "join" iovar with versioned parameters (wl_extjoin_params_v1_t), as
+ * Broadcom's driver fills it (bcmdhd wl_cfg80211.c
+ * wl_fillup_assoc_params_v1()). @chanspec 0 means no channel.
+ */
+static s32 brcmf_join_v1(struct brcmf_if *ifp,
+			 struct cfg80211_connect_params *sme, u32 ssid_len,
+			 u16 chanspec)
+{
+	struct brcmf_pub *drvr = ifp->drvr;
+	struct brcmf_ext_join_params_v1_le *jp;
+	size_t len;
+	s32 err;
+
+	len = offsetof(struct brcmf_ext_join_params_v1_le, assoc_le) +
+	      offsetof(struct brcmf_assoc_params_v1_le, chanspec_list);
+	if (chanspec)
+		len += sizeof(u16);
+
+	/* room for the one chanspec */
+	jp = kzalloc(sizeof(*jp) + sizeof(__le16), GFP_KERNEL);
+	if (!jp)
+		return -ENOMEM;
+
+	jp->ssid_le.SSID_len = cpu_to_le32(ssid_len);
+	memcpy(jp->ssid_le.SSID, sme->ssid, ssid_len);
+
+	jp->scan_le.scan_type = -1;
+	jp->scan_le.home_time = cpu_to_le32(-1);
+	if (chanspec) {
+		jp->scan_le.active_time =
+			cpu_to_le32(BRCMF_SCAN_JOIN_ACTIVE_DWELL_TIME_MS);
+		jp->scan_le.passive_time =
+			cpu_to_le32(BRCMF_SCAN_JOIN_PASSIVE_DWELL_TIME_MS);
+		jp->scan_le.nprobes =
+			cpu_to_le32(BRCMF_SCAN_JOIN_ACTIVE_DWELL_TIME_MS /
+				    BRCMF_SCAN_JOIN_PROBE_INTERVAL_MS);
+		jp->assoc_le.chanspec_num = cpu_to_le32(1);
+		jp->assoc_le.chanspec_list[0] = cpu_to_le16(chanspec);
+	} else {
+		jp->scan_le.active_time = cpu_to_le32(-1);
+		jp->scan_le.passive_time = cpu_to_le32(-1);
+		jp->scan_le.nprobes = cpu_to_le32(-1);
+	}
+
+	if (sme->bssid)
+		memcpy(jp->assoc_le.bssid, sme->bssid, ETH_ALEN);
+	else
+		eth_broadcast_addr(jp->assoc_le.bssid);
+
+	/* get the firmware's own error code for the log */
+	ifp->fwil_fwerr = true;
+	err = brcmf_fil_bsscfg_data_set(ifp, "join", jp, len);
+	ifp->fwil_fwerr = false;
+	kfree(jp);
+
+	if (err)
+		bphy_err(drvr, "join (v1, chanspec 0x%04x, %zu bytes) failed: firmware error %d\n",
+			 chanspec, len, err);
+	else
+		brcmf_dbg(CONN, "join (v1, chanspec 0x%04x) sent\n", chanspec);
+
+	return err ? -EBADE : 0;
+}
+
 static s32
 brcmf_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev,
 		       struct cfg80211_connect_params *sme)
@@ -2531,6 +2630,15 @@ brcmf_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev,
 		if (err)
 			goto done;
 	}
+	if (brcmf_feat_is_enabled(ifp, BRCMF_FEAT_JOIN_V1)) {
+		brcmf_set_join_pref(ifp, &sme->bss_select);
+		err = brcmf_join_v1(ifp, sme, ssid_len_of(sme),
+				    cfg->channel ? chanspec : 0);
+		if (!err)
+			goto done;
+		goto set_ssid;
+	}
+
 	/* Join with specific BSSID and cached SSID
 	 * If SSID is zero join based on BSSID only
 	 */
@@ -2594,6 +2702,8 @@ brcmf_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev,
 		/* This is it. join command worked, we are done */
 		goto done;
 
+set_ssid:
+	ssid_len = ssid_len_of(sme);
 	/* join command failed, fallback to set ssid */
 	memset(&join_params, 0, sizeof(join_params));
 	join_params_size = sizeof(join_params.ssid_le);
@@ -3436,7 +3546,8 @@ static s32 brcmf_inform_bss(struct brcmf_cfg80211_info *cfg)
 
 	bss_list = (struct brcmf_scan_results *)cfg->escan_info.escan_buf;
 	if (bss_list->count != 0 &&
-	    bss_list->version != BRCMF_BSS_INFO_VERSION) {
+	    bss_list->version != BRCMF_BSS_INFO_VERSION &&
+	    bss_list->version != BRCMF_BSS_INFO_VERSION_114) {
 		bphy_err(drvr, "Version %d != WL_BSS_INFO_VERSION\n",
 			 bss_list->version);
 		return -EOPNOTSUPP;
@@ -7068,6 +7179,11 @@ static int brcmf_construct_chaninfo(struct brcmf_cfg80211_info *cfg,
 			band = wiphy->bands[NL80211_BAND_2GHZ];
 		} else if (ch.band == BRCMU_CHAN_BAND_5G) {
 			band = wiphy->bands[NL80211_BAND_5GHZ];
+		} else if (ch.band == BRCMU_CHAN_BAND_6G) {
+			/* 6 GHz is not supported yet */
+			brcmf_dbg(INFO, "skipping 6 GHz chanspec 0x%x\n",
+				  ch.chspec);
+			continue;
 		} else {
 			bphy_err(drvr, "Invalid channel Spec. 0x%x.\n",
 				 ch.chspec);
@@ -7663,7 +7779,7 @@ static int brcmf_setup_wiphy(struct wiphy *wiphy, struct brcmf_if *ifp)
 	struct ieee80211_supported_band *band;
 	u16 max_interfaces = 0;
 	bool gscan;
-	__le32 bandlist[3];
+	__le32 bandlist[4];	/* count, then up to 2.4, 5 and 6 GHz */
 	u32 n_bands;
 	int err, i;
 

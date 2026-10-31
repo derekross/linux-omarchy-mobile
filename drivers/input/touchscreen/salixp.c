@@ -97,7 +97,7 @@
 #define SALIXP_SCAN_ALL		0xff
 #define SALIXP_EVT_STATUS	0x43
 #define SALIXP_ECHO_TYPE	0x01
-#define SALIXP_ECHO_MS		50
+#define SALIXP_ECHO_MS		2500
 #define SALIXP_TOUCH_POLL_MS	10
 #define SALIXP_TOUCH_LOG_MAX	8
 #define SALIXP_CS_DELAY_US	10
@@ -431,9 +431,11 @@ static int salixp_poll_cx(struct salixp *ts)
  * and address 0x20000000, the same prefix as the flash commands, so
  * this does not send it. The echo is 0x43 0x01 followed by the
  * command. Stock treats a missing echo as failure after retries
- * (ftsIO.c:523-547). This sends the scan command once and fails
- * probe if the echo does not arrive. It does not send it again.
- * No interrupt is requested.
+ * (ftsIO.c:523-547), waiting up to 2.5 s for it (TIEMOUT_ECHO in
+ * ftsCore.c:330). Husky's firmware reports a forced calibration
+ * first and echoes about 60 ms after the command. This sends the
+ * scan command once, stops at the echo and fails probe if it does
+ * not arrive. It does not send it again. No interrupt is requested.
  */
 static int salixp_sense_on(struct salixp *ts)
 {
@@ -460,7 +462,8 @@ static int salixp_sense_on(struct salixp *ts)
 		return ret;
 
 	deadline = ktime_add_ms(ktime_get(), SALIXP_ECHO_MS);
-	while (ktime_before(ktime_get(), deadline) && n < SALIXP_POLL_MAX_EVT) {
+	while (!echo && ktime_before(ktime_get(), deadline) &&
+	       n < SALIXP_POLL_MAX_EVT) {
 		ret = salixp_read_fifo(ts, event);
 		if (ret)
 			return ret;

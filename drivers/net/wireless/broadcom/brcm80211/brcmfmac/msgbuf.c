@@ -11,6 +11,7 @@
 #include <linux/types.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/unaligned.h>
 
 #include <brcmu_utils.h>
 #include <brcmu_wifi.h>
@@ -20,6 +21,7 @@
 #include "proto.h"
 #include "msgbuf.h"
 #include "commonring.h"
+#include "feature.h"
 #include "flowring.h"
 #include "bus.h"
 #include "tracepoint.h"
@@ -47,9 +49,11 @@
 #define MSGBUF_TYPE_RX_CMPLT			0x12
 #define MSGBUF_TYPE_LPBK_DMAXFER		0x13
 #define MSGBUF_TYPE_LPBK_DMAXFER_CMPLT		0x14
+#define MSGBUF_TYPE_H2D_MAILBOX_DATA		0x23
+#define MSGBUF_TYPE_D2H_MAILBOX_DATA		0x24
 
 #define NR_TX_PKTIDS				2048
-#define NR_RX_PKTIDS				1024
+#define NR_RX_PKTIDS				2048
 
 #define BRCMF_IOCTL_REQ_PKTID			0xFFFE
 
@@ -62,6 +66,9 @@
 #define BRCMF_MSGBUF_PKT_FLAGS_FRAME_802_3	0x01
 #define BRCMF_MSGBUF_PKT_FLAGS_FRAME_802_11	0x02
 #define BRCMF_MSGBUF_PKT_FLAGS_FRAME_MASK	0x07
+/* TX post: the data buffer starts with a host-built 802.3 + LLC/SNAP header */
+#define BRCMF_MSGBUF_TXPOST_FLAGS_HOST_SFH_LLC	0x10
+#define BRCMF_MSGBUF_SFH_LLC_LEN		8
 #define BRCMF_MSGBUF_PKT_FLAGS_PRIO_SHIFT	5
 
 #define BRCMF_MSGBUF_TX_FLUSH_CNT1		32
@@ -72,6 +79,13 @@
 #define BRCMF_MSGBUF_UPDATE_RX_PTR_THRS		48
 
 #define BRCMF_MAX_TXSTATUS_WAIT_RETRIES		10
+
+/* Sequence number ("epoch") in the common header of each message on the
+ * H2D control and rxpost submission rings, modulo 253; the first message
+ * carries 1.
+ */
+#define BRCMF_MSGBUF_H2D_EPOCH_MODULO		253
+#define BRCMF_MSGBUF_H2D_EPOCH_INIT		(BRCMF_MSGBUF_H2D_EPOCH_MODULO + 1)
 
 struct msgbuf_common_hdr {
 	u8				msgtype;
@@ -124,6 +138,23 @@ struct msgbuf_rx_ioctl_resp_or_event {
 struct msgbuf_completion_hdr {
 	__le16				status;
 	__le16				flow_ring_id;
+};
+
+/*
+ * Mailbox data as control messages, for firmware that doesn't use the
+ * shared-memory mailbox (Broadcom's h2d_mailbox_data and d2h_mailbox_data).
+ */
+struct msgbuf_h2d_mailbox_data {
+	struct msgbuf_common_hdr	msg;
+	__le32				mb_data;
+	__le32				rsvd[7];
+};
+
+struct msgbuf_d2h_mailbox_data {
+	struct msgbuf_common_hdr	msg;
+	struct msgbuf_completion_hdr	compl_hdr;
+	__le32				mb_data;
+	__le32				rsvd;
 };
 
 /* Data struct for the MSGBUF_TYPE_GEN_STATUS */
@@ -258,6 +289,10 @@ struct brcmf_msgbuf {
 	u16 data_seq_no;
 	u16 ioctl_seq_no;
 	u32 reqid;
+	u32 h2d_seqnum[BRCMF_NROF_H2D_COMMON_MSGRINGS];
+	/* D2H sync (bcmdhd dhd_prot_d2h_sync_*()): mode, and next epochs */
+	u32 d2h_sync;
+	u32 d2h_seqnum[BRCMF_NROF_COMMON_MSGRINGS];
 	wait_queue_head_t ioctl_resp_wait;
 	bool ctl_completed;
 
@@ -285,11 +320,22 @@ struct brcmf_msgbuf_pktid {
 struct brcmf_msgbuf_pktids {
 	u32 array_size;
 	u32 last_allocated_idx;
+	/* IDs 1 to nr_ctrl: the ioctl response and event buffers only */
+	u32 nr_ctrl;
 	enum dma_data_direction direction;
 	struct brcmf_msgbuf_pktid *array;
 };
 
 static void brcmf_msgbuf_rxbuf_ioctlresp_post(struct brcmf_msgbuf *msgbuf);
+
+
+/* Called with the ring's write slot reserved, once the message is final. */
+static void brcmf_msgbuf_set_epoch(struct brcmf_msgbuf *msgbuf, u32 ringid,
+				   struct msgbuf_common_hdr *msg)
+{
+	msg->rsvd0 = msgbuf->h2d_seqnum[ringid] % BRCMF_MSGBUF_H2D_EPOCH_MODULO;
+	msgbuf->h2d_seqnum[ringid]++;
+}
 
 
 static struct brcmf_msgbuf_pktids *
@@ -320,10 +366,10 @@ static int
 brcmf_msgbuf_alloc_pktid(struct device *dev,
 			 struct brcmf_msgbuf_pktids *pktids,
 			 struct sk_buff *skb, u16 data_offset,
-			 dma_addr_t *physaddr, u32 *idx)
+			 dma_addr_t *physaddr, u32 *idx, bool ctrl)
 {
 	struct brcmf_msgbuf_pktid *array;
-	u32 count;
+	u32 first, end, count;
 
 	array = pktids->array;
 
@@ -335,20 +381,30 @@ brcmf_msgbuf_alloc_pktid(struct device *dev,
 		return -ENOMEM;
 	}
 
-	*idx = pktids->last_allocated_idx;
+	/*
+	 * Packet ID 0 means "no packet" to the firmware: never hand it out.
+	 * Control buffers get the lowest IDs: Broadcom's driver numbers them
+	 * in a map of their own (1024 IDs), and a firmware that checks them
+	 * against that traps on a larger one ("Invalid pktid").
+	 */
+	first = ctrl ? 1 : pktids->nr_ctrl + 1;
+	end = ctrl ? pktids->nr_ctrl + 1 : pktids->array_size;
+	*idx = ctrl ? end - 1 : pktids->last_allocated_idx;
+	if (*idx < first || *idx >= end)
+		*idx = end - 1;
 
 	count = 0;
 	do {
 		(*idx)++;
-		if (*idx == pktids->array_size)
-			*idx = 0;
+		if (*idx >= end)
+			*idx = first;
 		if (array[*idx].allocated.counter == 0)
 			if (atomic_cmpxchg(&array[*idx].allocated, 0, 1) == 0)
 				break;
 		count++;
-	} while (count < pktids->array_size);
+	} while (count < end - first);
 
-	if (count == pktids->array_size) {
+	if (count == end - first) {
 		dma_unmap_single(dev, *physaddr, skb->len - data_offset,
 				 pktids->direction);
 		return -ENOMEM;
@@ -358,7 +414,8 @@ brcmf_msgbuf_alloc_pktid(struct device *dev,
 	array[*idx].physaddr = *physaddr;
 	array[*idx].skb = skb;
 
-	pktids->last_allocated_idx = *idx;
+	if (!ctrl)
+		pktids->last_allocated_idx = *idx;
 
 	return 0;
 }
@@ -371,7 +428,7 @@ brcmf_msgbuf_get_pktid(struct device *dev, struct brcmf_msgbuf_pktids *pktids,
 	struct brcmf_msgbuf_pktid *pktid;
 	struct sk_buff *skb;
 
-	if (idx >= pktids->array_size) {
+	if (idx == 0 || idx >= pktids->array_size) {
 		brcmf_err("Invalid packet id %d (max %d)\n", idx,
 			  pktids->array_size);
 		return NULL;
@@ -451,6 +508,7 @@ static int brcmf_msgbuf_tx_ioctl(struct brcmf_pub *drvr, int ifidx,
 	msgbuf->reqid++;
 
 	request = (struct msgbuf_ioctl_req_hdr *)ret_ptr;
+	memset(request, 0, sizeof(*request));
 	request->msg.msgtype = MSGBUF_TYPE_IOCTLPTR_REQ;
 	request->msg.ifidx = (u8)ifidx;
 	request->msg.flags = 0;
@@ -463,6 +521,8 @@ static int brcmf_msgbuf_tx_ioctl(struct brcmf_pub *drvr, int ifidx,
 	request->input_buf_len = cpu_to_le16(buf_len);
 	request->req_buf_addr.high_addr = cpu_to_le32(msgbuf->ioctbuf_phys_hi);
 	request->req_buf_addr.low_addr = cpu_to_le32(msgbuf->ioctbuf_phys_lo);
+	brcmf_msgbuf_set_epoch(msgbuf, BRCMF_H2D_MSGRING_CONTROL_SUBMIT,
+			       &request->msg);
 	if (buf)
 		memcpy(msgbuf->ioctbuf, buf, buf_len);
 	else
@@ -642,6 +702,7 @@ brcmf_msgbuf_flowring_create_worker(struct brcmf_msgbuf *msgbuf,
 	}
 
 	create = (struct msgbuf_tx_flowring_create_req *)ret_ptr;
+	memset(create, 0, sizeof(*create));
 	create->msg.msgtype = MSGBUF_TYPE_FLOW_RING_CREATE;
 	create->msg.ifidx = work->ifidx;
 	create->msg.request_id = 0;
@@ -655,6 +716,8 @@ brcmf_msgbuf_flowring_create_worker(struct brcmf_msgbuf *msgbuf,
 	create->flow_ring_addr.low_addr = cpu_to_le32(address & 0xffffffff);
 	create->max_items = cpu_to_le16(BRCMF_H2D_TXFLOWRING_MAX_ITEM);
 	create->len_item = cpu_to_le16(BRCMF_H2D_TXFLOWRING_ITEMSIZE);
+	brcmf_msgbuf_set_epoch(msgbuf, BRCMF_H2D_MSGRING_CONTROL_SUBMIT,
+			       &create->msg);
 
 	brcmf_dbg(MSGBUF, "Send Flow Create Req flow ID %d for peer %pM prio %d ifindex %d\n",
 		  flowid, work->da, create->tid, work->ifidx);
@@ -718,6 +781,60 @@ static u32 brcmf_msgbuf_flowring_create(struct brcmf_msgbuf *msgbuf, int ifidx,
 }
 
 
+/*
+ * Host short-form header + LLC (firmware capability "host_sfhllc"): the
+ * host turns the Ethernet frame into 802.3 + LLC/SNAP (RFC 1042, or
+ * bridge-tunnel for the 802.1H types) before posting it, as Broadcom's
+ * driver does (bcmdhd dhd_common.c dhd_ether_to_8023_hdr(), dhd_msgbuf.c
+ * BCMPCIE_TXPOST_FLAGS_HOST_SFH_LLC), and turns it back on completion.
+ */
+static int brcmf_msgbuf_sfh_llc_insert(struct sk_buff *skb)
+{
+	u8 *p;
+	u16 type;
+
+	if (skb->len < ETH_HLEN)
+		return -EINVAL;
+	if (skb_headroom(skb) < BRCMF_MSGBUF_SFH_LLC_LEN &&
+	    pskb_expand_head(skb, BRCMF_MSGBUF_SFH_LLC_LEN, 0, GFP_ATOMIC))
+		return -ENOMEM;
+
+	type = get_unaligned_be16(skb->data + 2 * ETH_ALEN);
+	p = skb_push(skb, BRCMF_MSGBUF_SFH_LLC_LEN);
+	memmove(p, p + BRCMF_MSGBUF_SFH_LLC_LEN, 2 * ETH_ALEN);
+	put_unaligned_be16(skb->len - ETH_HLEN, p + 2 * ETH_ALEN);
+	p += ETH_HLEN;
+	p[0] = 0xaa;
+	p[1] = 0xaa;
+	p[2] = 0x03;
+	p[3] = 0x00;
+	p[4] = 0x00;
+	p[5] = (type == 0x80f3 || type == 0x8137) ? 0xf8 : 0x00;
+	put_unaligned_be16(type, p + 6);
+	return 0;
+}
+
+static void brcmf_msgbuf_sfh_llc_remove(struct sk_buff *skb)
+{
+	u8 *p = skb->data;
+	u16 type;
+
+	if (skb->len < ETH_HLEN + BRCMF_MSGBUF_SFH_LLC_LEN ||
+	    get_unaligned_be16(p + 2 * ETH_ALEN) >= ETH_P_802_3_MIN ||
+	    p[ETH_HLEN] != 0xaa || p[ETH_HLEN + 1] != 0xaa)
+		return;
+
+	type = get_unaligned_be16(p + ETH_HLEN + 6);
+	memmove(p + BRCMF_MSGBUF_SFH_LLC_LEN, p, 2 * ETH_ALEN);
+	p = skb_pull(skb, BRCMF_MSGBUF_SFH_LLC_LEN);
+	put_unaligned_be16(type, p + 2 * ETH_ALEN);
+}
+
+static bool brcmf_msgbuf_sfh_llc(struct brcmf_msgbuf *msgbuf)
+{
+	return msgbuf->drvr->feat_flags & BIT(BRCMF_FEAT_HOST_SFHLLC);
+}
+
 static void brcmf_msgbuf_txflow(struct brcmf_msgbuf *msgbuf, u16 flowid)
 {
 	struct brcmf_flowring *flow = msgbuf->flow;
@@ -730,6 +847,8 @@ static void brcmf_msgbuf_txflow(struct brcmf_msgbuf *msgbuf, u16 flowid)
 	u32 pktid;
 	struct msgbuf_tx_msghdr *tx_msghdr;
 	u64 address;
+	u8 ethhdr[ETH_HLEN];
+	bool sfh;
 
 	commonring = msgbuf->flowrings[flowid];
 	if (!brcmf_commonring_write_available(commonring))
@@ -746,9 +865,15 @@ static void brcmf_msgbuf_txflow(struct brcmf_msgbuf *msgbuf, u16 flowid)
 			break;
 		}
 		skb_orphan(skb);
+		memcpy(ethhdr, skb->data, ETH_HLEN);
+		sfh = brcmf_msgbuf_sfh_llc(msgbuf) &&
+		      !brcmf_msgbuf_sfh_llc_insert(skb);
 		if (brcmf_msgbuf_alloc_pktid(msgbuf->drvr->bus_if->dev,
-					     msgbuf->tx_pktids, skb, ETH_HLEN,
-					     &physaddr, &pktid)) {
+					     msgbuf->tx_pktids, skb,
+					     sfh ? 0 : ETH_HLEN,
+					     &physaddr, &pktid, false)) {
+			if (sfh)
+				brcmf_msgbuf_sfh_llc_remove(skb);
 			brcmf_flowring_reinsert(flow, flowid, skb);
 			bphy_err(drvr, "No PKTID available !!\n");
 			break;
@@ -757,6 +882,8 @@ static void brcmf_msgbuf_txflow(struct brcmf_msgbuf *msgbuf, u16 flowid)
 		if (!ret_ptr) {
 			brcmf_msgbuf_get_pktid(msgbuf->drvr->bus_if->dev,
 					       msgbuf->tx_pktids, pktid);
+			if (sfh)
+				brcmf_msgbuf_sfh_llc_remove(skb);
 			brcmf_flowring_reinsert(flow, flowid, skb);
 			break;
 		}
@@ -768,11 +895,19 @@ static void brcmf_msgbuf_txflow(struct brcmf_msgbuf *msgbuf, u16 flowid)
 		tx_msghdr->msg.request_id = cpu_to_le32(pktid + 1);
 		tx_msghdr->msg.ifidx = brcmf_flowring_ifidx_get(flow, flowid);
 		tx_msghdr->flags = BRCMF_MSGBUF_PKT_FLAGS_FRAME_802_3;
+		if (sfh)
+			tx_msghdr->flags |=
+				BRCMF_MSGBUF_TXPOST_FLAGS_HOST_SFH_LLC;
 		tx_msghdr->flags |= (skb->priority & 0x07) <<
 				    BRCMF_MSGBUF_PKT_FLAGS_PRIO_SHIFT;
 		tx_msghdr->seg_cnt = 1;
-		memcpy(tx_msghdr->txhdr, skb->data, ETH_HLEN);
-		tx_msghdr->data_len = cpu_to_le16(skb->len - ETH_HLEN);
+		memcpy(tx_msghdr->txhdr, ethhdr, ETH_HLEN);
+		tx_msghdr->data_len = cpu_to_le16(sfh ? skb->len :
+						  skb->len - ETH_HLEN);
+		if (get_unaligned_be16(ethhdr + 2 * ETH_ALEN) == ETH_P_PAE)
+			brcmf_dbg(MSGBUF, "TX EAPOL pktid %u flow %u len %u%s\n",
+				  pktid, flowid, skb->len,
+				  sfh ? " (802.3+LLC)" : "");
 		address = (u64)physaddr;
 		tx_msghdr->data_buf_addr.high_addr = cpu_to_le32(address >> 32);
 		tx_msghdr->data_buf_addr.low_addr =
@@ -913,6 +1048,12 @@ brcmf_msgbuf_process_txstatus(struct brcmf_msgbuf *msgbuf, void *buf)
 				     msgbuf->tx_pktids, idx);
 	if (!skb)
 		return;
+	if (brcmf_msgbuf_sfh_llc(msgbuf))
+		brcmf_msgbuf_sfh_llc_remove(skb);
+	if (skb->len >= ETH_HLEN &&
+	    get_unaligned_be16(skb->data + 2 * ETH_ALEN) == ETH_P_PAE)
+		brcmf_dbg(MSGBUF, "TX EAPOL done pktid %u status %u\n", idx,
+			  le16_to_cpu(tx_status->compl_hdr.status));
 
 	if (!brcmf_msgbuf_get_flowid(msgbuf, flow_ring_id, &flowid)) {
 		brcmf_txfinalize(brcmf_get_ifp(msgbuf->drvr, tx_status->msg.ifidx),
@@ -967,7 +1108,7 @@ static u32 brcmf_msgbuf_rxbuf_data_post(struct brcmf_msgbuf *msgbuf, u32 count)
 		pktlen = skb->len;
 		if (brcmf_msgbuf_alloc_pktid(msgbuf->drvr->bus_if->dev,
 					     msgbuf->rx_pktids, skb, 0,
-					     &physaddr, &pktid)) {
+					     &physaddr, &pktid, false)) {
 			dev_kfree_skb_any(skb);
 			bphy_err(drvr, "No PKTID available !!\n");
 			brcmf_commonring_write_cancel(commonring, alloced - i);
@@ -996,6 +1137,8 @@ static u32 brcmf_msgbuf_rxbuf_data_post(struct brcmf_msgbuf *msgbuf, u32 count)
 			cpu_to_le32(address >> 32);
 		rx_bufpost->data_buf_addr.low_addr =
 			cpu_to_le32(address & 0xffffffff);
+		brcmf_msgbuf_set_epoch(msgbuf, BRCMF_H2D_MSGRING_RXPOST_SUBMIT,
+				       &rx_bufpost->msg);
 
 		ret_ptr += brcmf_commonring_len_item(commonring);
 	}
@@ -1077,7 +1220,7 @@ brcmf_msgbuf_rxbuf_ctrl_post(struct brcmf_msgbuf *msgbuf, bool event_buf,
 		pktlen = skb->len;
 		if (brcmf_msgbuf_alloc_pktid(msgbuf->drvr->bus_if->dev,
 					     msgbuf->rx_pktids, skb, 0,
-					     &physaddr, &pktid)) {
+					     &physaddr, &pktid, true)) {
 			dev_kfree_skb_any(skb);
 			bphy_err(drvr, "No PKTID available !!\n");
 			brcmf_commonring_write_cancel(commonring, alloced - i);
@@ -1096,6 +1239,8 @@ brcmf_msgbuf_rxbuf_ctrl_post(struct brcmf_msgbuf *msgbuf, bool event_buf,
 			cpu_to_le32(address >> 32);
 		rx_bufpost->host_buf_addr.low_addr =
 			cpu_to_le32(address & 0xffffffff);
+		brcmf_msgbuf_set_epoch(msgbuf, BRCMF_H2D_MSGRING_CONTROL_SUBMIT,
+				       &rx_bufpost->msg);
 
 		ret_ptr += brcmf_commonring_len_item(commonring);
 	}
@@ -1226,6 +1371,10 @@ brcmf_msgbuf_process_rx_complete(struct brcmf_msgbuf *msgbuf, void *buf)
 		return;
 	}
 
+	if (skb->len >= ETH_HLEN &&
+	    get_unaligned_be16(skb->data + 2 * ETH_ALEN) == ETH_P_PAE)
+		brcmf_dbg(MSGBUF, "RX EAPOL pktid %u len %u flags 0x%x\n", idx,
+			  skb->len, flags);
 	skb->protocol = eth_type_trans(skb, ifp->ndev);
 	brcmf_netif_rx(ifp, skb);
 }
@@ -1323,6 +1472,7 @@ brcmf_msgbuf_process_flow_ring_delete_response(struct brcmf_msgbuf *msgbuf,
 static void brcmf_msgbuf_process_msgtype(struct brcmf_msgbuf *msgbuf, void *buf)
 {
 	struct brcmf_pub *drvr = msgbuf->drvr;
+	struct msgbuf_d2h_mailbox_data *mb_data;
 	struct msgbuf_common_hdr *msg;
 
 	msg = (struct msgbuf_common_hdr *)buf;
@@ -1362,6 +1512,11 @@ static void brcmf_msgbuf_process_msgtype(struct brcmf_msgbuf *msgbuf, void *buf)
 		brcmf_dbg(MSGBUF, "MSGBUF_TYPE_RX_CMPLT\n");
 		brcmf_msgbuf_process_rx_complete(msgbuf, buf);
 		break;
+	case MSGBUF_TYPE_D2H_MAILBOX_DATA:
+		brcmf_dbg(MSGBUF, "MSGBUF_TYPE_D2H_MAILBOX_DATA\n");
+		mb_data = (struct msgbuf_d2h_mailbox_data *)buf;
+		brcmf_bus_d2h_mb_data(drvr->bus_if, le32_to_cpu(mb_data->mb_data));
+		break;
 	default:
 		bphy_err(drvr, "Unsupported msgtype %d\n", msg->msgtype);
 		break;
@@ -1369,9 +1524,55 @@ static void brcmf_msgbuf_process_msgtype(struct brcmf_msgbuf *msgbuf, void *buf)
 }
 
 
-static void brcmf_msgbuf_process_rx(struct brcmf_msgbuf *msgbuf,
-				    struct brcmf_commonring *commonring)
+#define BRCMF_MSGBUF_D2H_EPOCH_MODULO		253
+#define BRCMF_MSGBUF_D2H_EPOCH_INIT		254
+#define BRCMF_MSGBUF_D2H_SYNC_SEQNUM		0x20000
+#define BRCMF_MSGBUF_D2H_SYNC_XORCSUM		0x40000
+#define BRCMF_MSGBUF_D2H_SYNC_TRIES		512
+#define BRCMF_MSGBUF_D2H_SYNC_STEPS		5
+
+/*
+ * With DMA'd ring indices the firmware can publish a completion's index
+ * before the item itself has landed in host memory. Firmware that asks for
+ * D2H sync stamps each item with a sequence number (its epoch) and, in
+ * XORCSUM mode, a checksum making the XOR of the item's words zero; the
+ * host waits for both before reading the item, as Broadcom's driver does
+ * (dhd_prot_d2h_sync_seqnum() and dhd_prot_d2h_sync_xorcsum()). An item
+ * that never completes is skipped, as there.
+ */
+static bool brcmf_msgbuf_d2h_sync(struct brcmf_msgbuf *msgbuf, u32 ringid,
+				  void *item, u16 len)
 {
+	u8 want = msgbuf->d2h_seqnum[ringid] % BRCMF_MSGBUF_D2H_EPOCH_MODULO;
+	struct msgbuf_common_hdr *hdr = item;
+	u32 step, tries, csum, i;
+
+	for (step = 1; step <= BRCMF_MSGBUF_D2H_SYNC_STEPS; step++) {
+		for (tries = 0; tries < BRCMF_MSGBUF_D2H_SYNC_TRIES; tries++) {
+			if (READ_ONCE(hdr->rsvd0) == want) {
+				csum = 0;
+				if (msgbuf->d2h_sync & BRCMF_MSGBUF_D2H_SYNC_XORCSUM)
+					for (i = 0; i < len / 4; i++)
+						csum ^= READ_ONCE(((u32 *)item)[i]);
+				if (!csum) {
+					msgbuf->d2h_seqnum[ringid]++;
+					dma_rmb();
+					return true;
+				}
+			}
+			udelay(step);
+		}
+	}
+
+	brcmf_err("D2H ring %u: item never completed (epoch %u, want %u)\n",
+		  ringid, READ_ONCE(hdr->rsvd0), want);
+	msgbuf->d2h_seqnum[ringid]++;
+	return false;
+}
+
+static void brcmf_msgbuf_process_rx(struct brcmf_msgbuf *msgbuf, u32 ringid)
+{
+	struct brcmf_commonring *commonring = msgbuf->commonrings[ringid];
 	void *buf;
 	u16 count;
 	u16 processed;
@@ -1383,8 +1584,11 @@ again:
 
 	processed = 0;
 	while (count) {
-		brcmf_msgbuf_process_msgtype(msgbuf,
-					     buf + msgbuf->rx_dataoffset);
+		if (!msgbuf->d2h_sync ||
+		    brcmf_msgbuf_d2h_sync(msgbuf, ringid, buf,
+					  brcmf_commonring_len_item(commonring)))
+			brcmf_msgbuf_process_msgtype(msgbuf,
+						     buf + msgbuf->rx_dataoffset);
 		buf += brcmf_commonring_len_item(commonring);
 		processed++;
 		if (processed == BRCMF_MSGBUF_UPDATE_RX_PTR_THRS) {
@@ -1401,22 +1605,55 @@ again:
 }
 
 
+/* Mailbox data for the device, sent as a control message. */
+int brcmf_proto_msgbuf_h2d_mb_data(struct device *dev, u32 data)
+{
+	struct brcmf_bus *bus_if = dev_get_drvdata(dev);
+	struct brcmf_pub *drvr = bus_if->drvr;
+	struct msgbuf_h2d_mailbox_data *mb_data;
+	struct brcmf_commonring *commonring;
+	struct brcmf_msgbuf *msgbuf;
+	int err;
+
+	if (!drvr || !drvr->proto || !drvr->proto->pd)
+		return -EAGAIN;
+	msgbuf = (struct brcmf_msgbuf *)drvr->proto->pd;
+
+	commonring = msgbuf->commonrings[BRCMF_H2D_MSGRING_CONTROL_SUBMIT];
+	brcmf_commonring_lock(commonring);
+	mb_data = brcmf_commonring_reserve_for_write(commonring);
+	if (!mb_data) {
+		brcmf_commonring_unlock(commonring);
+		return -ENOMEM;
+	}
+	memset(mb_data, 0, sizeof(*mb_data));
+	mb_data->msg.msgtype = MSGBUF_TYPE_H2D_MAILBOX_DATA;
+	mb_data->mb_data = cpu_to_le32(data);
+	brcmf_msgbuf_set_epoch(msgbuf, BRCMF_H2D_MSGRING_CONTROL_SUBMIT,
+			       &mb_data->msg);
+	err = brcmf_commonring_write_complete(commonring);
+	brcmf_commonring_unlock(commonring);
+
+	return err;
+}
+
+
 int brcmf_proto_msgbuf_rx_trigger(struct device *dev)
 {
 	struct brcmf_bus *bus_if = dev_get_drvdata(dev);
 	struct brcmf_pub *drvr = bus_if->drvr;
-	struct brcmf_msgbuf *msgbuf = (struct brcmf_msgbuf *)drvr->proto->pd;
+	struct brcmf_msgbuf *msgbuf;
 	struct brcmf_commonring *commonring;
-	void *buf;
 	u32 flowid;
 	int qlen;
 
-	buf = msgbuf->commonrings[BRCMF_D2H_MSGRING_RX_COMPLETE];
-	brcmf_msgbuf_process_rx(msgbuf, buf);
-	buf = msgbuf->commonrings[BRCMF_D2H_MSGRING_TX_COMPLETE];
-	brcmf_msgbuf_process_rx(msgbuf, buf);
-	buf = msgbuf->commonrings[BRCMF_D2H_MSGRING_CONTROL_COMPLETE];
-	brcmf_msgbuf_process_rx(msgbuf, buf);
+	if (!drvr || !drvr->proto || !drvr->proto->pd)
+		return -ENODEV;
+	msgbuf = (struct brcmf_msgbuf *)drvr->proto->pd;
+
+	brcmf_msgbuf_process_rx(msgbuf, BRCMF_D2H_MSGRING_RX_COMPLETE);
+	brcmf_msgbuf_process_rx(msgbuf, BRCMF_D2H_MSGRING_TX_COMPLETE);
+	brcmf_msgbuf_process_rx(msgbuf, BRCMF_D2H_MSGRING_CONTROL_COMPLETE);
 
 	for_each_set_bit(flowid, msgbuf->txstatus_done_map,
 			 msgbuf->max_flowrings) {
@@ -1478,6 +1715,7 @@ void brcmf_msgbuf_delete_flowring(struct brcmf_pub *drvr, u16 flowid)
 	}
 
 	delete = (struct msgbuf_tx_flowring_delete_req *)ret_ptr;
+	memset(delete, 0, sizeof(*delete));
 
 	ifidx = brcmf_flowring_ifidx_get(msgbuf->flow, flowid);
 
@@ -1488,6 +1726,8 @@ void brcmf_msgbuf_delete_flowring(struct brcmf_pub *drvr, u16 flowid)
 	delete->flow_ring_id = cpu_to_le16(flowid +
 					   BRCMF_H2D_MSGRING_FLOWRING_IDSTART);
 	delete->reason = 0;
+	brcmf_msgbuf_set_epoch(msgbuf, BRCMF_H2D_MSGRING_CONTROL_SUBMIT,
+			       &delete->msg);
 
 	brcmf_dbg(MSGBUF, "Send Flow Delete Req flow ID %d, ifindex %d\n",
 		  flowid, ifidx);
@@ -1617,6 +1857,10 @@ int brcmf_proto_msgbuf_attach(struct brcmf_pub *drvr)
 	drvr->proto->pd = msgbuf;
 
 	init_waitqueue_head(&msgbuf->ioctl_resp_wait);
+	msgbuf->h2d_seqnum[BRCMF_H2D_MSGRING_CONTROL_SUBMIT] =
+		BRCMF_MSGBUF_H2D_EPOCH_INIT;
+	msgbuf->h2d_seqnum[BRCMF_H2D_MSGRING_RXPOST_SUBMIT] =
+		BRCMF_MSGBUF_H2D_EPOCH_INIT;
 
 	msgbuf->commonrings =
 		(struct brcmf_commonring **)if_msgbuf->commonrings;
@@ -1629,10 +1873,25 @@ int brcmf_proto_msgbuf_attach(struct brcmf_pub *drvr)
 		goto fail;
 
 	msgbuf->rx_dataoffset = if_msgbuf->rx_dataoffset;
-	msgbuf->max_rxbufpost = if_msgbuf->max_rxbufpost;
+	msgbuf->d2h_sync = if_msgbuf->d2h_sync;
+	msgbuf->d2h_seqnum[BRCMF_D2H_MSGRING_CONTROL_COMPLETE] =
+		BRCMF_MSGBUF_D2H_EPOCH_INIT;
+	msgbuf->d2h_seqnum[BRCMF_D2H_MSGRING_TX_COMPLETE] =
+		BRCMF_MSGBUF_D2H_EPOCH_INIT;
+	msgbuf->d2h_seqnum[BRCMF_D2H_MSGRING_RX_COMPLETE] =
+		BRCMF_MSGBUF_D2H_EPOCH_INIT;
+	brcmf_dbg(MSGBUF, "D2H sync mode 0x%x\n", msgbuf->d2h_sync);
 
 	msgbuf->max_ioctlrespbuf = BRCMF_MSGBUF_MAX_IOCTLRESPBUF_POST;
 	msgbuf->max_eventbuf = BRCMF_MSGBUF_MAX_EVENTBUF_POST;
+
+	/* Data, ioctl response and event buffers share the rx packet IDs
+	 * (ID 0 is never used): leave enough for the control buffers.
+	 */
+	msgbuf->max_rxbufpost = min_t(u32, if_msgbuf->max_rxbufpost,
+				      NR_RX_PKTIDS - 1 -
+				      2 * (msgbuf->max_ioctlrespbuf +
+					   msgbuf->max_eventbuf));
 
 	msgbuf->tx_pktids = brcmf_msgbuf_init_pktids(NR_TX_PKTIDS,
 						     DMA_TO_DEVICE);
@@ -1642,6 +1901,9 @@ int brcmf_proto_msgbuf_attach(struct brcmf_pub *drvr)
 						     DMA_FROM_DEVICE);
 	if (!msgbuf->rx_pktids)
 		goto fail;
+	/* Twice the control buffers: each is reposted before it is freed */
+	msgbuf->rx_pktids->nr_ctrl = 2 * (msgbuf->max_ioctlrespbuf +
+					  msgbuf->max_eventbuf);
 
 	msgbuf->flow = brcmf_flowring_attach(drvr->bus_if->dev,
 					     if_msgbuf->max_flowrings);

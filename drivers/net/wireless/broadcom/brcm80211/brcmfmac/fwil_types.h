@@ -19,6 +19,8 @@
 #define BRCMF_ARP_OL_PEER_AUTO_REPLY	0x00000008
 
 #define	BRCMF_BSS_INFO_VERSION	109 /* curr ver of brcmf_bss_info_le struct */
+/* v114 (the BCM4398's firmware): v109 with EHT fields appended */
+#define	BRCMF_BSS_INFO_VERSION_114	114
 #define BRCMF_BSS_RSSI_ON_CHANNEL	0x0004
 
 #define BRCMF_STA_BRCM			0x00000001	/* Running a Broadcom driver */
@@ -49,6 +51,10 @@
 /* size of brcmf_scan_params not including variable length array */
 #define BRCMF_SCAN_PARAMS_FIXED_SIZE	64
 #define BRCMF_SCAN_PARAMS_V2_FIXED_SIZE	72
+#define BRCMF_SCAN_PARAMS_VERSION_V3	3
+#define BRCMF_SCAN_PARAMS_VERSION_V4	4
+/* v4: scan_type_ext follows scan_type, at the v2 offset of nprobes */
+#define BRCMF_SCAN_PARAMS_V4_EXT_OFFSET	52
 
 /* version of brcmf_scan_params structure */
 #define BRCMF_SCAN_PARAMS_VERSION_V2	2
@@ -72,6 +78,8 @@
 #define DOT11_BSSTYPE_ANY		2
 #define BRCMF_ESCAN_REQ_VERSION		1
 #define BRCMF_ESCAN_REQ_VERSION_V2	2
+#define BRCMF_ESCAN_REQ_VERSION_V3	3
+#define BRCMF_ESCAN_REQ_VERSION_V4	4
 
 #define BRCMF_MAXRATES_IN_SET		16	/* max # of rates in rateset */
 
@@ -531,6 +539,34 @@ struct brcmf_ext_join_params_le {
 	struct brcmf_ssid_le ssid_le;	/* {0, ""}: wildcard scan */
 	struct brcmf_join_scan_params_le scan_le;
 	struct brcmf_assoc_params_le assoc_le;
+};
+
+/**
+ * struct brcmf_assoc_params_v1_le - versioned association parameters.
+ *
+ * @version: structure version (left 0, as Broadcom's driver does).
+ * @flags: ASSOC_HINT_BSSID_PRESENT etc.
+ * @bssid: target BSSID, or broadcast.
+ * @bssid_cnt: 0: use @chanspec_num and the single @bssid.
+ * @chanspec_num: 0: all channels, else count of @chanspec_list entries.
+ * @chanspec_list: chanspecs.
+ */
+struct brcmf_assoc_params_v1_le {
+	__le16 version;
+	__le16 flags;
+	u8 bssid[ETH_ALEN];
+	__le16 bssid_cnt;
+	__le32 chanspec_num;
+	__le16 chanspec_list[];
+};
+
+/* extended join params, versioned (wl_extjoin_params_v1_t) */
+struct brcmf_ext_join_params_v1_le {
+	__le16 version;
+	__le16 pad;
+	struct brcmf_ssid_le ssid_le;
+	struct brcmf_join_scan_params_le scan_le;
+	struct brcmf_assoc_params_v1_le assoc_le;
 };
 
 struct brcmf_wsec_key {

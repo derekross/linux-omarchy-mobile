@@ -29,6 +29,28 @@ config PHY_EXYNOS_PCIE
 	  Enable PCIe PHY support for Exynos SoC series.
 	  This driver provides PHY interface for Exynos PCIe controller.
 
+config PHY_GS201_PCIE
+	tristate "Google gs201 PCIe PHY driver"
+	depends on OF && (ARCH_EXYNOS || COMPILE_TEST)
+	depends on EXYNOS_PMU || COMPILE_TEST
+	select GENERIC_PHY
+	help
+	  Enable support for the PCIe Gen4 PHY of the Google gs201 (Tensor G2)
+	  SoC. It is used by the gs201 PCIe controller driver, which connects
+	  the Wi-Fi chip on Pixel 7 phones.
+
+config PHY_ZUMA_PCIE
+	tristate "Google zuma PCIe PHY driver"
+	depends on OF && (ARCH_EXYNOS || COMPILE_TEST)
+	depends on EXYNOS_PMU || COMPILE_TEST
+	select GENERIC_PHY
+	help
+	  Enable support for the one-lane PCIe Gen3 PHY of the Google zuma
+	  (Tensor G3) SoC. It is used by the gs201 PCIe controller driver,
+	  which connects the Wi-Fi chip on Pixel 8 phones. The PHY is
+	  programmed from stock's register tables, and its power-down
+	  isolation is released through the PMU.
+
 config PHY_GS201_MIPI_DCPHY
 	tristate "Google gs201 MIPI DC-PHY receiver driver"
 	depends on OF && (ARCH_EXYNOS || COMPILE_TEST)
