@@ -577,4 +577,19 @@ config PCIE_ULTRARISC
 	  By default, this symbol is enabled when ARCH_ULTRARISC is active,
 	  requiring no further configuration on that platform.
 
+config PCIE_ZUMAPRO
+	tristate "Google zumapro PCIe controller (host mode)"
+	depends on OF && (ARCH_EXYNOS || COMPILE_TEST)
+	depends on PCI_MSI
+	select PCIE_DW_HOST
+	select PCI_PWRCTRL_GENERIC
+	help
+	  Say Y here to enable support for PCIe channel 1 of the Google
+	  zumapro (Tensor G4) SoC in host mode. The Pixel 9a connects its
+	  Wi-Fi chip to it. The controller is a DesignWare core in a Samsung
+	  wrapper, with its PHY programmed by this driver.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called pcie-zumapro.
+
 endmenu
