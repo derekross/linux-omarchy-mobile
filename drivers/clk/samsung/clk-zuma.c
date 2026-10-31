@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Google Tensor G3 (zuma) clocks for the touchscreen and its PMIC.
+ * Google Tensor G3 (zuma) clocks for the touchscreen, its PMIC and the GPU.
  *
  * Register layout and parents derived from Google's GPL CMUCAL tables in
  * cal-if/zuma/cmucal-{sfr,node}.c, Copyright 2022 Samsung Electronics Co., Ltd.
- * Only the path from CMU_TOP to HSI0's USI2 is described, with CMU_APM's
- * clocks for the APM mailbox, its SRAM and the always-on GPIO banks. PLLs,
- * muxes and dividers keep their firmware settings, except USI2's own
- * divider, which sets the SPI rate. No PLL rate table is supplied.
+ * Only the paths from CMU_TOP to HSI0's USI2 and to CMU_G3D are described,
+ * with CMU_APM's clocks for the APM mailbox, its SRAM and the always-on GPIO
+ * banks. PLLs, muxes and dividers keep their firmware settings, except
+ * USI2's own divider, which sets the SPI rate. No PLL rate table is
+ * supplied.
  */
 
 #include <linux/clk-provider.h>
@@ -41,6 +42,10 @@ static const struct samsung_fixed_factor_clock top_factors[] __initconst = {
 	FFACTOR(CLK_SHARED1_D4, "zuma_shared1_d4", "zuma_shared1", 1, 4, 0),
 	FFACTOR(CLK_SHARED2_D2, "zuma_shared2_d2", "zuma_shared2", 1, 2, 0),
 	FFACTOR(CLK_SHARED3_D2, "zuma_shared3_d2", "zuma_shared3", 1, 2, 0),
+	FFACTOR(CLK_SHARED0_D2, "zuma_shared0_d2", "zuma_shared0", 1, 2, 0),
+	FFACTOR(CLK_SHARED0_D3, "zuma_shared0_d3", "zuma_shared0", 1, 3, 0),
+	FFACTOR(CLK_SHARED1_D2, "zuma_shared1_d2", "zuma_shared1", 1, 2, 0),
+	FFACTOR(CLK_SHARED1_D3, "zuma_shared1_d3", "zuma_shared1", 1, 3, 0),
 };
 
 PNAME(mout_hsi0_noc_parents) = {
@@ -52,19 +57,45 @@ PNAME(mout_hsi0_peri_parents) = {
 	"zuma_shared0_d4", "zuma_shared2_d2", "zuma_shared3_d2", "zuma_spare",
 };
 
+/* NOCD takes the same sources as GLB. */
+PNAME(mout_g3d_glb_parents) = {
+	"zuma_shared0_d2", "zuma_shared1_d2", "zuma_shared2", "zuma_shared3",
+	"zuma_shared0_d3", "zuma_shared1_d3", "zuma_shared0_d4", "zuma_spare",
+};
+
+PNAME(mout_g3d_switch_parents) = {
+	"zuma_shared2", "zuma_shared0_d3", "zuma_shared3", "zuma_shared1_d3",
+	"zuma_shared0_d4", "zuma_shared1_d4", "zuma_spare", "zuma_spare",
+};
+
 static const struct samsung_mux_clock top_muxes[] __initconst = {
 	MUX_F(CLK_MOUT_HSI0_NOC, "zuma_mout_hsi0_noc", mout_hsi0_noc_parents,
 	      0x1094, 0, 3, 0, CLK_MUX_READ_ONLY),
 	MUX_F(CLK_MOUT_HSI0_PERI, "zuma_mout_hsi0_peri", mout_hsi0_peri_parents,
 	      0x1098, 0, 2, 0, CLK_MUX_READ_ONLY),
+	MUX_F(CLK_MOUT_G3D_GLB, "zuma_mout_g3d_glb", mout_g3d_glb_parents,
+	      0x106c, 0, 3, 0, CLK_MUX_READ_ONLY),
+	MUX_F(CLK_MOUT_G3D_NOCD, "zuma_mout_g3d_nocd", mout_g3d_glb_parents,
+	      0x1070, 0, 3, 0, CLK_MUX_READ_ONLY),
+	MUX_F(CLK_MOUT_G3D_SWITCH, "zuma_mout_g3d_switch",
+	      mout_g3d_switch_parents, 0x1074, 0, 3, 0, CLK_MUX_READ_ONLY),
 };
 
-/* The hardware order is mux -> gate -> divider. HSI0 is firmware-owned. */
+/*
+ * The hardware order is mux -> gate -> divider. The HSI0 and G3D paths are
+ * firmware-owned.
+ */
 static const struct samsung_gate_clock top_ro_gates[] __initconst = {
 	GATE(CLK_GOUT_HSI0_NOC, "zuma_gout_hsi0_noc", "zuma_mout_hsi0_noc",
 	     0x20bc, 21, CLK_IGNORE_UNUSED, 0),
 	GATE(CLK_GOUT_HSI0_PERI, "zuma_gout_hsi0_peri", "zuma_mout_hsi0_peri",
 	     0x20c0, 21, CLK_IGNORE_UNUSED, 0),
+	GATE(CLK_GOUT_G3D_GLB, "zuma_gout_g3d_glb", "zuma_mout_g3d_glb",
+	     0x2094, 21, CLK_IGNORE_UNUSED, 0),
+	GATE(CLK_GOUT_G3D_NOCD, "zuma_gout_g3d_nocd", "zuma_mout_g3d_nocd",
+	     0x2098, 21, CLK_IGNORE_UNUSED, 0),
+	GATE(CLK_GOUT_G3D_SWITCH, "zuma_gout_g3d_switch", "zuma_mout_g3d_switch",
+	     0x209c, 21, CLK_IGNORE_UNUSED, 0),
 };
 
 static const struct samsung_div_clock top_dividers[] __initconst = {
@@ -72,6 +103,12 @@ static const struct samsung_div_clock top_dividers[] __initconst = {
 	      0x188c, 0, 4, 0, CLK_DIVIDER_READ_ONLY),
 	DIV_F(CLK_DOUT_HSI0_PERI, "zuma_dout_hsi0_peri", "zuma_gout_hsi0_peri",
 	      0x1890, 0, 4, 0, CLK_DIVIDER_READ_ONLY),
+	DIV_F(CLK_DOUT_G3D_GLB, "zuma_dout_g3d_glb", "zuma_gout_g3d_glb",
+	      0x1864, 0, 4, 0, CLK_DIVIDER_READ_ONLY),
+	DIV_F(CLK_DOUT_G3D_NOCD, "zuma_dout_g3d_nocd", "zuma_gout_g3d_nocd",
+	      0x1868, 0, 4, 0, CLK_DIVIDER_READ_ONLY),
+	DIV_F(CLK_DOUT_G3D_SWITCH, "zuma_dout_g3d_switch", "zuma_gout_g3d_switch",
+	      0x186c, 0, 3, 0, CLK_DIVIDER_READ_ONLY),
 };
 
 static const struct samsung_cmu_info top_cmu __initconst = {
@@ -85,7 +122,7 @@ static const struct samsung_cmu_info top_cmu __initconst = {
 	.nr_ro_gate_clks = ARRAY_SIZE(top_ro_gates),
 	.div_clks = top_dividers,
 	.nr_div_clks = ARRAY_SIZE(top_dividers),
-	.nr_clk_ids = CLK_DOUT_HSI0_PERI + 1,
+	.nr_clk_ids = CLK_DOUT_G3D_SWITCH + 1,
 };
 
 static void __init zuma_top_init(struct device_node *np)
@@ -223,6 +260,107 @@ static const struct samsung_cmu_info hsi0_cmu __initconst = {
 	.clk_name = "bus",
 };
 
+/*
+ * CMU_G3D, 0x1ee00000. Firmware sets it up and keeps its domain on: the
+ * PLLs, muxes and dividers are read-only (the PLLs use the PLL0822x M/P/S
+ * layout, with no rate table), and the GPU's gates are read-only gates. The
+ * GPU's own rate changes go through the ACPM firmware, not this CMU.
+ */
+PNAME(mout_g3d_switch_user_parents) = { "oscclk", "zuma_dout_g3d_switch" };
+
+PNAME(mout_g3d_glb_user_parents) = { "oscclk", "zuma_dout_g3d_glb" };
+
+PNAME(mout_g3d_nocd_user_parents) = { "oscclk", "zuma_dout_g3d_nocd" };
+
+PNAME(mout_g3d_l2_glb_parents) = {
+	"zuma_fout_g3d_l2", "zuma_mout_g3d_glb_user",
+};
+
+PNAME(mout_g3d_stacks_parents) = {
+	"zuma_fout_g3d", "zuma_mout_g3d_switch_user",
+};
+
+PNAME(mout_g3d_top_parents) = {
+	"zuma_mout_g3d_stacks", "zuma_mout_g3d_nocd_user",
+	"zuma_mout_g3d_l2_glb", "oscclk",
+};
+
+PNAME(mout_g3d_coregroup_user_parents) = { "oscclk", "zuma_dout_g3d_l2_glb" };
+
+PNAME(mout_g3d_stacks_user_parents) = { "oscclk", "zuma_dout_g3d_stacks" };
+
+PNAME(mout_g3d_top_user_parents) = { "oscclk", "zuma_dout_g3d_top" };
+
+static const struct samsung_pll_clock g3d_plls[] __initconst = {
+	PLL(pll_0822x, CLK_FOUT_G3D, "zuma_fout_g3d", "oscclk",
+	    0x000, 0x10c, NULL),
+	PLL(pll_0822x, CLK_FOUT_G3D_L2, "zuma_fout_g3d_l2", "oscclk",
+	    0x008, 0x18c, NULL),
+};
+
+static const struct samsung_mux_clock g3d_muxes[] __initconst = {
+	MUX_F(CLK_MOUT_G3D_SWITCH_USER, "zuma_mout_g3d_switch_user",
+	      mout_g3d_switch_user_parents, 0x620, 4, 1, 0, CLK_MUX_READ_ONLY),
+	MUX_F(CLK_MOUT_G3D_GLB_USER, "zuma_mout_g3d_glb_user",
+	      mout_g3d_glb_user_parents, 0x600, 4, 1, 0, CLK_MUX_READ_ONLY),
+	MUX_F(CLK_MOUT_G3D_NOCD_USER, "zuma_mout_g3d_nocd_user",
+	      mout_g3d_nocd_user_parents, 0x610, 4, 1, 0, CLK_MUX_READ_ONLY),
+	MUX_F(CLK_MOUT_G3D_L2_GLB, "zuma_mout_g3d_l2_glb",
+	      mout_g3d_l2_glb_parents, 0x1000, 0, 1, 0, CLK_MUX_READ_ONLY),
+	MUX_F(CLK_MOUT_G3D_STACKS, "zuma_mout_g3d_stacks",
+	      mout_g3d_stacks_parents, 0x1004, 0, 1, 0, CLK_MUX_READ_ONLY),
+	MUX_F(CLK_MOUT_G3D_TOP, "zuma_mout_g3d_top", mout_g3d_top_parents,
+	      0x1008, 0, 2, 0, CLK_MUX_READ_ONLY),
+	MUX_F(CLK_MOUT_G3D_COREGROUP_USER, "zuma_mout_g3d_coregroup_user",
+	      mout_g3d_coregroup_user_parents, 0x630, 4, 1, 0,
+	      CLK_MUX_READ_ONLY),
+	MUX_F(CLK_MOUT_G3D_STACKS_USER, "zuma_mout_g3d_stacks_user",
+	      mout_g3d_stacks_user_parents, 0x640, 4, 1, 0, CLK_MUX_READ_ONLY),
+	MUX_F(CLK_MOUT_G3D_TOP_USER, "zuma_mout_g3d_top_user",
+	      mout_g3d_top_user_parents, 0x650, 4, 1, 0, CLK_MUX_READ_ONLY),
+};
+
+/* CAL exposes no ratio field for these two paths: they are pass-through. */
+static const struct samsung_fixed_factor_clock g3d_factors[] __initconst = {
+	FFACTOR(CLK_DOUT_G3D_L2_GLB, "zuma_dout_g3d_l2_glb",
+		"zuma_mout_g3d_l2_glb", 1, 1, 0),
+	FFACTOR(CLK_DOUT_G3D_STACKS, "zuma_dout_g3d_stacks",
+		"zuma_mout_g3d_stacks", 1, 1, 0),
+};
+
+static const struct samsung_div_clock g3d_dividers[] __initconst = {
+	DIV_F(CLK_DOUT_G3D_TOP, "zuma_dout_g3d_top", "zuma_mout_g3d_top",
+	      0x1814, 0, 3, 0, CLK_DIVIDER_READ_ONLY),
+	DIV_F(CLK_DOUT_G3D_NOCP, "zuma_dout_g3d_nocp", "zuma_dout_g3d_l2_glb",
+	      0x1808, 0, 3, 0, CLK_DIVIDER_READ_ONLY),
+};
+
+static const struct samsung_gate_clock g3d_ro_gates[] __initconst = {
+	GATE(CLK_GOUT_G3D_CMU, "zuma_gout_g3d_cmu", "zuma_dout_g3d_nocp",
+	     0x2018, 21, CLK_IGNORE_UNUSED, 0),
+	GATE(CLK_GOUT_G3D_CORE, "zuma_gout_g3d_core", "zuma_mout_g3d_top_user",
+	     0x201c, 21, CLK_IGNORE_UNUSED, 0),
+	GATE(CLK_GOUT_G3D_COREGROUP, "zuma_gout_g3d_coregroup",
+	     "zuma_mout_g3d_coregroup_user", 0x2020, 21, CLK_IGNORE_UNUSED, 0),
+	GATE(CLK_GOUT_G3D_STACKS, "zuma_gout_g3d_stacks",
+	     "zuma_mout_g3d_stacks_user", 0x2024, 21, CLK_IGNORE_UNUSED, 0),
+};
+
+static const struct samsung_cmu_info g3d_cmu __initconst = {
+	.pll_clks = g3d_plls,
+	.nr_pll_clks = ARRAY_SIZE(g3d_plls),
+	.mux_clks = g3d_muxes,
+	.nr_mux_clks = ARRAY_SIZE(g3d_muxes),
+	.fixed_factor_clks = g3d_factors,
+	.nr_fixed_factor_clks = ARRAY_SIZE(g3d_factors),
+	.div_clks = g3d_dividers,
+	.nr_div_clks = ARRAY_SIZE(g3d_dividers),
+	.ro_gate_clks = g3d_ro_gates,
+	.nr_ro_gate_clks = ARRAY_SIZE(g3d_ro_gates),
+	.nr_clk_ids = CLK_GOUT_G3D_STACKS + 1,
+	.clk_name = "bus",
+};
+
 static int __init zuma_cmu_probe(struct platform_device *pdev)
 {
 	const struct samsung_cmu_info *cmu = device_get_match_data(&pdev->dev);
@@ -233,6 +371,7 @@ static int __init zuma_cmu_probe(struct platform_device *pdev)
 
 static const struct of_device_id zuma_cmu_match[] = {
 	{ .compatible = "google,zuma-cmu-apm", .data = &apm_cmu },
+	{ .compatible = "google,zuma-cmu-g3d", .data = &g3d_cmu },
 	{ .compatible = "google,zuma-cmu-hsi0", .data = &hsi0_cmu },
 	{ }
 };
