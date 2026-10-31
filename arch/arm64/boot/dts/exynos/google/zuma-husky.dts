@@ -5,7 +5,6 @@
 
 /dts-v1/;
 
-#include <dt-bindings/clock/google,zuma-acpm.h>
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/leds/common.h>
@@ -323,6 +322,43 @@
 
 &cmu_g3d {
 	status = "okay";
+};
+
+/* The CPU levels' turbo-mode marks are this phone's BCL caps (zuma.dtsi). */
+&cpu0 {
+	operating-points-v2 = <&cpucl0_opp>;
+};
+
+&cpu1 {
+	operating-points-v2 = <&cpucl0_opp>;
+};
+
+&cpu2 {
+	operating-points-v2 = <&cpucl0_opp>;
+};
+
+&cpu3 {
+	operating-points-v2 = <&cpucl0_opp>;
+};
+
+&cpu4 {
+	operating-points-v2 = <&cpucl1_opp>;
+};
+
+&cpu5 {
+	operating-points-v2 = <&cpucl1_opp>;
+};
+
+&cpu6 {
+	operating-points-v2 = <&cpucl1_opp>;
+};
+
+&cpu7 {
+	operating-points-v2 = <&cpucl1_opp>;
+};
+
+&cpu8 {
+	operating-points-v2 = <&cpucl2_opp>;
 };
 
 /*
