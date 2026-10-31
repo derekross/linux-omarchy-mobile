@@ -157,12 +157,51 @@
 			#clock-cells = <1>;
 			mboxes = <&ap2apm_mailbox>;
 			shmem = <&apm_sram>;
+
+			acpm_tmu: thermal-sensor {
+				compatible = "google,zuma-acpm-tmu";
+				#thermal-sensor-cells = <1>;
+			};
 		};
 	};
 
 	psci {
 		compatible = "arm,psci-1.0";
 		method = "smc";
+	};
+
+	thermal-zones {
+		/*
+		 * Below stock's own GPU trips (passive from 100 C, hot at
+		 * 115 C), as on zumapro.
+		 */
+		gpu-thermal {
+			polling-delay-passive = <1000>;
+			polling-delay = <2000>;
+			thermal-sensors = <&acpm_tmu 3>;
+
+			trips {
+				gpu_alert: gpu-alert {
+					temperature = <85000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+
+				gpu_crit: gpu-crit {
+					temperature = <105000>;
+					hysteresis = <2000>;
+					type = "critical";
+				};
+			};
+
+			/* panthor's devfreq cooling: step_wise walks the GPU down its OPPs. */
+			cooling-maps {
+				map0 {
+					trip = <&gpu_alert>;
+					cooling-device = <&gpu 0xffffffff 0xffffffff>;
+				};
+			};
+		};
 	};
 
 	timer {
@@ -589,6 +628,7 @@
 				 <&cmu_g3d CLK_GOUT_G3D_COREGROUP>,
 				 <&cmu_g3d CLK_GOUT_G3D_STACKS>;
 			clock-names = "core", "coregroup", "stacks";
+			#cooling-cells = <2>;
 			status = "disabled";
 		};
 
