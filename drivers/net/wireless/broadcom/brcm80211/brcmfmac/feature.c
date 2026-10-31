@@ -164,10 +164,12 @@ static void brcmf_feat_wlc_version_overrides(struct brcmf_pub *drv)
 	 * on 16, or 17 and later. The BCM4389 (its 20.101.90 firmware
 	 * reports 14.4 and rejects the unversioned layout) and the Pixel
 	 * 9a's BCM4383 (20.123.13: the unversioned "join" and SET_SSID
-	 * both fail with -52).
+	 * both fail with -52), and the Pixel 8 Pro's BCM4398 (24.100,
+	 * WLC version 18.2).
 	 */
 	if ((drv->bus_if->chip == BRCM_CC_4389_CHIP_ID ||
-	     drv->bus_if->chip == BRCM_CC_4383_CHIP_ID) &&
+	     drv->bus_if->chip == BRCM_CC_4383_CHIP_ID ||
+	     drv->bus_if->chip == BRCM_CC_4398_CHIP_ID) &&
 	    ((major == 14 && (minor == 2 || minor == 4)) ||
 	     (major == 16 && minor >= 1) || major >= 17))
 		feat_flags |= BIT(BRCMF_FEAT_JOIN_V1);
@@ -378,17 +380,20 @@ void brcmf_feat_attach(struct brcmf_pub *drvr)
 
 	brcmf_fwvid_feat_attach(ifp);
 
-	/* Host-built 802.3 + LLC/SNAP TX headers: only the BCM4389 for now */
-	if (drvr->bus_if->chip != BRCM_CC_4389_CHIP_ID)
+	/* Host-built 802.3 + LLC/SNAP TX headers: the BCM4389 and BCM4398 for now */
+	if (drvr->bus_if->chip != BRCM_CC_4389_CHIP_ID &&
+	    drvr->bus_if->chip != BRCM_CC_4398_CHIP_ID)
 		drvr->feat_flags &= ~BIT(BRCMF_FEAT_HOST_SFHLLC);
 
 	/*
-	 * The BCM4383's firmware (20.123.13 on the Pixel 9a) advertises the
-	 * supplicant offload but refuses the key: brcmf_set_wsec() fails with
-	 * "failed to change PSK in firmware" and the join never gets past
+	 * The BCM4383's firmware (20.123.13 on the Pixel 9a) and the
+	 * BCM4398's (24.100 on the Pixel 8 Pro) advertise the supplicant
+	 * offload but refuse the key: brcmf_set_wsec() fails with "failed to
+	 * change PSK in firmware" and the join never gets past
 	 * authentication. Leave the handshakes to the host.
 	 */
-	if (drvr->bus_if->chip == BRCM_CC_4383_CHIP_ID)
+	if (drvr->bus_if->chip == BRCM_CC_4383_CHIP_ID ||
+	    drvr->bus_if->chip == BRCM_CC_4398_CHIP_ID)
 		drvr->feat_flags &= ~(BIT(BRCMF_FEAT_FWSUP) | BIT(BRCMF_FEAT_SAE) |
 				      BIT(BRCMF_FEAT_FWAUTH));
 
