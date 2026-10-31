@@ -2423,6 +2423,37 @@ static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
 	brcmf_dbg(PCIE, "Wait for FW init\n");
 	sharedram_addr = sharedram_addr_written;
 	loop_counter = BRCMF_PCIE_FW_UP_TIMEOUT / 50;
+	/*
+	 * The BCM4398's firmware writes an interim address to the last word
+	 * of RAM before the real one, and signals the end of its boot with a
+	 * mailbox interrupt, which Google's driver waits for (dhd_pcie.c
+	 * dhdpcie_wait_readshared_area_addr(), "boot intr"). Interrupts are
+	 * not set up yet, so poll for it.
+	 */
+	if (devinfo->pdev->device == BRCM_PCIE_4398_DEVICE_ID) {
+		u32 mbint = BRCMF_PCIE_BARO_PCIE_ENUM_OFFSET +
+			    devinfo->reginfo->mailboxint;
+		u32 intstatus = 0;
+
+		brcmf_pcie_select_core(devinfo, BCMA_CORE_PCIE2);
+		while (loop_counter) {
+			intstatus = brcmf_pcie_read_reg32(devinfo, mbint);
+			if (intstatus && intstatus != 0xffffffff)
+				break;
+			msleep(50);
+			loop_counter--;
+		}
+		brcmf_dbg(PCIE, "boot interrupt %#x after %u ms\n", intstatus,
+			  (BRCMF_PCIE_FW_UP_TIMEOUT / 50 - loop_counter) * 50);
+		if (intstatus && intstatus != 0xffffffff)
+			brcmf_pcie_write_reg32(devinfo,
+					       BRCMF_PCIE_BARO_PCIE_ENUM_OFFSET +
+					       devinfo->reginfo->mailboxint,
+					       intstatus);
+		sharedram_addr = brcmf_pcie_read_ram32(devinfo,
+						       devinfo->ci->ramsize -
+						       4);
+	}
 	while ((sharedram_addr == sharedram_addr_written) && (loop_counter)) {
 		msleep(50);
 		sharedram_addr = brcmf_pcie_read_ram32(devinfo,
