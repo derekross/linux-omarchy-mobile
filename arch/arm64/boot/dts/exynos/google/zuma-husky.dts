@@ -155,13 +155,35 @@
 
 /*
  * DECON0 takes the display over from simple-framebuffer and flips DPP0
- * between scanout buffers. Without a DSIM on its output port it stays at
- * the bootloader's 60 Hz.
+ * between scanout buffers. It scans out to DSIM0, so gs-decon can switch
+ * the link and the panel between 60 and 120 Hz.
  */
 &decon0 {
 	memory-region = <&display_pool>, <&cont_splash_mem>;
 	memory-region-names = "pool", "boot-framebuffer";
 	status = "okay";
+
+	port {
+		decon0_out: endpoint {
+			remote-endpoint = <&dsi0_in>;
+		};
+	};
+};
+
+/* The HK3, running as the bootloader left it: no reset or supply control. */
+&dsi0 {
+	status = "okay";
+
+	panel@0 {
+		compatible = "google,hk3";
+		reg = <0>;
+	};
+
+	port {
+		dsi0_in: endpoint {
+			remote-endpoint = <&decon0_out>;
+		};
+	};
 };
 
 &spi20 {
