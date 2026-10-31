@@ -620,6 +620,7 @@ PNAME(mout_hsi0_noc_local_parents) = { "zumapro_mout_hsi0_noc_user", "zumapro_mo
 PNAME(mout_hsi0_peri_user_parents) = { "oscclk", "zumapro_dout_hsi0_peri" };
 PNAME(mout_hsi0_usi2_local_parents) = { "zumapro_mout_hsi0_peri_user", "oscclk" };
 PNAME(mout_hsi0_usi3_local_parents) = { "zumapro_mout_hsi0_peri_user", "oscclk" };
+PNAME(mout_hsi0_usi4_local_parents) = { "zumapro_mout_hsi0_peri_user", "oscclk" };
 
 static const struct samsung_pll_clock hsi0_plls[] __initconst = {
 	PLL(pll_0822x, CLK_FOUT_HSI0_USB, "zumapro_fout_hsi0_usb", "oscclk",
@@ -644,6 +645,9 @@ static const struct samsung_mux_clock hsi0_muxes[] __initconst = {
 	      0x101c, 0, 1, 0, CLK_MUX_READ_ONLY),
 	nMUX(CLK_MOUT_HSI0_USI3_LOCAL, "zumapro_mout_hsi0_usi3_local",
 	     mout_hsi0_usi3_local_parents, 0x1020, 0, 1),
+	MUX_F(CLK_MOUT_HSI0_USI4_LOCAL, "zumapro_mout_hsi0_usi4_local",
+	      mout_hsi0_usi4_local_parents,
+	      0x1024, 0, 1, 0, CLK_MUX_READ_ONLY),
 };
 
 static const struct samsung_div_clock hsi0_dividers[] __initconst = {
@@ -655,6 +659,8 @@ static const struct samsung_div_clock hsi0_dividers[] __initconst = {
 	      0x181c, 0, 4, 0, 0),
 	DIV_F(CLK_DOUT_HSI0_USI3, "zumapro_dout_hsi0_usi3", "zumapro_gout_hsi0_usi3_source",
 	      0x1820, 0, 4, CLK_SET_RATE_PARENT, 0),
+	DIV_F(CLK_DOUT_HSI0_USI4, "zumapro_dout_hsi0_usi4", "zumapro_gout_hsi0_usi4_source",
+	      0x1824, 0, 4, 0, CLK_DIVIDER_READ_ONLY),
 };
 
 static const struct samsung_gate_clock hsi0_gates[] __initconst = {
@@ -680,6 +686,14 @@ static const struct samsung_gate_clock hsi0_gates[] __initconst = {
  * and power-off remain outside this firmware-on handoff.
  */
 static const struct samsung_gate_clock hsi0_ro_gates[] __initconst = {
+	GATE(CLK_GOUT_HSI0_USI4_SOURCE, "zumapro_gout_hsi0_usi4_source",
+	     "zumapro_mout_hsi0_usi4_local",
+	     0x2128, 21, CLK_IGNORE_UNUSED, 0),
+	GATE(CLK_GOUT_HSI0_USI4_IP, "zumapro_gout_hsi0_usi4_ip", "zumapro_dout_hsi0_usi4",
+	     0x210c, 21, CLK_IGNORE_UNUSED, 0),
+	GATE(CLK_GOUT_HSI0_USI4_PCLK, "zumapro_gout_hsi0_usi4_pclk",
+	     "zumapro_mout_hsi0_noc_local",
+	     0x2110, 21, CLK_IGNORE_UNUSED, 0),
 	GATE(CLK_GOUT_HSI0_ALT, "zumapro_gout_hsi0_alt", "hsi0-alt",
 	     0x204c, 21, CLK_IGNORE_UNUSED, 0),
 	GATE(CLK_GOUT_HSI0_EUSB_REF, "zumapro_gout_hsi0_eusb_ref", "zumapro_mout_hsi0_usb20_ref",
@@ -716,7 +730,7 @@ static const struct samsung_cmu_info hsi0_cmu __initconst = {
 	.nr_gate_clks = ARRAY_SIZE(hsi0_gates),
 	.ro_gate_clks = hsi0_ro_gates,
 	.nr_ro_gate_clks = ARRAY_SIZE(hsi0_ro_gates),
-	.nr_clk_ids = CLK_GOUT_HSI0_USI3_PCLK + 1,
+	.nr_clk_ids = CLK_GOUT_HSI0_USI4_PCLK + 1,
 	.clk_regs = hsi0_regs,
 	.nr_clk_regs = ARRAY_SIZE(hsi0_regs),
 	.clk_name = "bus",

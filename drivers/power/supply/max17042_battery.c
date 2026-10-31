@@ -1193,9 +1193,19 @@ static void max17042_set_critical_soc_threshold(struct max17042_chip *chip)
 		     0xff00 + MAX17042_CRITICAL_SOC : 0xff00);
 }
 
+/*
+ * The MAX17055 and the MAX77759 raise Status.dSOCi on every whole-percent
+ * change of the SOC, so they don't need a SALRT window around the current SOC.
+ */
+static bool max17042_has_dsoci(struct max17042_chip *chip)
+{
+	return chip->chip_type == MAXIM_DEVICE_TYPE_MAX17055 ||
+	       chip->chip_type == MAXIM_DEVICE_TYPE_MAX77759;
+}
+
 static void max17042_enable_soc_alerts(struct max17042_chip *chip)
 {
-	if (chip->chip_type == MAXIM_DEVICE_TYPE_MAX17055) {
+	if (max17042_has_dsoci(chip)) {
 		regmap_update_bits(chip->regmap, MAX17055_Config2,
 				   CFG2_DSOCI_BIT_ENBL,
 				   CFG2_DSOCI_BIT_ENBL);
@@ -1208,12 +1218,30 @@ static void max17042_enable_soc_alerts(struct max17042_chip *chip)
 
 static void max17042_suspend_soc_alerts(struct max17042_chip *chip)
 {
-	if (chip->chip_type != MAXIM_DEVICE_TYPE_MAX17055)
+	if (!max17042_has_dsoci(chip))
 		return;
 
 	regmap_update_bits(chip->regmap, MAX17055_Config2,
 			   CFG2_DSOCI_BIT_ENBL, 0);
 	max17042_set_critical_soc_threshold(chip);
+}
+
+/*
+ * The MAX77759 releases ALRT only at a fuel-gauge update after Status was
+ * cleared, up to one task period later. The interrupt is level-triggered and
+ * oneshot, so it would be taken again every few milliseconds until then, each
+ * time with Status already clear. Keep it masked until the gauge has updated.
+ */
+static void max17042_alert_holdoff(struct max17042_chip *chip)
+{
+	unsigned int period_ms;
+
+	if (chip->chip_type != MAXIM_DEVICE_TYPE_MAX77759)
+		return;
+
+	/* TaskPeriod counts 1/32768 s; allow half a period of margin */
+	period_ms = DIV_ROUND_UP(READ_ONCE(chip->task_period) * 1000, 32768);
+	msleep(period_ms + period_ms / 2);
 }
 
 static irqreturn_t max17042_thread_handler(int id, void *dev)
@@ -1226,6 +1254,12 @@ static irqreturn_t max17042_thread_handler(int id, void *dev)
 	if (ret)
 		return IRQ_HANDLED;
 
+	/* Nothing latched: not our interrupt, or ALRT not released yet */
+	if (!val) {
+		max17042_alert_holdoff(chip);
+		return IRQ_NONE;
+	}
+
 	if ((val & STATUS_SMN_BIT) || (val & STATUS_SMX_BIT) ||
 	    (val & STATUS_DSOCI_BIT)) {
 		dev_dbg(chip->dev, "SOC threshold INTR\n");
@@ -1237,6 +1271,7 @@ static irqreturn_t max17042_thread_handler(int id, void *dev)
 			  0xFFFF & ~(STATUS_POR_BIT | STATUS_BST_BIT));
 
 	power_supply_changed(chip->battery);
+	max17042_alert_holdoff(chip);
 	return IRQ_HANDLED;
 }
 

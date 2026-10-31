@@ -44,6 +44,7 @@ enum sec_device_type {
 	S2MPG12,
 	S2MPG13,
 	S2MPG14,
+	S2MPG15,
 	S2MPS11X,
 	S2MPS13X,
 	S2MPS14X,

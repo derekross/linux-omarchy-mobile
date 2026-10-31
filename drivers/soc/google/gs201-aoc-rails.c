@@ -1,0 +1,192 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * gs201 AoC peripheral supplies over ACPM, for bring-up
+ *
+ * The AoC (audio and sensor DSP) owns the digital microphones and the
+ * sensors, but their supplies are S2MPG12/S2MPG13 LDOs that the AP switches:
+ *
+ *   LDO20M  DMIC1                      S2MPG12 PM 0x3f, enable bits 7:6
+ *   LDO19S  DMIC3                      S2MPG13 PM 0x3e, enable bits 7:6
+ *   LDO20S  DMIC2                      S2MPG13 PM 0x3f, enable bits 7:6
+ *   LDO7S   sensors (AoC sensor_1v8)   S2MPG13 PM 0x32, enable bit 7
+ *   LDO5S   proximity (sensor_3v3)     S2MPG13 PM 0x30, enable bit 7
+ *
+ * (google-modules/soc/gs include/linux/mfd/samsung/s2mpg1[23]-register.h
+ * and drivers/regulator/s2mpg1[23]-regulator.c). There is no S2MPG12/13
+ * regulator driver yet, so this module reads them over ACPM channel 2 and,
+ * only with enable=1, sets their enable bits in that order (the 1.8 V
+ * sensor rail before the 3.3 V one, as the AoC driver's sensor_power_list).
+ * It never changes a voltage, and refuses to enable a rail whose voltage is
+ * outside the stock device tree's range for it. With cycle=1 as well, it
+ * first turns the sensor rails off if they are on (see cycle below). Rails
+ * stay as they are when the module is removed.
+ *
+ * It binds to nothing in the device tree: it finds the ACPM node by its
+ * compatible.
+ */
+
+#include <linux/device/faux.h>
+#include <linux/firmware/samsung/exynos-acpm-protocol.h>
+#include <linux/delay.h>
+#include <linux/module.h>
+#include <linux/of.h>
+
+#define ACPM_PMIC_CHANNEL		2	/* ACPM IPC channel */
+#define PMIC_TYPE_COMMON		0x00
+#define PMIC_TYPE_PM			0x01
+#define PMIC_CHIPID			0x0b	/* in the common block */
+#define LDO_VSEL_MASK			0x3f
+
+static bool enable;
+module_param(enable, bool, 0444);
+MODULE_PARM_DESC(enable, "Turn the five AoC rails on (default: only read them)");
+
+/*
+ * The sensor rails stay on through a warm reboot, and then the LSM6DSV (I3C)
+ * keeps the state the previous AoC session left it in: the new AoC never
+ * finds it, while the I2C sensors come up. Google's driver power-cycles the
+ * sensor supplies around an AoC restart (reset_sensor_power(): off in reverse
+ * order, 150 ms, on in order); cycle=1 does the same before the first start.
+ */
+static bool cycle;
+module_param(cycle, bool, 0444);
+MODULE_PARM_DESC(cycle, "With enable=1: turn the sensor rails off first if they are on");
+
+static unsigned int cycle_ms = 150;
+module_param(cycle_ms, uint, 0444);
+MODULE_PARM_DESC(cycle_ms, "Time the sensor rails stay off when cycled (ms)");
+
+struct aoc_rail {
+	const char *name;
+	u8 bus;			/* 0: S2MPG12 (main), 1: S2MPG13 (sub) */
+	u8 reg;
+	u8 en_mask;
+	u32 min_uv, step_uv;	/* voltage = min_uv + vsel * step_uv */
+	u32 lo_uv, hi_uv;	/* stock device tree range */
+	bool sensor;		/* a sensor supply (cycle=1) */
+};
+
+static const struct aoc_rail aoc_rails[] = {
+	{ "LDO20M dmic1",   0, 0x3f, 0xc0,  700000, 25000, 1600000, 1950000 },
+	{ "LDO19S dmic3",   1, 0x3e, 0xc0,  700000, 25000, 1600000, 1950000 },
+	{ "LDO20S dmic2",   1, 0x3f, 0xc0,  700000, 25000, 1600000, 1950000 },
+	{ "LDO7S sensors",  1, 0x32, 0x80,  700000, 25000, 1600000, 1950000, true },
+	{ "LDO5S prox",     1, 0x30, 0x80, 1800000, 25000, 2500000, 3300000, true },
+};
+
+static struct faux_device *aoc_rails_fdev;
+
+static int aoc_rails_probe(struct faux_device *fdev)
+{
+	struct device *dev = &fdev->dev;
+	const struct acpm_pmic_ops *ops;
+	struct acpm_handle *acpm;
+	struct device_node *np;
+	unsigned int i, bus;
+	int ret;
+	u8 val;
+
+	np = of_find_compatible_node(NULL, NULL, "google,gs201-acpm-ipc");
+	if (!np)
+		return dev_err_probe(dev, -ENODEV, "no gs201 ACPM node\n");
+	acpm = devm_acpm_get_by_node(dev, np);
+	of_node_put(np);
+	if (IS_ERR(acpm))
+		return dev_err_probe(dev, PTR_ERR(acpm), "no ACPM handle\n");
+	ops = &acpm->ops->pmic;
+
+	for (bus = 0; bus < 2; bus++) {
+		ret = ops->read_reg(acpm, ACPM_PMIC_CHANNEL, PMIC_TYPE_COMMON,
+				    PMIC_CHIPID, bus, &val);
+		if (ret)
+			return dev_err_probe(dev, ret, "%s CHIPID read failed\n",
+					     bus ? "S2MPG13" : "S2MPG12");
+		dev_info(dev, "%s CHIPID 0x%02x\n", bus ? "S2MPG13" : "S2MPG12",
+			 val);
+	}
+
+	if (enable && cycle) {
+		bool cycled = false;
+
+		/* Off in reverse order (3.3 V before 1.8 V), as Google's driver */
+		for (i = ARRAY_SIZE(aoc_rails); i-- > 0;) {
+			const struct aoc_rail *r = &aoc_rails[i];
+
+			if (!r->sensor)
+				continue;
+			ret = ops->read_reg(acpm, ACPM_PMIC_CHANNEL, PMIC_TYPE_PM,
+					    r->reg, r->bus, &val);
+			if (ret)
+				return dev_err_probe(dev, ret, "%s: read failed\n", r->name);
+			if (!(val & r->en_mask))
+				continue;
+			ret = ops->update_reg(acpm, ACPM_PMIC_CHANNEL, PMIC_TYPE_PM,
+					      r->reg, r->bus, 0, r->en_mask);
+			if (ret)
+				return dev_err_probe(dev, ret, "%s: disable failed\n", r->name);
+			dev_info(dev, "%s: was on (ctrl 0x%02x), cycled: off for %u ms\n",
+				 r->name, val, cycle_ms);
+			cycled = true;
+		}
+		if (cycled)
+			msleep(cycle_ms);
+	}
+
+	for (i = 0; i < ARRAY_SIZE(aoc_rails); i++) {
+		const struct aoc_rail *r = &aoc_rails[i];
+		u32 uv;
+
+		ret = ops->read_reg(acpm, ACPM_PMIC_CHANNEL, PMIC_TYPE_PM,
+				    r->reg, r->bus, &val);
+		if (ret) {
+			dev_err(dev, "%s: read failed: %d\n", r->name, ret);
+			return ret;
+		}
+		uv = r->min_uv + (val & LDO_VSEL_MASK) * r->step_uv;
+		dev_info(dev, "%s: ctrl 0x%02x, %s, %u mV\n", r->name, val,
+			 (val & r->en_mask) == r->en_mask ? "on" :
+			 (val & r->en_mask) ? "partly on" : "off", uv / 1000);
+
+		if (!enable || (val & r->en_mask) == r->en_mask)
+			continue;
+		if (uv < r->lo_uv || uv > r->hi_uv) {
+			dev_err(dev, "%s: %u mV is outside %u-%u mV, not enabling\n",
+				r->name, uv / 1000, r->lo_uv / 1000, r->hi_uv / 1000);
+			continue;
+		}
+
+		ret = ops->update_reg(acpm, ACPM_PMIC_CHANNEL, PMIC_TYPE_PM,
+				      r->reg, r->bus, r->en_mask, r->en_mask);
+		if (!ret)
+			ret = ops->read_reg(acpm, ACPM_PMIC_CHANNEL, PMIC_TYPE_PM,
+					    r->reg, r->bus, &val);
+		if (ret) {
+			dev_err(dev, "%s: enable failed: %d\n", r->name, ret);
+			return ret;
+		}
+		dev_info(dev, "%s: enabled, ctrl now 0x%02x\n", r->name, val);
+	}
+
+	return 0;
+}
+
+static const struct faux_device_ops aoc_rails_ops = {
+	.probe = aoc_rails_probe,
+};
+
+static int __init aoc_rails_init(void)
+{
+	aoc_rails_fdev = faux_device_create("gs201-aoc-rails", NULL,
+					    &aoc_rails_ops);
+	return aoc_rails_fdev ? 0 : -ENODEV;
+}
+module_init(aoc_rails_init);
+
+static void __exit aoc_rails_exit(void)
+{
+	faux_device_destroy(aoc_rails_fdev);
+}
+module_exit(aoc_rails_exit);
+
+MODULE_DESCRIPTION("gs201 AoC microphone and sensor supplies over ACPM (bring-up)");
+MODULE_LICENSE("GPL");

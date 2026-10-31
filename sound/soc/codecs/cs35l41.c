@@ -357,12 +357,27 @@ static const struct snd_kcontrol_new cs35l41_aud_controls[] = {
 	WM_ADSP_FW_CONTROL("DSP1", 0),
 };
 
+/*
+ * Bring-up option (AOC-PLAN C9j): run the output stage from VP alone, with
+ * the internal boost converter disabled (PWR_CTRL2 BST_EN = 0, as Google's
+ * driver sets a shared-boost passive amplifier), to tell the converter's
+ * light-load behaviour from the rest of the chain. Applied when the DSP is
+ * set up at probe or rebind, and honoured when a boost fault is released
+ * (cs35l41_boost_enable()). On a board whose amplifiers hibernate,
+ * cs35l41_runtime_resume() re-runs cs35l41_init_boost() and turns the
+ * converter back on; the Pixel 7 Pro's carry cirrus,dsp-no-hibernate.
+ */
+static bool boost_en = true;
+module_param(boost_en, bool, 0644);
+MODULE_PARM_DESC(boost_en, "Internal boost converter (Y; applied at probe)");
+
 static void cs35l41_boost_enable(struct cs35l41_private *cs35l41, unsigned int enable)
 {
 	switch (cs35l41->hw_cfg.bst_type) {
 	case CS35L41_INT_BOOST:
 	case CS35L41_SHD_BOOST_ACTV:
-		enable = enable ? CS35L41_BST_EN_DEFAULT : CS35L41_BST_DIS_FET_OFF;
+		enable = (enable && boost_en) ? CS35L41_BST_EN_DEFAULT :
+						CS35L41_BST_DIS_FET_OFF;
 		regmap_update_bits(cs35l41->regmap, CS35L41_PWR_CTRL2, CS35L41_BST_EN_MASK,
 				enable << CS35L41_BST_EN_SHIFT);
 		break;
@@ -758,7 +773,7 @@ static int cs35l41_pcm_hw_params(struct snd_pcm_substream *substream,
 {
 	struct cs35l41_private *cs35l41 = snd_soc_component_get_drvdata(dai->component);
 	unsigned int rate = params_rate(params);
-	u8 asp_wl;
+	u8 asp_width, asp_wl;
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(cs35l41_fs_rates); i++) {
@@ -771,7 +786,13 @@ static int cs35l41_pcm_hw_params(struct snd_pcm_substream *substream,
 		return -EINVAL;
 	}
 
-	asp_wl = params_width(params);
+	/*
+	 * ASP_RX_WL and ASP_TX_WL take 12 to 24 bits; the slot can be wider.
+	 * A 32-bit sample in a 32-bit slot is received as its 24 most
+	 * significant bits, as the HDA configuration of this part does.
+	 */
+	asp_width = params_physical_width(params);
+	asp_wl = min(params_width(params), 24);
 
 	regmap_update_bits(cs35l41->regmap, CS35L41_GLOBAL_CLK_CTRL,
 			   CS35L41_GLOBAL_FS_MASK,
@@ -780,14 +801,14 @@ static int cs35l41_pcm_hw_params(struct snd_pcm_substream *substream,
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 		regmap_update_bits(cs35l41->regmap, CS35L41_SP_FORMAT,
 				   CS35L41_ASP_WIDTH_RX_MASK,
-				   asp_wl << CS35L41_ASP_WIDTH_RX_SHIFT);
+				   asp_width << CS35L41_ASP_WIDTH_RX_SHIFT);
 		regmap_update_bits(cs35l41->regmap, CS35L41_SP_RX_WL,
 				   CS35L41_ASP_RX_WL_MASK,
 				   asp_wl << CS35L41_ASP_RX_WL_SHIFT);
 	} else {
 		regmap_update_bits(cs35l41->regmap, CS35L41_SP_FORMAT,
 				   CS35L41_ASP_WIDTH_TX_MASK,
-				   asp_wl << CS35L41_ASP_WIDTH_TX_SHIFT);
+				   asp_width << CS35L41_ASP_WIDTH_TX_SHIFT);
 		regmap_update_bits(cs35l41->regmap, CS35L41_SP_TX_WL,
 				   CS35L41_ASP_TX_WL_MASK,
 				   asp_wl << CS35L41_ASP_TX_WL_SHIFT);
@@ -1032,6 +1053,8 @@ static int cs35l41_handle_pdata(struct device *dev, struct cs35l41_hw_cfg *hw_cf
 			hw_cfg->bst_type = val;
 	}
 
+	hw_cfg->dsp_no_hibernate = device_property_read_bool(dev, "cirrus,dsp-no-hibernate");
+
 	ret = device_property_read_u32(dev, "cirrus,boost-peak-milliamp", &val);
 	if (ret >= 0)
 		hw_cfg->bst_ipk = val;
@@ -1079,6 +1102,37 @@ static int cs35l41_handle_pdata(struct device *dev, struct cs35l41_hw_cfg *hw_cf
 	return 0;
 }
 
+/*
+ * Bring-up knob: speaker protection firmware tuned with Cirrus' earlier
+ * Android driver gets the class H target on DSP1 RX6, where this driver
+ * routes VBSTMON. Read when the DSP is set up at probe.
+ */
+static bool dsp_rx6_classh;
+module_param(dsp_rx6_classh, bool, 0644);
+MODULE_PARM_DESC(dsp_rx6_classh, "Route the class H target, not VBSTMON, to DSP1 RX6");
+
+/*
+ * Bring-up option (AOC-PLAN C9j): the amplifier's weak-FET output mode
+ * (PWR_CTRL3 bit 24, "WKFET_AMP_EN" in Google's driver, on by default) drives
+ * the load through a reduced output stage at low signal levels. On the Pixel
+ * 7 Pro both speakers distort heavily above a few tens of mA of load current
+ * at the everyday level; this lets the mode be switched off for a comparison.
+ */
+static bool wkfet_amp = true;
+module_param(wkfet_amp, bool, 0644);
+MODULE_PARM_DESC(wkfet_amp, "Weak-FET output mode at low levels (Y; applied at probe)");
+#define CS35L41_WKFET_AMP_EN_MASK	BIT(24)
+
+
+/*
+ * Bring-up option (AOC-PLAN C9j): a fixed boost target instead of class H
+ * tracking: BSTCVRT_VCTRL1 BST_CTL = bst_ctl (1 = 2.55 V ... 0xAA = 11 V) and
+ * BST_CTL_SEL = register. 0 (default) leaves the chip as the driver set it.
+ */
+static unsigned int bst_ctl;
+module_param(bst_ctl, uint, 0644);
+MODULE_PARM_DESC(bst_ctl, "Fixed boost target, BST_CTL 1-0xAA (0: class H; applied at probe)");
+
 static int cs35l41_dsp_init(struct cs35l41_private *cs35l41)
 {
 	struct wm_adsp *dsp;
@@ -1122,10 +1176,44 @@ static int cs35l41_dsp_init(struct cs35l41_private *cs35l41)
 		dev_err(cs35l41->dev, "Write DSP1RX5_SRC: %d failed: %d\n", dsp1rx5_src, ret);
 		goto err_dsp;
 	}
-	ret = regmap_write(cs35l41->regmap, CS35L41_DSP1_RX6_SRC, CS35L41_INPUT_SRC_VBSTMON);
+	ret = regmap_write(cs35l41->regmap, CS35L41_DSP1_RX6_SRC,
+			   dsp_rx6_classh ? CS35L41_INPUT_SRC_CLASSH : CS35L41_INPUT_SRC_VBSTMON);
 	if (ret < 0) {
-		dev_err(cs35l41->dev, "Write CS35L41_INPUT_SRC_VBSTMON failed: %d\n", ret);
+		dev_err(cs35l41->dev, "Write DSP1_RX6_SRC failed: %d\n", ret);
 		goto err_dsp;
+	}
+	ret = regmap_update_bits(cs35l41->regmap, CS35L41_PWR_CTRL3, CS35L41_WKFET_AMP_EN_MASK,
+				 wkfet_amp ? CS35L41_WKFET_AMP_EN_MASK : 0);
+	if (ret < 0) {
+		dev_err(cs35l41->dev, "Write PWR_CTRL3 (WKFET_AMP_EN) failed: %d\n", ret);
+		goto err_dsp;
+	}
+	if (!wkfet_amp)
+		dev_info(cs35l41->dev, "weak-FET output mode off\n");
+	if (!boost_en) {
+		ret = regmap_update_bits(cs35l41->regmap, CS35L41_PWR_CTRL2,
+					 CS35L41_BST_EN_MASK, 0);
+		if (ret < 0) {
+			dev_err(cs35l41->dev, "Write PWR_CTRL2 (BST_EN) failed: %d\n", ret);
+			goto err_dsp;
+		}
+		dev_info(cs35l41->dev, "boost converter off: output stage from VP\n");
+	}
+	if (bst_ctl > 0xAA)
+		dev_warn(cs35l41->dev, "bst_ctl %u is above 0xAA: ignored, class H stays\n",
+			 bst_ctl);
+	if (bst_ctl && bst_ctl <= 0xAA) {
+		ret = regmap_update_bits(cs35l41->regmap, CS35L41_BSTCVRT_VCTRL1,
+					 CS35L41_BST_CTL_MASK, bst_ctl);
+		if (!ret)
+			ret = regmap_update_bits(cs35l41->regmap, CS35L41_BSTCVRT_VCTRL2,
+						 CS35L41_BST_CTL_SEL_MASK, CS35L41_BST_CTL_SEL_REG);
+		if (ret < 0) {
+			dev_err(cs35l41->dev, "Write fixed boost target failed: %d\n", ret);
+			goto err_dsp;
+		}
+		dev_info(cs35l41->dev, "fixed boost target: BST_CTL 0x%02x (%u mV)\n",
+			 bst_ctl, 2550 + (bst_ctl - 1) * 50);
 	}
 	ret = regmap_write(cs35l41->regmap, CS35L41_DSP1_RX7_SRC,
 			   CS35L41_INPUT_SRC_TEMPMON);
@@ -1401,7 +1489,8 @@ static int cs35l41_runtime_suspend(struct device *dev)
 
 	dev_dbg(cs35l41->dev, "Runtime suspend\n");
 
-	if (!cs35l41->dsp.preloaded || !cs35l41->dsp.cs_dsp.running)
+	if (!cs35l41->dsp.preloaded || !cs35l41->dsp.cs_dsp.running ||
+	    cs35l41->hw_cfg.dsp_no_hibernate)
 		return 0;
 
 	wm_adsp_hibernate(&cs35l41->dsp, true);
@@ -1420,7 +1509,8 @@ static int cs35l41_runtime_resume(struct device *dev)
 
 	dev_dbg(cs35l41->dev, "Runtime resume\n");
 
-	if (!cs35l41->dsp.preloaded || !cs35l41->dsp.cs_dsp.running)
+	if (!cs35l41->dsp.preloaded || !cs35l41->dsp.cs_dsp.running ||
+	    cs35l41->hw_cfg.dsp_no_hibernate)
 		return 0;
 
 	regcache_cache_only(cs35l41->regmap, false);
