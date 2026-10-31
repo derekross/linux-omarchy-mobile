@@ -234,11 +234,16 @@ static void s3c64xx_flush_fifo(struct s3c64xx_spi_driver_data *sdd)
 	unsigned long loops;
 	u32 val;
 
-	writel(0, regs + S3C64XX_SPI_PACKET_CNT);
-
 	val = readl(regs + S3C64XX_SPI_CH_CFG);
 	val &= ~(S3C64XX_SPI_CH_RXCH_ON | S3C64XX_SPI_CH_TXCH_ON);
 	writel(val, regs + S3C64XX_SPI_CH_CFG);
+
+	/*
+	 * Clear the count only with the channels off, as Google's driver does:
+	 * with RXCH_ON set and PACKET_CNT_EN cleared the controller clocks
+	 * freely, and with automatic chip select the slave sees those edges.
+	 */
+	writel(0, regs + S3C64XX_SPI_PACKET_CNT);
 
 	val = readl(regs + S3C64XX_SPI_CH_CFG);
 	val |= S3C64XX_SPI_CH_SW_RST;
