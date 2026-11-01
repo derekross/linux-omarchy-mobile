@@ -30,7 +30,9 @@
 #include <linux/module.h>
 #include <linux/mod_devicetable.h>
 #include <linux/mutex.h>
+#include <linux/of.h>
 #include <linux/regulator/consumer.h>
+#include <linux/string.h>
 #include <linux/sysfs.h>
 #include <linux/workqueue.h>
 
@@ -61,6 +63,16 @@ MODULE_PARM_DESC(allow_lhbm,
 		 "Allow local high brightness mode for the fingerprint sensor");
 
 #define NT37290_DDIC_ID_REG		0xac
+
+/*
+ * The vendor driver reads this many bytes from panel_id_reg (0xAC) and
+ * uses bytes 6..12 as the panel id (panel-samsung-drv.c,
+ * exynos_panel_read_id()).
+ */
+#define NT37290_PANEL_ID_LEN		7
+#define NT37290_PANEL_ID_OFFSET		6
+#define NT37290_PANEL_ID_READ_SIZE	(NT37290_PANEL_ID_LEN + \
+					 NT37290_PANEL_ID_OFFSET)
 
 /* Frame-rate control (2Fh): mode in bits 7:4, OSC2 FCON in bits 2:0. */
 #define NT37290_DFC_MANUAL_120		0x00
@@ -689,6 +701,46 @@ static const struct backlight_ops nt37290_bl_ops = {
 	.update_status = nt37290_bl_update_status,
 };
 
+/*
+ * One DTB ships for every Pixel 7 Pro and the reference DT names the
+ * Samsung panel, so the compatible cannot decide which panel is
+ * attached. The bootloader knows: Google's ABL names the panel in the
+ * kernel command line (exynos_drm.panel_name=, per device). Bind only
+ * when it names this panel, or when the DT names it explicitly (local
+ * builds); otherwise leave the device to the Samsung driver.
+ *
+ * Selecting by the DDIC id (panel_id_reg 0xac) like Google's driver
+ * does needs BTA and the RX FIFO, which the gs-dsim-cmd host does not
+ * implement (-EOPNOTSUPP); revisit when it does.
+ *
+ * The command-line part is the same parser as cmdline_names_boe_panel()
+ * in panel-samsung-s6e3hc4.c; keep the two in sync. Interim for this
+ * tree: upstream will want the selection in the DSI host.
+ */
+static bool nt37290_panel_selected(struct device *dev)
+{
+	struct device_node *chosen;
+	const char *bootargs, *p;
+	bool selected = false;
+
+	if (of_device_is_compatible(dev->of_node, "boe,nt37290"))
+		return true;
+
+	chosen = of_find_node_by_path("/chosen");
+	if (!chosen)
+		return false;
+	/* /chosen/bootargs is the command line on this DT boot */
+	if (!of_property_read_string(chosen, "bootargs", &bootargs)) {
+		p = strstr(bootargs, "exynos_drm.panel_name=");
+		selected = p &&
+			str_has_prefix(p + sizeof("exynos_drm.panel_name=") - 1,
+				       "boe-nt37290");
+	}
+	of_node_put(chosen);
+
+	return selected;
+}
+
 static int nt37290_probe(struct mipi_dsi_device *dsi)
 {
 	struct device *dev = &dsi->dev;
@@ -702,6 +754,10 @@ static int nt37290_probe(struct mipi_dsi_device *dsi)
 	struct nt37290 *ctx;
 	bool handover;
 	int ret;
+
+	/* the ABL named the panel; Samsung phones get the Samsung driver */
+	if (!nt37290_panel_selected(dev))
+		return -ENODEV;
 
 	ctx = devm_drm_panel_alloc(dev, struct nt37290, panel,
 				   &nt37290_panel_funcs,
@@ -799,8 +855,9 @@ static int nt37290_probe(struct mipi_dsi_device *dsi)
 
 	/*
 	 * Google's driver reads the DDIC ID (panel_id_reg 0xac) to pick the
-	 * panel revision; a phone always carries a production panel, and the
-	 * wrong panel answers nothing, so the DT compatible decides here.
+	 * panel revision; the gs-dsim-cmd host cannot serve reads (no
+	 * BTA/RX yet), so the command line decides here (see
+	 * nt37290_panel_selected()).
 	 */
 	dev_info(dev, "%s\n", handover ? "taken over from the bootloader" :
 		 "held in reset");
@@ -826,6 +883,12 @@ static void nt37290_remove(struct mipi_dsi_device *dsi)
 
 static const struct of_device_id nt37290_of_match[] = {
 	{ .compatible = "boe,nt37290" },
+	/*
+	 * One DTB for both Pixel 7 Pro panel variants: the reference DT
+	 * names the Samsung panel and the command line selects us (see
+	 * nt37290_panel_selected()).
+	 */
+	{ .compatible = "samsung,s6e3hc4" },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, nt37290_of_match);

@@ -17,7 +17,9 @@
 #include <linux/module.h>
 #include <linux/mod_devicetable.h>
 #include <linux/mutex.h>
+#include <linux/of.h>
 #include <linux/regulator/consumer.h>
+#include <linux/string.h>
 
 #include <video/mipi_display.h>
 
@@ -477,6 +479,38 @@ static const struct backlight_ops s6e3hc4_bl_ops = {
 	.update_status = s6e3hc4_bl_update_status,
 };
 
+/*
+ * One DTB ships for every Pixel 7 Pro; the bootloader names the panel
+ * in the kernel command line (exynos_drm.panel_name=, Google's ABL
+ * sets it per device). If it names the BOE variant, the BOE driver
+ * takes the device.
+ *
+ * This is the same exynos_drm.panel_name= parser as
+ * nt37290_panel_selected() in panel-boe-nt37290.c; keep the two in
+ * sync. Interim for this tree: upstream will want the selection in the
+ * DSI host, where Google's driver does it.
+ */
+static bool cmdline_names_boe_panel(void)
+{
+	struct device_node *chosen;
+	const char *bootargs, *p;
+	bool boe = false;
+
+	chosen = of_find_node_by_path("/chosen");
+	if (!chosen)
+		return false;
+	/* /chosen/bootargs is the command line on this DT boot */
+	if (!of_property_read_string(chosen, "bootargs", &bootargs)) {
+		p = strstr(bootargs, "exynos_drm.panel_name=");
+		boe = p &&
+			str_has_prefix(p + sizeof("exynos_drm.panel_name=") - 1,
+				       "boe-nt37290");
+	}
+	of_node_put(chosen);
+
+	return boe;
+}
+
 static int s6e3hc4_probe(struct mipi_dsi_device *dsi)
 {
 	struct device *dev = &dsi->dev;
@@ -490,6 +524,9 @@ static int s6e3hc4_probe(struct mipi_dsi_device *dsi)
 	struct s6e3hc4 *ctx;
 	bool handover;
 	int ret;
+
+	if (cmdline_names_boe_panel())
+		return -ENODEV;
 
 	ctx = devm_drm_panel_alloc(dev, struct s6e3hc4, panel,
 				   &s6e3hc4_panel_funcs,
