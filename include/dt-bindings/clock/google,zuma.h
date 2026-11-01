@@ -2,7 +2,7 @@
 #ifndef _DT_BINDINGS_CLOCK_GOOGLE_ZUMA_H
 #define _DT_BINDINGS_CLOCK_GOOGLE_ZUMA_H
 
-/* CMU_TOP: the HSI0 NoC and peripheral clock paths. */
+/* CMU_TOP: the HSI0 and PERIC1 NoC and peripheral clock paths. */
 #define CLK_FOUT_SHARED0		1
 #define CLK_FOUT_SHARED1		2
 #define CLK_FOUT_SHARED2		3
@@ -18,6 +18,12 @@
 #define CLK_MOUT_HSI0_PERI		13
 #define CLK_GOUT_HSI0_PERI		14
 #define CLK_DOUT_HSI0_PERI		15
+#define CLK_MOUT_PERIC1_NOC		16
+#define CLK_MOUT_PERIC1_IP		17
+#define CLK_GOUT_PERIC1_NOC		18
+#define CLK_GOUT_PERIC1_IP		19
+#define CLK_DOUT_PERIC1_NOC		20
+#define CLK_DOUT_PERIC1_IP		21
 
 /* CMU_HSI0: USI2, the touchscreen's SPI. */
 #define CLK_GOUT_HSI0_ALT		1
@@ -30,6 +36,16 @@
 #define CLK_DOUT_HSI0_USI2		8
 #define CLK_GOUT_HSI0_USI2_IP		9
 #define CLK_GOUT_HSI0_USI2_PCLK		10
+
+/* CMU_PERIC1: USI11, the I2C bus of the battery, charger and USB-C chips. */
+#define CLK_MOUT_PERIC1_NOC_USER	1
+#define CLK_GOUT_GPIO_PERIC1		2
+#define CLK_GOUT_PERIC1_SYSREG		3
+#define CLK_MOUT_PERIC1_USI11_USER	4
+#define CLK_DOUT_PERIC1_USI11		5
+#define CLK_GOUT_PERIC1_USI11_IPCLK	6
+#define CLK_GOUT_PERIC1_USI11_PCLK	7
+#define CLK_GOUT_PERIC1_USI11_RSTNSYNC	8
 
 /* CMU_APM: the APM mailbox, its SRAM and the always-on GPIO banks. */
 #define CLK_APM_PLL_ALV_DIV2		1

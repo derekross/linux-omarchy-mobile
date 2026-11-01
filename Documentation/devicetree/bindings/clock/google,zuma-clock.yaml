@@ -13,6 +13,8 @@ description: |
   CMU_TOP supplies the HSI0 NoC and peripheral clocks to CMU_HSI0 from its
   shared PLLs. CMU_HSI0 supplies USI2, the touchscreen's SPI, from the HSI0
   peripheral clock; its NoC path also takes the board-level HSI0 ALT clock.
+  CMU_TOP also supplies the PERIC1 NoC and USI input clocks to CMU_PERIC1,
+  which supplies USI11, the I2C bus of the battery, charger and USB-C chips.
   CMU_APM supplies the APM mailbox, its internal memory and the always-on
   GPIO banks from the always-on ALV PLL and the oscillator.
   The external oscillator supplies the PLL reference and the oscillator mux
@@ -25,6 +27,7 @@ properties:
       - google,zuma-cmu-top
       - google,zuma-cmu-apm
       - google,zuma-cmu-hsi0
+      - google,zuma-cmu-peric1
 
   reg:
     maxItems: 1
@@ -80,6 +83,22 @@ allOf:
             - const: bus
             - const: peri
             - const: alt
+  - if:
+      properties:
+        compatible:
+          const: google,zuma-cmu-peric1
+    then:
+      properties:
+        clocks:
+          items:
+            - description: External oscillator reference clock
+            - description: PERIC1 NoC clock from CMU_TOP
+            - description: PERIC1 USI input clock from CMU_TOP
+        clock-names:
+          items:
+            - const: oscclk
+            - const: bus
+            - const: ip
 
 additionalProperties: false
 
@@ -102,6 +121,15 @@ examples:
         clocks = <&oscclk>, <&cmu_top CLK_DOUT_HSI0_NOC>,
                  <&cmu_top CLK_DOUT_HSI0_PERI>, <&hsi0_alt>;
         clock-names = "oscclk", "bus", "peri", "alt";
+    };
+
+    clock-controller@10c00000 {
+        compatible = "google,zuma-cmu-peric1";
+        reg = <0x10c00000 0x8000>;
+        #clock-cells = <1>;
+        clocks = <&oscclk>, <&cmu_top CLK_DOUT_PERIC1_NOC>,
+                 <&cmu_top CLK_DOUT_PERIC1_IP>;
+        clock-names = "oscclk", "bus", "ip";
     };
 
 ...
