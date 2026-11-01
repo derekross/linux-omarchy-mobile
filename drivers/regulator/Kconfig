@@ -1636,6 +1636,15 @@ config REGULATOR_SY8827N
 	help
 	  This driver supports SY8827N single output regulator.
 
+config REGULATOR_TEGU_RT9471_BOOST
+	tristate "Pixel 9a RT9470 USB OTG boost (bring-up)"
+	depends on I2C && OF
+	select REGMAP_I2C
+	help
+	  Bring-up only, not for merge: the Pixel 9a's RT9470 charger used
+	  only as the USB OTG boost, a regulator on its OTG_EN bit, for the
+	  MAX77779 charger's chgin-otg regulator in USB host mode.
+
 config REGULATOR_TPS51632
 	tristate "TI TPS51632 Power Regulator"
 	depends on I2C
