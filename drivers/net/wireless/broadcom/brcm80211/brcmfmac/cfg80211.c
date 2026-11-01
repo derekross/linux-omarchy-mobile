@@ -3468,6 +3468,11 @@ static s32 brcmf_inform_single_bss(struct brcmf_cfg80211_info *cfg,
 
 	freq = ieee80211_channel_to_frequency(channel, band);
 	bss_data.chan = ieee80211_get_channel(wiphy, freq);
+	if (!bss_data.chan) {
+		brcmf_dbg(SCAN, "BSS on channel %d (%u MHz) not in the channel list, skipped\n",
+			  channel, freq);
+		return 0;
+	}
 	bss_data.boottime_ns = ktime_to_ns(ktime_get_boottime());
 
 	notify_capability = le16_to_cpu(bi->capability);
