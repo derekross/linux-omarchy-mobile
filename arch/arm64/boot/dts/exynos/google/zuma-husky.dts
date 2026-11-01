@@ -311,3 +311,22 @@
 		};
 	};
 };
+
+/*
+ * The battery pack's EEPROM on USI9 / hsi2c_9 (stock: "at,24c08" at 0x50 on
+ * a 400 kHz bus, in the pack and powered by it). Byte 0x17 is the battery ID
+ * that Google's driver matches against the gauge models; the rest is the
+ * pack's part number, dates and history, so it is read-only here. The bus
+ * and USI9 stay disabled; a bring-up overlay enables them. Nothing reads the
+ * ID into the gauge yet.
+ */
+&hsi2c_9 {
+	clock-frequency = <400000>;
+
+	eeprom@50 {
+		compatible = "atmel,24c08";
+		reg = <0x50>;
+		pagesize = <16>;
+		read-only;
+	};
+};
