@@ -34,9 +34,10 @@ properties:
     const: '/'
   compatible:
     oneOf:
-      - description: Google Pixel 6 or 6 Pro (Oriole or Raven)
+      - description: Google Pixel 6, 6 Pro or 6a (Oriole, Raven or Bluejay)
         items:
           - enum:
+              - google,gs101-bluejay
               - google,gs101-oriole
               - google,gs101-raven
           - const: google,gs101
