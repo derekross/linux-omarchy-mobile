@@ -948,6 +948,19 @@ static void brcmf_pcie_set_bar_coherent(struct brcmf_pciedev_info *devinfo)
  */
 #define BRCMF_PCIE_SSCTRL_SSRESET_STATUS	BIT(13)
 
+/*
+ * Chips Broadcom's driver resets with a function 0 FLR rather than the
+ * chipcommon watchdog (bcmdhd dhdpcie_dongle_reset(), cc_wd_reset false).
+ * The BCM4383 shares the chip with its Bluetooth: while BT_REG_ON holds the
+ * chip up, the watchdog reset leaves the WLAN cores in a state where the
+ * downloaded firmware never comes up, and an F0 FLR leaves Bluetooth alone.
+ */
+static bool brcmf_pcie_reset_by_flr(struct brcmf_pciedev_info *devinfo)
+{
+	return brcmf_pcie_is_4389_family(devinfo) ||
+	       devinfo->pdev->device == BRCM_PCIE_4383_DEVICE_ID;
+}
+
 static int brcmf_pcie_flr(struct brcmf_pciedev_info *devinfo)
 {
 	struct pci_dev *pdev = devinfo->pdev;
@@ -1014,12 +1027,13 @@ static void brcmf_pcie_reset_device(struct brcmf_pciedev_info *devinfo)
 			       val);
 
 	/* Watchdog reset, with all power domains up as it starts. The
-	 * BCM4389 is reset the way Broadcom's driver resets it, with an
-	 * FLR: after a chipcommon watchdog reset its ARM does not boot a
-	 * second firmware download.
+	 * BCM4389 and BCM4383 are reset the way Broadcom's driver resets
+	 * them, with an FLR: after a chipcommon watchdog reset the BCM4389's
+	 * ARM does not boot a second firmware download, and the BCM4383's
+	 * doesn't while its Bluetooth is on.
 	 */
 	brcmf_pcie_srpwr_request(devinfo);
-	if (!brcmf_pcie_is_4389_family(devinfo) || brcmf_pcie_flr(devinfo)) {
+	if (!brcmf_pcie_reset_by_flr(devinfo) || brcmf_pcie_flr(devinfo)) {
 		brcmf_pcie_select_core(devinfo, BCMA_CORE_CHIPCOMMON);
 		WRITECC32(devinfo, watchdog, 4);
 		msleep(100);
