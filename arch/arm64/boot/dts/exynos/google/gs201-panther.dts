@@ -58,6 +58,15 @@
 		/* google,fv-max-uv; VEmpty of the live tree's gauge models */
 		voltage-max-design-microvolt = <4450000>;
 		voltage-min-design-microvolt = <3300000>;
+		/*
+		 * Charger limits without Google's step charging: the float
+		 * voltage is fv-max-uv, the top of google,chg-cv-limits
+		 * (4.2/4.3/4.45 V). The fast charge current is 0.3 C, the
+		 * lowest google,chg-cc-limits entry at any voltage tier from
+		 * 10 to 46 degC, rounded down to a charger step (0x13).
+		 */
+		constant-charge-voltage-max-microvolt = <4450000>;
+		constant-charge-current-max-microamp = <1266720>;
 	};
 
 	/* The same pins as cheetah's (Google's gs201-common.dtsi). */
@@ -266,9 +275,13 @@
 /*
  * MAX77759 (charger, Type-C port controller, fuel gauge) on USI13, as on
  * the Pixel 7 Pro: TCPC 0x25, PMIC 0x66, fuel gauge 0x36, charger 0x69,
- * bus pins gpp25-0/1. Only the fuel gauge is described: the Type-C port
- * controller would take over VBUS and the data role from the forced-VBUS
- * setup the USB PHY uses, and the USB link is our only way into the phone.
+ * bus pins gpp25-0/1; stock also has the PCA9468 direct charger at 0x57
+ * on this bus. The Type-C port controller is not described: it would take
+ * over VBUS and the data role from the forced-VBUS setup the USB PHY uses,
+ * and the USB link is our only way into the phone. The charger has no DT
+ * node of its own (it is an MFD cell of pmic@66, which carries its
+ * monitored-battery); its probe turns charging off until a "tcpm-source"
+ * power supply reports a source, unless it is loaded with default_ilim_ua.
  */
 &usi13 {
 	samsung,mode = <USI_MODE_I2C>;
@@ -336,6 +349,26 @@
 			0x2d00	/* TaskPeriod */
 		>;
 	};
+
+	pmic@66 {
+		compatible = "maxim,max77759";
+		reg = <0x66>;
+		interrupts-extended = <&gpa9 4 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-0 = <&if_pmic_int>;
+		pinctrl-names = "default";
+		interrupt-controller;
+		#interrupt-cells = <2>;
+		/* for the charger cell */
+		monitored-battery = <&battery>;
+
+		gpio {
+			compatible = "maxim,max77759-gpio";
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+		};
+	};
 };
 
 /*
@@ -364,6 +397,13 @@
 &pinctrl_gpio_alive {
 	if_pmic_fg_int: if-pmic-fg-int-pins {
 		samsung,pins = "gpa9-3";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_UP>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
+	if_pmic_int: if-pmic-int-pins {
+		samsung,pins = "gpa9-4";
 		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
 		samsung,pin-pud = <GS101_PIN_PULL_UP>;
 		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
