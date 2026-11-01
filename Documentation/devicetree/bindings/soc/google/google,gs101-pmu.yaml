@@ -28,6 +28,21 @@ properties:
 
   ranges: true
 
+  "#clock-cells":
+    const: 1
+    description:
+      The PMU's CLKOUT pads (PAD_CTRL_CLKOUTn), one clock each, which
+      drive the PMU's selected input out to a board device.
+
+  clocks:
+    description:
+      The input the CLKOUT pads select, the TCXO on gs201.
+    maxItems: 1
+
+  clock-names:
+    items:
+      - const: clkout0
+
   reboot-mode:
     $ref: /schemas/power/reset/syscon-reboot-mode.yaml
     type: object
