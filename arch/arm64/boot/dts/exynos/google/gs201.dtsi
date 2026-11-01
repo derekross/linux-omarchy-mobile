@@ -159,6 +159,97 @@
 		method = "smc";
 	};
 
+	/*
+	 * Zones on the ACPM TMU sensors (0 big, 1 mid, 2 little, 3 GPU, 4 ISP,
+	 * 5 TPU). Every zone is critical at 110 C, below stock's 120 C "hot"
+	 * trips (Google's gs201-b0.dts).
+	 */
+	thermal-zones {
+		big-thermal {
+			polling-delay-passive = <100>;
+			polling-delay = <250>;
+			thermal-sensors = <&acpm_tmu 0>;
+
+			trips {
+				big_crit: big-crit {
+					temperature = <110000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+
+		mid-thermal {
+			polling-delay-passive = <100>;
+			polling-delay = <250>;
+			thermal-sensors = <&acpm_tmu 1>;
+
+			trips {
+				mid_crit: mid-crit {
+					temperature = <110000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+
+		little-thermal {
+			polling-delay-passive = <100>;
+			polling-delay = <250>;
+			thermal-sensors = <&acpm_tmu 2>;
+
+			trips {
+				little_crit: little-crit {
+					temperature = <110000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+
+		gpu-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
+			thermal-sensors = <&acpm_tmu 3>;
+
+			trips {
+				gpu_crit: gpu-crit {
+					temperature = <110000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+
+		isp-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
+			thermal-sensors = <&acpm_tmu 4>;
+
+			trips {
+				isp_crit: isp-crit {
+					temperature = <110000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+
+		tpu-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
+			thermal-sensors = <&acpm_tmu 5>;
+
+			trips {
+				tpu_crit: tpu-crit {
+					temperature = <110000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+	};
+
 	timer {
 		compatible = "arm,armv8-timer";
 		interrupts = <GIC_PPI 13 (GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>,
@@ -205,6 +296,12 @@
 			#clock-cells = <1>;
 			mboxes = <&ap2apm_mailbox>;
 			shmem = <&apm_sram>;
+
+			/* TMU sensors, read through the ACPM firmware (channel 9) */
+			acpm_tmu: thermal-sensor {
+				compatible = "google,gs201-acpm-tmu";
+				#thermal-sensor-cells = <1>;
+			};
 		};
 	};
 
