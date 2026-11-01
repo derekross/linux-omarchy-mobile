@@ -4,7 +4,7 @@
 $id: http://devicetree.org/schemas/pci/google,gs201-pcie-cp.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
-title: Google gs201 PCIe GEN4A_0 (modem link)
+title: Google gs201 and zumapro PCIe modem link
 
 maintainers:
   - Derek Ross <derekross@gmail.com>
@@ -17,26 +17,66 @@ description: |
   at a fixed window. The modem's control lines are described in a "modem"
   child node.
 
+  On zumapro (Tensor G4) the same modem hangs off HSI1 GEN3A_0. There is no
+  PHY driver and no secure monitor ATU: the host runs the PHY sequences
+  itself, through the "soc", "udbg", "phy" (PMA) and "pcs" windows, and
+  programs the outbound iATU in DBI.
+
 allOf:
   - $ref: /schemas/pci/pci-host-bridge.yaml#
+  - if:
+      properties:
+        compatible:
+          const: google,zumapro-pcie-cp
+    then:
+      properties:
+        reg:
+          minItems: 7
+        reg-names:
+          items:
+            - const: elbi
+            - const: dbi
+            - const: config
+            - const: soc
+            - const: udbg
+            - const: phy
+            - const: pcs
+        phys: false
+        phy-names: false
+    else:
+      properties:
+        reg:
+          maxItems: 4
+        reg-names:
+          items:
+            - const: elbi
+            - const: dbi
+            - const: config
+            - const: ia
+      required:
+        - phys
+        - samsung,sysreg
 
 properties:
   compatible:
-    const: google,gs201-pcie-cp
+    enum:
+      - google,gs201-pcie-cp
+      - google,zumapro-pcie-cp
 
   reg:
+    minItems: 4
     items:
       - description: sub-controller (ELBI) registers
       - description: DesignWare DBI registers
       - description: endpoint configuration space window
-      - description: I/A sequencer registers
+      - description: I/A sequencer registers (gs201), SOC_CTRL (zumapro)
+      - description: UDBG registers (zumapro)
+      - description: PHY PMA registers (zumapro)
+      - description: PHY PCS registers (zumapro)
 
   reg-names:
-    items:
-      - const: elbi
-      - const: dbi
-      - const: config
-      - const: ia
+    minItems: 4
+    maxItems: 7
 
   interrupts:
     items:
@@ -83,8 +123,9 @@ properties:
           - description: PMU
           - description: offset of the PHY isolation control register
     description:
-      PMU and the PHY isolation control register. The PHY driver releases
-      isolation; this controller sets it again once the link is down.
+      PMU and the PHY isolation control register. On gs201 the PHY driver
+      releases isolation and this controller sets it again once the link is
+      down; on zumapro this controller releases it once and leaves it.
 
   memory-region:
     maxItems: 1
@@ -161,10 +202,8 @@ required:
   - reg
   - reg-names
   - interrupts
-  - phys
   - reset-gpios
   - samsung,pmu-syscon
-  - samsung,sysreg
 
 unevaluatedProperties: false
 
