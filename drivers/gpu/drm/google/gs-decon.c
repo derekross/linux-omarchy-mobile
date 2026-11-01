@@ -327,6 +327,8 @@ static const struct gs_decon_soc_data gs201_decon_data = {
 	.image_size_reg = RDMA_IMG_SIZE,
 	.source_offset_reg = RDMA_SRC_OFFSET,
 	.shadow_update_mask = SHD_REG_UP_REQ_FLIP(SHD_REG_UP_REQ_ALL_WIN),
+	/* 1080-pixel rows (Pixel 7) get padded to 64 bytes by allocators */
+	.padded_pitch = true,
 };
 
 /*
@@ -716,9 +718,14 @@ static void gs_decon_set_scanout_locked(struct gs_decon *dc, dma_addr_t addr,
 		dc->xrgb = true;
 	}
 
-	/* G4's source width includes row padding, in pixels, not bytes. */
+	/*
+	 * The source width includes row padding, in pixels, not bytes. On G4
+	 * the height has its own register; on gs201 it shares this one.
+	 */
 	if (dc->soc->padded_pitch)
-		writel(pitch / 4, dc->dma + RDMA_SRC_SIZE);
+		writel(dc->soc->separate_source_height ? pitch / 4 :
+		       (dc->height << 16) | (pitch / 4),
+		       dc->dma + RDMA_SRC_SIZE);
 	writel(lower_32_bits(addr), dc->dma + RDMA_BASEADDR_Y8);
 	writel(readl(dc->regs + DECON_SHD_REG_UP_REQ) | dc->soc->shadow_update_mask,
 	       dc->regs + DECON_SHD_REG_UP_REQ);
@@ -986,12 +993,13 @@ static int gs_decon_plane_atomic_check(struct drm_plane *plane,
 	if (ret)
 		return ret;
 
-	/* G4 accepts padded RGB rows; older variants keep the boot layout. */
+	/* Padded RGB rows, up to the source width field's limit */
 	if (fb->width != dc->width || fb->height != dc->height ||
 	    new->src_x || new->src_y ||
 	    (dc->soc->padded_pitch ?
 	     (fb->pitches[0] < dc->width * 4 || fb->pitches[0] % 4 ||
-	      fb->pitches[0] / 4 > 0xffffff) :
+	      fb->pitches[0] / 4 > (dc->soc->separate_source_height ?
+				    0xffffff : 0xffff)) :
 	     fb->pitches[0] != dc->pitch)) {
 		drm_dbg_kms(plane->dev, "fb %ux%u pitch %u does not match %ux%u pitch %u\n",
 			    fb->width, fb->height, fb->pitches[0],
