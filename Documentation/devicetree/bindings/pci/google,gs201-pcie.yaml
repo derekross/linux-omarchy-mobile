@@ -16,8 +16,10 @@ description:
   adds a sub-control block (ELBI) with link training control and interrupt
   status, and an I/A sequencer that re-locks the PHY clock-data recovery when
   the link leaves L1.2. zuma's Wi-Fi controller runs without the I/A, as on
-  stock. Legacy INTx interrupts are demultiplexed from the controller
-  interrupt by a child interrupt controller.
+  stock. zumapro's (Tensor G4) Wi-Fi controller is the same as zuma's, at
+  the same addresses and with the same register map, so it uses zuma's
+  compatible as a fallback. Legacy INTx interrupts are demultiplexed from
+  the controller interrupt by a child interrupt controller.
 
 allOf:
   - $ref: /schemas/pci/pci-host-bridge.yaml#
@@ -25,7 +27,8 @@ allOf:
   - if:
       properties:
         compatible:
-          const: google,zuma-pcie
+          contains:
+            const: google,zuma-pcie
     then:
       properties:
         reg:
@@ -35,9 +38,13 @@ allOf:
 
 properties:
   compatible:
-    enum:
-      - google,gs201-pcie
-      - google,zuma-pcie
+    oneOf:
+      - enum:
+          - google,gs201-pcie
+          - google,zuma-pcie
+      - items:
+          - const: google,zumapro-pcie
+          - const: google,zuma-pcie
 
   reg:
     minItems: 3
