@@ -759,9 +759,15 @@ static const struct samsung_div_clock peric0_dividers[] __initconst = {
 	      "zumapro_mout_peric0_usi6_user", 0x1824, 0, 4, 0, CLK_DIVIDER_READ_ONLY),
 };
 
+/*
+ * The GPIO block's bus clock stays on. The gate is in manual mode (no
+ * automatic clock gating on this CMU here), and the pin controller turns
+ * it off after every register access; with the modem's AP2CP lines on
+ * this block toggling twice a second, the SoC hung within minutes.
+ */
 static const struct samsung_gate_clock peric0_gates[] __initconst = {
 	GATE(CLK_GOUT_GPIO_PERIC0, "zumapro_gpio_peric0", "zumapro_peric0_noc_user",
-	     0x20b8, 21, CLK_IGNORE_UNUSED, 0),
+	     0x20b8, 21, CLK_IS_CRITICAL, 0),
 };
 
 static const struct samsung_gate_clock peric0_ro_gates[] __initconst = {
