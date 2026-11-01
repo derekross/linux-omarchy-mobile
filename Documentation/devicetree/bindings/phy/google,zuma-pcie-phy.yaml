@@ -14,11 +14,17 @@ description:
   PCIe controller, which connects the Wi-Fi chip on Pixel 8 phones. Its
   reference clock comes from an external PLL in the UDBG block, selected as
   the PHY's input clock in the controller's SOC block. The PMU isolates the
-  PHY until it is released.
+  PHY until it is released. zumapro (Tensor G4) has the same PHY for its
+  Wi-Fi controller, programmed with the same sequence, so it uses zuma's
+  compatible as a fallback.
 
 properties:
   compatible:
-    const: google,zuma-pcie-phy
+    oneOf:
+      - const: google,zuma-pcie-phy
+      - items:
+          - const: google,zumapro-pcie-phy
+          - const: google,zuma-pcie-phy
 
   reg:
     items:
