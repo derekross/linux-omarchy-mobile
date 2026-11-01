@@ -240,13 +240,22 @@ static void wc_mbox_shutdown(struct mbox_chan *chan)
 static bool wc_mbox_last_tx_done(struct mbox_chan *chan)
 {
 	struct wc_mbox_prvdata *prvdata = dev_get_drvdata(chan->mbox->dev);
+	int index = wc_mbox_channel_index(chan);
 	u32 status;
 
+	if (index < 0)
+		return true;
+
+	/*
+	 * Only this channel's request bit says whether the remote has taken
+	 * our last interrupt; a request pending on another channel must not
+	 * hold this one's queue back.
+	 */
 	status = ioread32(prvdata->base + MB_INTSR0);
-	if (status != 0)
+	if (status & BIT(index))
 		pr_debug("Pending status %x\n", status);
 
-	return status == 0;
+	return !(status & BIT(index));
 }
 
 static bool wc_mbox_peek_data(struct mbox_chan *chan)
