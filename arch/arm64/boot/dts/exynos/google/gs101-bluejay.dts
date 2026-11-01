@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Bluejay Device Tree
+ *
+ * Copyright 2021-2023 Google LLC
+ * Copyright 2023 Linaro Ltd - <peter.griffin@linaro.org>
+ */
+
+/dts-v1/;
+
+#include "gs101-pixel-common.dtsi"
+
+/ {
+	model = "Bluejay";
+	compatible = "google,gs101-bluejay", "google,gs101";
+
+	/*
+	 * ABL picks the base DTB by soc_id (product id 0x09845000 | major
+	 * revision); the factory vendor_boot carries one per revision. B0 = 1.
+	 */
+	soc_id = <0x09845001 0x0>;
+
+	chosen {
+		/*
+		 * ABL appends its own arguments (console=null among them), so a
+		 * panic is silent: panic=10 reboots instead of hanging. init hands
+		 * over to the Arch root on userdata when it finds one.
+		 */
+		bootargs = "console=tty0 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init";
+	};
+};
+
+&cont_splash_mem {
+	reg = <0x0 0xfac00000 (1080 * 2400 * 4)>;
+
+	status = "okay";
+};
+
+&framebuffer0 {
+	width = <1080>;
+	height = <2400>;
+	stride = <(1080 * 4)>;
+	format = "a8r8g8b8";
+
+	status = "okay";
+};
