@@ -266,7 +266,7 @@ static int gs201_ufs_drv_init(struct exynos_ufs *ufs)
 	return gs101_ufs_drv_init(ufs);
 }
 
-static int zumapro_ufs_drv_init(struct exynos_ufs *ufs)
+static int zuma_ufs_drv_init(struct exynos_ufs *ufs)
 {
 	u32 reg;
 
@@ -2545,7 +2545,28 @@ static const struct exynos_ufs_drv_data gs201_ufs_drvs = {
 	.suspend		= gs101_ufs_suspend,
 };
 
-/* G4 shares the G2 descriptor format, but not its PHY/PCS calibration. */
+/*
+ * G3 and G4 share the G2 descriptor format, but not its PHY/PCS calibration.
+ * G3 (zuma) runs the G4 data, which its device tree names as a fallback.
+ */
+static const struct exynos_ufs_drv_data zuma_ufs_drvs = {
+	.uic_attr		= &gs101_uic_attr,
+	.quirks			= UFSHCI_QUIRK_SKIP_MANUAL_WB_FLUSH_CTRL |
+				  UFSHCD_QUIRK_BROKEN_AUTO_HIBERN8 |
+				  UFSHCD_QUIRK_SKIP_DEF_UNIPRO_TIMEOUT_SETTING,
+	.opts			= EXYNOS_UFS_OPT_SKIP_CONFIG_PHY_ATTR |
+				  EXYNOS_UFS_OPT_UFSPR_SECURE |
+				  EXYNOS_UFS_OPT_TIMER_TICK_SELECT |
+				  EXYNOS_UFS_OPT_CLKSTOP_PRE_CHANGE |
+				  EXYNOS_UFS_OPT_UNGATE_POST_CHANGE,
+	.iocc_mask		= UFS_GS101_SHARABLE,
+	.drv_init		= zuma_ufs_drv_init,
+	.suspend		= gs101_ufs_suspend,
+	.pre_link		= zumapro_ufs_pre_link,
+	.post_link		= zumapro_ufs_post_link,
+	.pre_pwr_change		= zumapro_ufs_pre_pwr_change,
+};
+
 static const struct exynos_ufs_drv_data zumapro_ufs_drvs = {
 	.uic_attr		= &gs101_uic_attr,
 	.quirks			= UFSHCI_QUIRK_SKIP_MANUAL_WB_FLUSH_CTRL |
@@ -2557,7 +2578,7 @@ static const struct exynos_ufs_drv_data zumapro_ufs_drvs = {
 				  EXYNOS_UFS_OPT_CLKSTOP_PRE_CHANGE |
 				  EXYNOS_UFS_OPT_UNGATE_POST_CHANGE,
 	.iocc_mask		= UFS_GS101_SHARABLE,
-	.drv_init		= zumapro_ufs_drv_init,
+	.drv_init		= zuma_ufs_drv_init,
 	.suspend		= gs101_ufs_suspend,
 	.pre_link		= zumapro_ufs_pre_link,
 	.post_link		= zumapro_ufs_post_link,
@@ -2584,6 +2605,8 @@ static const struct of_device_id exynos_ufs_of_match[] = {
 	  .data	      = &gs101_ufs_drvs },
 	{ .compatible = "google,gs201-ufs",
 	  .data	      = &gs201_ufs_drvs },
+	{ .compatible = "google,zuma-ufs",
+	  .data	      = &zuma_ufs_drvs },
 	{ .compatible = "google,zumapro-ufs",
 	  .data	      = &zumapro_ufs_drvs },
 	{ .compatible = "samsung,exynos7-ufs",
