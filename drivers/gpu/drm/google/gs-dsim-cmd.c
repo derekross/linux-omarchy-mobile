@@ -106,6 +106,16 @@ static const struct gs_dsim_rate gs_dsim_rates[][2] = {
 		{ .hz = 60, .underrun = 0x18c8, .te_ctrl1 = 0x2a82306d },
 		{ .hz = 120, .underrun = 0x02a0, .te_ctrl1 = 0x15411836 },
 	},
+	/*
+	 * Pixel 8 Pro, HK3: 4 lanes at 1368 Mbit/s (word clock 85.5 MHz),
+	 * DSC 3:1, 1344x2992, TE idle 350 us. Google's dsim_calc_underrun()
+	 * gives the bootloader's 60 Hz value exactly at that rate, so the
+	 * 120 Hz one is the formula's too.
+	 */
+	{
+		{ .hz = 60, .underrun = 0x2235, .te_ctrl1 = 0x34c53c1e },
+		{ .hz = 120, .underrun = 0x06a7, .te_ctrl1 = 0x1a621e0f },
+	},
 };
 
 struct gs_dsim {

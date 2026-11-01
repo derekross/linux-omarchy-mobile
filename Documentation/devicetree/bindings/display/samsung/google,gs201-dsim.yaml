@@ -10,8 +10,8 @@ maintainers:
   - Derek Ross <derekross@gmail.com>
 
 description:
-  The DSIM is the MIPI DSI master of the gs201 (Tensor G2) display
-  pipeline. It takes pixel data from a DECON and drives up to four data
+  The DSIM is the MIPI DSI master of the gs201 (Tensor G2) and zuma
+  (Tensor G3) display pipelines. It takes pixel data from a DECON and drives up to four data
   lanes through a combined D-PHY/C-PHY, in video or command mode, with
   DSC slice packing and TE-based command scheduling. Panels are described
   as child nodes.
@@ -21,7 +21,11 @@ allOf:
 
 properties:
   compatible:
-    const: google,gs201-dsim
+    oneOf:
+      - const: google,gs201-dsim
+      - items:
+          - const: google,zuma-dsim
+          - const: google,gs201-dsim
 
   reg:
     minItems: 1

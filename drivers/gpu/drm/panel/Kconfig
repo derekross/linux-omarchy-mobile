@@ -198,6 +198,18 @@ config DRM_PANEL_DSI_CM
 	  DRM panel driver for DSI command mode panels with support for
 	  embedded and external backlights.
 
+config DRM_PANEL_GOOGLE_HK3
+	tristate "Google HK3 DSI command mode panel"
+	depends on OF
+	depends on DRM_MIPI_DSI
+	depends on BACKLIGHT_CLASS_DEVICE
+	help
+	  Say Y or M here if you want to enable support for the Google
+	  HK3 1344x2992 command-mode AMOLED panel, found in the Google
+	  Pixel 8 Pro. The driver takes over the panel the bootloader left
+	  running, switches it between 60 and 120 Hz, puts it to sleep and
+	  exposes its brightness as a backlight.
+
 config DRM_PANEL_GOOGLE_TG4C
 	tristate "Google TG4C DSI command mode panel"
 	depends on OF
