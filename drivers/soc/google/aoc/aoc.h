@@ -65,6 +65,8 @@ struct mbox_slot {
 	struct mbox_chan *channel;
 	void *prvdata;
 	int index;
+	/* doorbells sent or queued and not yet taken by the AoC */
+	atomic_t doorbells;
 };
 
 struct aoc_service_dev {

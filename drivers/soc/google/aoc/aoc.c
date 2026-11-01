@@ -368,6 +368,8 @@ static int allocate_mailbox_channels(struct aoc_prvdata *prv)
 
 	for (i = 0; i < prv->aoc_mbox_channels; i++) {
 		slot = &prv->mbox_channels[i];
+		/* a freed channel drops its queue without tx_done */
+		atomic_set(&slot->doorbells, 0);
 		slot->channel = mbox_request_channel(&slot->client, i);
 		if (IS_ERR(slot->channel)) {
 			rc = PTR_ERR(slot->channel);
@@ -424,6 +426,10 @@ static void aoc_mbox_tx_prepare(struct mbox_client *cl, void *mssg)
 
 static void aoc_mbox_tx_done(struct mbox_client *cl, void *mssg, int r)
 {
+	struct mbox_slot *slot = container_of(cl, struct mbox_slot, client);
+
+	if (!mssg)
+		atomic_dec_if_positive(&slot->doorbells);
 }
 
 
