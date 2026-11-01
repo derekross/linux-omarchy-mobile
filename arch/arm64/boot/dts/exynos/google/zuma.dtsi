@@ -157,12 +157,51 @@
 			#clock-cells = <1>;
 			mboxes = <&ap2apm_mailbox>;
 			shmem = <&apm_sram>;
+
+			acpm_tmu: thermal-sensor {
+				compatible = "google,zuma-acpm-tmu";
+				#thermal-sensor-cells = <1>;
+			};
 		};
 	};
 
 	psci {
 		compatible = "arm,psci-1.0";
 		method = "smc";
+	};
+
+	thermal-zones {
+		/*
+		 * Below stock's own GPU trips (passive from 100 C, hot at
+		 * 115 C).
+		 */
+		gpu-thermal {
+			polling-delay-passive = <1000>;
+			polling-delay = <2000>;
+			thermal-sensors = <&acpm_tmu 3>;
+
+			trips {
+				gpu_alert: gpu-alert {
+					temperature = <85000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+
+				gpu_crit: gpu-crit {
+					temperature = <105000>;
+					hysteresis = <2000>;
+					type = "critical";
+				};
+			};
+
+			/* panthor's devfreq cooling: step_wise walks the GPU down its OPPs. */
+			cooling-maps {
+				map0 {
+					trip = <&gpu_alert>;
+					cooling-device = <&gpu 0xffffffff 0xffffffff>;
+				};
+			};
+		};
 	};
 
 	timer {
@@ -564,6 +603,33 @@
 			firmware-sram@0 {
 				reg = <0x0 0x58000>;
 			};
+		};
+
+		/* The bootloader leaves G3D powered; there's no power domain yet. */
+		cmu_g3d: clock-controller@1ee00000 {
+			compatible = "google,zuma-cmu-g3d";
+			reg = <0x1ee00000 0x8000>;
+			#clock-cells = <1>;
+			clocks = <&oscclk>, <&cmu_top CLK_DOUT_G3D_NOCD>,
+				 <&cmu_top CLK_DOUT_G3D_GLB>,
+				 <&cmu_top CLK_DOUT_G3D_SWITCH>;
+			clock-names = "oscclk", "bus", "glb", "switch";
+			status = "disabled";
+		};
+
+		gpu: gpu@1f000000 {
+			compatible = "google,zuma-mali", "arm,mali-valhall-csf";
+			reg = <0x1f000000 0x480000>;
+			interrupts = <GIC_SPI 347 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 348 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 346 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "job", "mmu", "gpu";
+			clocks = <&cmu_g3d CLK_GOUT_G3D_CORE>,
+				 <&cmu_g3d CLK_GOUT_G3D_COREGROUP>,
+				 <&cmu_g3d CLK_GOUT_G3D_STACKS>;
+			clock-names = "core", "coregroup", "stacks";
+			#cooling-cells = <2>;
+			status = "disabled";
 		};
 
 		cmu_top: clock-controller@26040000 {
