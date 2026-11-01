@@ -12,7 +12,7 @@ config EXYNOS_THERMAL
 	  data from the supported SoCs.
 
 config GS101_ACPM_THERMAL
-	tristate "Google gs101 and Tensor G4 thermal sensors through ACPM"
+	tristate "Google gs101, Tensor G2 and Tensor G4 thermal sensors through ACPM"
 	depends on THERMAL_OF
 	depends on EXYNOS_ACPM_PROTOCOL
 	help
@@ -22,5 +22,5 @@ config GS101_ACPM_THERMAL
 	  TMU channel. The driver only reads; the firmware's own hardware
 	  trips stay as the bootloader left them.
 
-	  Say Y or M here on Google gs101 (Pixel 6) and Tensor G4
-	  (zumapro, Pixel 9a) devices.
+	  Say Y or M here on Google gs101 (Pixel 6), Tensor G2 (gs201,
+	  Pixel 7) and Tensor G4 (zumapro, Pixel 9a) devices.
