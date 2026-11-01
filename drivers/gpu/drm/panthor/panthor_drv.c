@@ -1888,6 +1888,11 @@ static const struct panthor_soc_data soc_data_mediatek_mt8196 = {
 
 static const struct of_device_id dt_match[] = {
 	{
+		/* zuma's l2-hash-values are zumapro's. */
+		.compatible = "google,zuma-mali",
+		.data = &soc_data_google_zumapro,
+	},
+	{
 		.compatible = "google,zumapro-mali",
 		.data = &soc_data_google_zumapro,
 	},

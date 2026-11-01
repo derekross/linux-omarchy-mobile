@@ -17,8 +17,8 @@
 #include <linux/thermal.h>
 
 /*
- * The sensors: BIG, MID, LITTLE, G3D, ISP, TPU, and on gs201 and zumapro
- * also AUR, in the firmware's order.
+ * The sensors: BIG, MID, LITTLE, G3D, ISP, TPU, and on gs201, zuma and
+ * zumapro also AUR, in the firmware's order.
  */
 #define GS101_ACPM_TMU_MAX_SENSORS	7
 
@@ -115,6 +115,7 @@ static const struct gs101_tmu_data gs201_tmu_data = {
 	.nr_sensors = 7,
 };
 
+/* zuma's TMU service is zumapro's: channel 9, the same seven sensors. */
 static const struct gs101_tmu_data zumapro_tmu_data = {
 	.acpm_chan = 9,
 	.nr_sensors = 7,
@@ -123,6 +124,7 @@ static const struct gs101_tmu_data zumapro_tmu_data = {
 static const struct of_device_id gs101_tmu_of_match[] = {
 	{ .compatible = "google,gs101-acpm-tmu", .data = &gs101_tmu_data },
 	{ .compatible = "google,gs201-acpm-tmu", .data = &gs201_tmu_data },
+	{ .compatible = "google,zuma-acpm-tmu", .data = &zumapro_tmu_data },
 	{ .compatible = "google,zumapro-acpm-tmu", .data = &zumapro_tmu_data },
 	{ }
 };
