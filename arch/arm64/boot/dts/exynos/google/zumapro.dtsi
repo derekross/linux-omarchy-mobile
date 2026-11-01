@@ -8,6 +8,7 @@
 
 #include <dt-bindings/clock/google,zumapro.h>
 #include <dt-bindings/clock/google,zumapro-acpm.h>
+#include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/soc/samsung,exynos-usi.h>
 
@@ -1228,6 +1229,24 @@
 				gpio-controller;
 				#gpio-cells = <2>;
 			};
+
+			/* Stock's pcie1 pins, the same as zuma's */
+			pcie1_clkreq: pcie1-clkreq-pins {
+				samsung,pins = "gph3-1";
+				samsung,pin-function = <2>;
+				samsung,pin-pud = <3>;
+				samsung,pin-drv = <3>;
+				samsung,pin-con-pdn = <3>;
+				samsung,pin-pud-pdn = <3>;
+			};
+
+			pcie1_perst: pcie1-perst-pins {
+				samsung,pins = "gph3-0";
+				samsung,pin-function = <1>;
+				samsung,pin-pud = <0>;
+				samsung,pin-drv = <3>;
+				samsung,pin-con-pdn = <3>;
+			};
 		};
 
 		pinctrl_hsi2ufs: pinctrl@13060000 {
@@ -1258,6 +1277,66 @@
 				samsung,pin-pud-pdn = <0>;
 				samsung,pin-drv = <2>;
 			};
+		};
+
+		/*
+		 * The Wi-Fi chip's controller (stock's pcie_1, ch-num 1), zuma's
+		 * controller at zuma's addresses: one Gen3 lane, no I/A, not
+		 * cache coherent. Its interrupts are its legacy INTx; stock's
+		 * MSI lines are unused.
+		 */
+		pcie_1: pcie@13120000 {
+			compatible = "google,zumapro-pcie", "google,zuma-pcie";
+			reg = <0x0 0x13120000 0x1400>,
+			      <0x0 0x13400000 0x381000>,
+			      <0x0 0x60ffe000 0x2000>;
+			reg-names = "elbi", "dbi", "config";
+			#address-cells = <3>;
+			#size-cells = <2>;
+			device_type = "pci";
+			ranges = <0x82000000 0x0 0x60000000 0x0 0x60000000 0x0 0xff0000>;
+			bus-range = <0x00 0xff>;
+			interrupts = <GIC_SPI 439 IRQ_TYPE_LEVEL_HIGH>;
+			#interrupt-cells = <1>;
+			interrupt-map-mask = <0 0 0 7>;
+			interrupt-map = <0 0 0 1 &pcie_1_intc 1>,
+					<0 0 0 2 &pcie_1_intc 2>,
+					<0 0 0 3 &pcie_1_intc 3>,
+					<0 0 0 4 &pcie_1_intc 4>;
+			clocks = <&cmu_hsi2 CLK_GOUT_PCIE1_CTL_APB>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_DBI_ACLK>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_SLV_ACLK>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_MSTR_ACLK>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_PHY_UDBG_APB>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_PHY_PAL_APB>,
+				 <&cmu_hsi2 CLK_GOUT_PCIE1_PHY_REF>;
+			phys = <&pcie_1_phy>;
+			phy-names = "pcie";
+			pinctrl-0 = <&pcie1_clkreq>, <&pcie1_perst>;
+			pinctrl-names = "default";
+			reset-gpios = <&gph3 0 GPIO_ACTIVE_LOW>;
+			num-lanes = <1>;
+			max-link-speed = <3>;
+			status = "disabled";
+
+			pcie_1_intc: legacy-interrupt-controller {
+				#address-cells = <0>;
+				interrupt-controller;
+				#interrupt-cells = <1>;
+			};
+		};
+
+		pcie_1_phy: phy@13160000 {
+			compatible = "google,zumapro-pcie-phy", "google,zuma-pcie-phy";
+			reg = <0x0 0x13160000 0x3000>,
+			      <0x0 0x13140000 0x5000>,
+			      <0x0 0x13121400 0x10>,
+			      <0x0 0x13150000 0xd000>,
+			      <0x0 0x13130000 0x5000>;
+			reg-names = "pma", "pcs", "rst", "udbg", "soc";
+			samsung,pmu-syscon = <&pmu_system_controller 0x3ec8>;
+			#phy-cells = <0>;
+			status = "disabled";
 		};
 
 		ufs: ufs@13200000 {
