@@ -459,6 +459,14 @@
 		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
 	};
 
+	/* USI9, the battery pack EEPROM's bus: gpp19-4/5, no pull as in stock. */
+	hsi2c9_bus: hsi2c9-bus-pins {
+		samsung,pins = "gpp19-4", "gpp19-5";
+		samsung,pin-function = <GS101_PIN_FUNC_2>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
 	/*
 	 * USI11, the battery bus: stock's board file moves it to gpp21-0/1 and
 	 * sets no pull, then zuma-typec.dtsi, applied after it, sets the

@@ -377,6 +377,36 @@
 			status = "disabled";
 		};
 
+		usi9: usi@10c900c0 {
+			compatible = "google,zuma-usi", "samsung,exynos850-usi";
+			reg = <0x10c900c0 0x20>;
+			clocks = <&cmu_peric1 CLK_GOUT_PERIC1_USI9_PCLK>,
+				 <&cmu_peric1 CLK_GOUT_PERIC1_USI9_IPCLK>;
+			clock-names = "pclk", "ipclk";
+			samsung,sysreg = <&sysreg_peric1 0x4>;
+			samsung,mode = <USI_MODE_I2C>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+			status = "disabled";
+
+			hsi2c_9: i2c@10c90000 {
+				compatible = "google,zuma-hsi2c",
+					     "samsung,exynosautov9-hsi2c";
+				/* USI control starts at 0xc0; do not claim it twice. */
+				reg = <0x10c90000 0xc0>;
+				interrupts = <GIC_SPI 657 IRQ_TYPE_LEVEL_HIGH>;
+				clocks = <&cmu_peric1 CLK_GOUT_PERIC1_USI9_IPCLK>,
+					 <&cmu_peric1 CLK_GOUT_PERIC1_USI9_PCLK>;
+				clock-names = "hsi2c", "hsi2c_pclk";
+				pinctrl-0 = <&hsi2c9_bus>;
+				pinctrl-names = "default";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				status = "disabled";
+			};
+		};
+
 		usi11: usi@10cb00c0 {
 			compatible = "google,zuma-usi", "samsung,exynos850-usi";
 			reg = <0x10cb00c0 0x20>;
