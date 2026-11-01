@@ -15,6 +15,7 @@
 
 #define PHY_COMN_BLK	1
 #define PHY_TRSV_BLK	2
+#define PHY_DELAY_BLK	3
 #define END_UFS_PHY_CFG { 0 }
 #define PHY_TRSV_CH_OFFSET	0x30
 #define PHY_APB_ADDR(off)	((off) << 2)
@@ -37,6 +38,12 @@
 
 #define PHY_TRSV_REG_CFG(o, v, d)	\
 	PHY_TRSV_REG_CFG_OFFSET(o, v, d, PHY_TRSV_CH_OFFSET)
+
+/* Wait @us microseconds before the next entry of a table, once for all lanes. */
+#define PHY_DELAY_US_CFG(us) {	\
+	.val = (us),		\
+	.id = PHY_DELAY_BLK,	\
+}
 
 /* UFS PHY registers */
 #define PHY_PLL_LOCK_STATUS	0x1e
