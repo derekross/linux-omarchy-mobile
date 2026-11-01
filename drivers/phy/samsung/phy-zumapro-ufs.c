@@ -56,8 +56,34 @@ static const struct samsung_ufs_phy_cfg zumapro_pre_init[] = {
 	END_UFS_PHY_CFG,
 };
 
+/* Google's post_h8_enter: after the link has entered Hibern8. */
+static const struct samsung_ufs_phy_cfg zumapro_post_h8_enter[] = {
+	PHY_TRSV_REG_CFG_OFFSET(0x27d, 0x08, PWR_MODE_ANY, 0x200),
+	PHY_TRSV_REG_CFG_OFFSET(0x280, 0x3a, PWR_MODE_ANY, 0x200),
+	PHY_COMN_REG_CFG(0x000, 0x51, PWR_MODE_ANY),
+	PHY_TRSV_REG_CFG_OFFSET(0x2d9, 0x30, PWR_MODE_ANY, 0x200),
+	PHY_TRSV_REG_CFG_OFFSET(0x2d9, 0x33, PWR_MODE_ANY, 0x200),
+	END_UFS_PHY_CFG,
+};
+
+/* Google's pre_h8_exit: before the link leaves Hibern8. */
+static const struct samsung_ufs_phy_cfg zumapro_pre_h8_exit[] = {
+	PHY_COMN_REG_CFG(0x000, 0x11, PWR_MODE_ANY),
+	PHY_DELAY_US_CFG(10),
+	PHY_TRSV_REG_CFG_OFFSET(0x27d, 0x00, PWR_MODE_ANY, 0x200),
+	PHY_TRSV_REG_CFG_OFFSET(0x280, 0x30, PWR_MODE_ANY, 0x200),
+	PHY_TRSV_REG_CFG_OFFSET(0x2d9, 0x32, PWR_MODE_ANY, 0x200),
+	PHY_TRSV_REG_CFG_OFFSET(0x2d9, 0x22, PWR_MODE_ANY, 0x200),
+	END_UFS_PHY_CFG,
+};
+
 static const struct samsung_ufs_phy_cfg *zumapro_cfgs[CFG_TAG_MAX] = {
 	[CFG_PRE_INIT] = zumapro_pre_init,
+};
+
+static const struct samsung_ufs_phy_cfg *zumapro_hibern8_cfgs[] = {
+	[CFG_POST_HIBERN8_ENTER]	= zumapro_post_h8_enter,
+	[CFG_PRE_HIBERN8_EXIT]		= zumapro_pre_h8_exit,
 };
 
 static const char * const zumapro_clks[] = { "ref_clk" };
@@ -79,6 +105,7 @@ static int zumapro_wait_for_cal(struct phy *phy, u8 lane)
 
 const struct samsung_ufs_phy_drvdata tensor_zumapro_ufs_phy = {
 	.cfgs = zumapro_cfgs,
+	.cfgs_hibern8 = zumapro_hibern8_cfgs,
 	.isol = {
 		.offset = 0x3ec0,
 		.mask = BIT(0),
