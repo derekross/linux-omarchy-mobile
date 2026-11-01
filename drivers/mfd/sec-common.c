@@ -75,11 +75,21 @@ static const struct mfd_cell s2mpg13_devs[] = {
 	MFD_CELL_OF("s2mpg13-gpio", NULL, NULL, 0, 0, "samsung,s2mpg13-gpio"),
 };
 
-/*
- * The qualified LDOs and the RTC. No interrupt line is described yet, so
- * the RTC keeps time without an alarm; no GPIO or protection writes.
- */
+static const struct resource s2mpg14_rtc_resources[] = {
+	DEFINE_RES_IRQ_NAMED(S2MPG14_IRQ_RTCA0, "alarm"),
+};
+
+/* The qualified LDOs and the RTC with its alarm; no GPIO or protection writes. */
 static const struct mfd_cell s2mpg14_devs[] = {
+	MFD_CELL_NAME("s2mpg14-regulator"),
+	MFD_CELL_RES("s2mpg14-rtc", s2mpg14_rtc_resources),
+};
+
+/*
+ * Without an interrupt line there is no IRQ domain to map the alarm into,
+ * so the RTC comes up without the resource and keeps time without an alarm.
+ */
+static const struct mfd_cell s2mpg14_devs_no_irq[] = {
 	MFD_CELL_NAME("s2mpg14-regulator"),
 	MFD_CELL_NAME("s2mpg14-rtc"),
 };
@@ -293,8 +303,13 @@ int sec_pmic_probe(struct device *dev, int device_type, unsigned int irq,
 		num_sec_devs = ARRAY_SIZE(s2mpg13_devs);
 		break;
 	case S2MPG14:
-		sec_devs = s2mpg14_devs;
-		num_sec_devs = ARRAY_SIZE(s2mpg14_devs);
+		if (irq_data) {
+			sec_devs = s2mpg14_devs;
+			num_sec_devs = ARRAY_SIZE(s2mpg14_devs);
+		} else {
+			sec_devs = s2mpg14_devs_no_irq;
+			num_sec_devs = ARRAY_SIZE(s2mpg14_devs_no_irq);
+		}
 		break;
 	case S2MPG15:
 		sec_devs = s2mpg15_devs;
