@@ -11,6 +11,10 @@
  * the panel keeps its registers), switches it between 60 and 120 Hz and
  * sets its brightness. A panel without the bootloader's initialisation is
  * not handled.
+ *
+ * The Pixel 9a comes with one of three panels, so the driver reads the
+ * panel's ID before its first command, and a panel that is not a TG4C
+ * gets no commands.
  */
 
 #include <linux/backlight.h>
@@ -50,6 +54,23 @@ MODULE_PARM_DESC(allow_lhbm, "Allow local high brightness mode (the fingerprint 
  */
 static const u8 tg4c_cmd2_page2[] = { 0xF0, 0x55, 0xAA, 0x52, 0x08, 0x02 };
 
+/*
+ * The panel's ID as Google's gs_panel reads it: MIPI DCS ID1 (the module's
+ * manufacturer), ID2 (its version), ID3 (the module/driver ID), and the first
+ * byte of the device descriptor block. The bootloader appends the same four
+ * bytes, last first, to exynos_drm.panel_name: google-tg4c.2d008004 on the
+ * Pixel 9a's TG4C, so ID1 0x04 and ID3 0x00.
+ */
+static const u8 tg4c_id_regs[] = { 0xda, 0xdb, 0xdc, MIPI_DCS_READ_DDB_START };
+#define TG4C_ID1		0x04
+#define TG4C_ID3		0x00
+
+enum tg4c_id {
+	TG4C_ID_UNREAD,
+	TG4C_ID_TG4C,
+	TG4C_ID_OTHER,
+};
+
 struct tg4c {
 	struct drm_panel panel;
 	struct mipi_dsi_device *dsi;
@@ -62,11 +83,60 @@ struct tg4c {
 	bool lhbm;
 	struct delayed_work lhbm_off;
 	u16 brightness;
+	enum tg4c_id id;
 };
 
 static inline struct tg4c *to_tg4c(struct drm_panel *panel)
 {
 	return container_of(panel, struct tg4c, panel);
+}
+
+/*
+ * Lock held. Google's tegu device tree lists three panels for the Pixel 9a
+ * (TG4A, TG4B and TG4C), whose commands differ: TG4B's rate switch, for
+ * one, sends more than TG4C's. A panel whose manufacturer or module ID is
+ * not the TG4C's is another panel. ID2 changes with the panel's build and
+ * is not checked.
+ *
+ * The ID is read before the first command rather than at probe, because
+ * gs-dsim-cmd refuses reads as well as writes (-EPERM) until its allow_tx
+ * parameter is set, which can come after the panel has probed. Until then
+ * nothing is sent anyway; once the read fails otherwise, the panel is
+ * driven as before the ID was read.
+ *
+ * Return: false if the panel is another panel.
+ */
+static bool tg4c_check_id(struct tg4c *ctx)
+{
+	struct device *dev = &ctx->dsi->dev;
+	u8 id[ARRAY_SIZE(tg4c_id_regs)];
+	unsigned int i;
+	ssize_t ret;
+
+	if (ctx->id != TG4C_ID_UNREAD)
+		return ctx->id == TG4C_ID_TG4C;
+
+	for (i = 0; i < ARRAY_SIZE(tg4c_id_regs); i++) {
+		ret = mipi_dsi_dcs_read(ctx->dsi, tg4c_id_regs[i], &id[i], 1);
+		if (ret == -EPERM)
+			return true;
+		if (ret != 1) {
+			dev_warn(dev, "panel ID not read (%zd): taken for a TG4C\n", ret);
+			ctx->id = TG4C_ID_TG4C;
+			return true;
+		}
+	}
+
+	if (id[0] != TG4C_ID1 || id[2] != TG4C_ID3) {
+		dev_err(dev, "panel ID %*ph is not a TG4C's: sending it no commands\n",
+			(int)sizeof(id), id);
+		ctx->id = TG4C_ID_OTHER;
+		return false;
+	}
+
+	dev_info(dev, "panel ID %*ph\n", (int)sizeof(id), id);
+	ctx->id = TG4C_ID_TG4C;
+	return true;
 }
 
 static void tg4c_write_rate(struct mipi_dsi_multi_context *ctx, unsigned int hz)
@@ -140,6 +210,8 @@ static int tg4c_prepare(struct drm_panel *panel)
 	guard(mutex)(&ctx->lock);
 	if (ctx->awake)
 		return 0;
+	if (!tg4c_check_id(ctx))
+		return -ENODEV;
 	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
 	mipi_dsi_msleep(&dsi_ctx, 120);
 	/* the DSI host wakes the link at 60 Hz */
@@ -158,6 +230,8 @@ static int tg4c_enable(struct drm_panel *panel)
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 
 	guard(mutex)(&ctx->lock);
+	if (!tg4c_check_id(ctx))
+		return -ENODEV;
 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
 	if (!dsi_ctx.accum_err)
 		ctx->display_on = true;
@@ -171,6 +245,8 @@ static int tg4c_disable(struct drm_panel *panel)
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 
 	guard(mutex)(&ctx->lock);
+	if (!tg4c_check_id(ctx))
+		return -ENODEV;
 	tg4c_lhbm_set(ctx, false);
 	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
 	mipi_dsi_msleep(&dsi_ctx, 100);
@@ -186,6 +262,8 @@ static int tg4c_unprepare(struct drm_panel *panel)
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 
 	guard(mutex)(&ctx->lock);
+	if (!tg4c_check_id(ctx))
+		return -ENODEV;
 	ctx->lhbm = false;	/* sleep ends it */
 	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
 	mipi_dsi_msleep(&dsi_ctx, 120);
@@ -204,7 +282,7 @@ static int tg4c_set_refresh_rate(struct drm_panel *panel, unsigned int hz)
 		return -EINVAL;
 
 	guard(mutex)(&ctx->lock);
-	if (!ctx->awake)
+	if (!ctx->awake || !tg4c_check_id(ctx))
 		return -ENODEV;
 	/* LHBM fails away from 120 Hz: end it first (Google's tg4c does too) */
 	if (hz != 120)
@@ -273,6 +351,8 @@ static int tg4c_bl_update_status(struct backlight_device *bl)
 	/* asleep: the level is kept and sent with the next update */
 	if (!ctx->awake)
 		return 0;
+	if (!tg4c_check_id(ctx))
+		return -ENODEV;
 
 	return mipi_dsi_dcs_set_display_brightness_large(ctx->dsi, brightness);
 }
@@ -304,6 +384,8 @@ static ssize_t local_hbm_mode_store(struct device *dev, struct device_attribute 
 		return -EPERM;
 
 	guard(mutex)(&ctx->lock);
+	if (!tg4c_check_id(ctx))
+		return -ENODEV;
 	ret = tg4c_lhbm_set(ctx, on);
 	return ret ?: count;
 }
@@ -362,6 +444,10 @@ static int tg4c_probe(struct mipi_dsi_device *dsi)
 	ctx->panel.prepared = true;
 	ctx->panel.enabled = true;
 	ctx->panel.prepare_prev_first = true;
+
+	/* the ID now, before any command, if the host allows reads yet */
+	scoped_guard(mutex, &ctx->lock)
+		tg4c_check_id(ctx);
 
 	bl = devm_backlight_device_register(dev, dev_name(dev), dev, ctx,
 					    &tg4c_bl_ops, &props);
