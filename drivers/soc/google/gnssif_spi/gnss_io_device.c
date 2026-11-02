@@ -193,6 +193,19 @@ static const struct file_operations misc_io_fops = {
 	.read = misc_read,
 };
 
+static void gnss_wlock_unregister(void *data)
+{
+	gnssif_wlock_unregister(data);
+}
+
+static void gnss_misc_deregister(void *data)
+{
+	struct io_device *iod = data;
+
+	misc_deregister(&iod->miscdev);
+	skb_queue_purge(&iod->sk_rx_q);
+}
+
 static int init_io_device(struct io_device *iod, struct device *dev)
 {
 	int ret = 0;
@@ -213,14 +226,22 @@ static int init_io_device(struct io_device *iod, struct device *dev)
 		gif_err("%s: wakeup_source_register fail\n", iod->name);
 		return -EINVAL;
 	}
+	ret = devm_add_action_or_reset(dev, gnss_wlock_unregister, iod->ws);
+	if (ret)
+		return ret;
 
 	ret = misc_register(&iod->miscdev);
-	if (ret)
+	if (ret) {
 		gif_err("%s: ERR! misc_register failed\n", iod->name);
+		return ret;
+	}
+	ret = devm_add_action_or_reset(dev, gnss_misc_deregister, iod);
+	if (ret)
+		return ret;
 
 	gif_info("---\n");
 
-	return ret;
+	return 0;
 }
 
 struct io_device *create_io_device(struct platform_device *pdev,
@@ -234,7 +255,7 @@ struct io_device *create_io_device(struct platform_device *pdev,
 	iod = devm_kzalloc(dev, sizeof(struct io_device), GFP_KERNEL);
 	if (!iod) {
 		gif_err("iod is NULL\n");
-		return NULL;
+		return ERR_PTR(-ENOMEM);
 	}
 
 	iod->name = pdata->node_name;
@@ -248,9 +269,8 @@ struct io_device *create_io_device(struct platform_device *pdev,
 
 	ret = init_io_device(iod, dev);
 	if (ret) {
-		devm_kfree(dev, iod);
 		gif_err("init_io_device fail (%d)\n", ret);
-		return NULL;
+		return ERR_PTR(ret);
 	}
 
 	gif_info("---\n");

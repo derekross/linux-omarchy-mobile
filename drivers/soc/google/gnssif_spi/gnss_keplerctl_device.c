@@ -51,6 +51,13 @@ static int kepler_betp_int_status(struct gnss_ctl *gc)
 	return gpiod_get_value(gc->gpio_ap2gnss_spi.desc);
 }
 
+static void gnss_disable_irq_wake(void *data)
+{
+	struct gnss_ctl *gc = data;
+
+	disable_irq_wake(gc->irq_gnss2ap_spi.num);
+}
+
 static void gnss_set_ops(struct gnss_ctl *gc)
 {
 	gc->ops.gnss_spi_status = kepler_spi_status;
@@ -84,7 +91,7 @@ static int init_ctl_device(struct gnss_ctl *gc, struct gnss_pdata *pdata)
 	gif_configure_irq(&gc->irq_gnss2ap_spi, gc->irq_gnss2ap_spi.num,
 			"kepler_spi_irq_handler", IRQF_TRIGGER_HIGH | IRQF_NO_AUTOEN);
 
-	ret = gif_request_irq(&gc->irq_gnss2ap_spi, kepler_spi_irq_handler, gc);
+	ret = gif_request_irq(gc->dev, &gc->irq_gnss2ap_spi, kepler_spi_irq_handler, gc);
 	if (ret) {
 		gif_err("Request irq fail - kepler_spi_irq_handler(%d)\n", ret);
 		return ret;
@@ -92,8 +99,13 @@ static int init_ctl_device(struct gnss_ctl *gc, struct gnss_pdata *pdata)
 
 	/* Without a wake source GNSS still works; it can't wake the AP. */
 	ret = enable_irq_wake(gc->irq_gnss2ap_spi.num);
-	if (ret)
+	if (ret) {
 		gif_err("Failed to enable wakeup_source - enable_irq_wake(%d)\n", ret);
+	} else {
+		ret = devm_add_action_or_reset(gc->dev, gnss_disable_irq_wake, gc);
+		if (ret)
+			return ret;
+	}
 
 	/* The line starts low, as Google's driver sets it. */
 	gc->gpio_ap2gnss_spi.label = "AP2GNSS_SPI";
@@ -101,7 +113,7 @@ static int init_ctl_device(struct gnss_ctl *gc, struct gnss_pdata *pdata)
 	if (IS_ERR(gc->gpio_ap2gnss_spi.desc)) {
 		ret = PTR_ERR(gc->gpio_ap2gnss_spi.desc);
 		gif_err("Can't get ap2gnss-spi-gpios (%d)\n", ret);
-		goto free_gpio_irq;
+		return ret;
 	}
 
 	init_completion(&gc->gnss_rdy_cmpl);
@@ -111,12 +123,6 @@ static int init_ctl_device(struct gnss_ctl *gc, struct gnss_pdata *pdata)
 	atomic_set(&gc->rx_in_progress, 0);
 
 	return 0;
-
-free_gpio_irq:
-	free_irq(gc->irq_gnss2ap_spi.num, gc);
-
-	return ret;
-
 }
 
 struct gnss_ctl *create_ctl_device(struct platform_device *pdev)
@@ -128,7 +134,7 @@ struct gnss_ctl *create_ctl_device(struct platform_device *pdev)
 
 	gc = devm_kzalloc(dev, sizeof(struct gnss_ctl), GFP_KERNEL);
 	if (!gc)
-		return NULL;
+		return ERR_PTR(-ENOMEM);
 	gc->dev = dev;
 	gc->pdata = pdata;
 	gc->name = pdata->name;
@@ -137,8 +143,7 @@ struct gnss_ctl *create_ctl_device(struct platform_device *pdev)
 	if (ret) {
 		gif_err("%s: init_ctl_device fail (err %d)\n",
 				pdata->name, ret);
-		devm_kfree(dev, gc);
-		return NULL;
+		return ERR_PTR(ret);
 	}
 
 	return gc;
