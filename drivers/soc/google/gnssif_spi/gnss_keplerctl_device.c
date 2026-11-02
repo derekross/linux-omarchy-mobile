@@ -51,11 +51,39 @@ static int kepler_betp_int_status(struct gnss_ctl *gc)
 	return gpiod_get_value(gc->gpio_ap2gnss_spi.desc);
 }
 
-static void gnss_disable_irq_wake(void *data)
+/*
+ * Take the core's requests only while /dev/gnss_ipc is open: what it
+ * sends with nobody listening is thrown away at the last release anyway,
+ * and a request line that rises while the modem is off or starting can't
+ * set the read work going.
+ */
+void gnss_ctl_irq_on(struct gnss_ctl *gc)
 {
-	struct gnss_ctl *gc = data;
+	int ret;
 
-	disable_irq_wake(gc->irq_gnss2ap_spi.num);
+	/* Without a wake source GNSS still works; it can't wake the AP. */
+	ret = enable_irq_wake(gc->irq_gnss2ap_spi.num);
+	if (ret)
+		gif_err("Failed to enable wakeup_source - enable_irq_wake(%d)\n", ret);
+	else
+		gc->irq_wake = true;
+
+	gif_enable_irq(&gc->irq_gnss2ap_spi);
+}
+
+void gnss_ctl_irq_off(struct gnss_ctl *gc)
+{
+	struct link_device *ld = gc->iod->ld;
+
+	/* The read work enables the interrupt again when it ends. */
+	gif_disable_irq_sync(&gc->irq_gnss2ap_spi);
+	cancel_delayed_work_sync(&ld->rx_dwork);
+	gif_disable_irq_sync(&gc->irq_gnss2ap_spi);
+
+	if (gc->irq_wake) {
+		disable_irq_wake(gc->irq_gnss2ap_spi.num);
+		gc->irq_wake = false;
+	}
 }
 
 static void gnss_set_ops(struct gnss_ctl *gc)
@@ -87,7 +115,7 @@ static int init_ctl_device(struct gnss_ctl *gc, struct gnss_pdata *pdata)
 	}
 	gc->irq_gnss2ap_spi.num = ret;
 
-	/* Disable the interrupt until gnss_main.c probe function finish */
+	/* Disabled until /dev/gnss_ipc is opened */
 	gif_configure_irq(&gc->irq_gnss2ap_spi, gc->irq_gnss2ap_spi.num,
 			"kepler_spi_irq_handler", IRQF_TRIGGER_HIGH | IRQF_NO_AUTOEN);
 
@@ -95,16 +123,6 @@ static int init_ctl_device(struct gnss_ctl *gc, struct gnss_pdata *pdata)
 	if (ret) {
 		gif_err("Request irq fail - kepler_spi_irq_handler(%d)\n", ret);
 		return ret;
-	}
-
-	/* Without a wake source GNSS still works; it can't wake the AP. */
-	ret = enable_irq_wake(gc->irq_gnss2ap_spi.num);
-	if (ret) {
-		gif_err("Failed to enable wakeup_source - enable_irq_wake(%d)\n", ret);
-	} else {
-		ret = devm_add_action_or_reset(gc->dev, gnss_disable_irq_wake, gc);
-		if (ret)
-			return ret;
 	}
 
 	/* The line starts low, as Google's driver sets it. */

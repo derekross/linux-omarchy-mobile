@@ -122,15 +122,12 @@ parse_dt_pdata_err:
 static void gnss_remove(struct platform_device *pdev)
 {
 	struct gnss_ctl *gc = platform_get_drvdata(pdev);
-	struct link_device *ld = gc->iod->ld;
 
 	/*
-	 * The read work enables the interrupt again when it ends, so stop it
-	 * before the interrupt is disabled for good. devm then releases the
-	 * device node, the work queue and the interrupt.
+	 * Nobody holds /dev/gnss_ipc open (it pins the module), so the
+	 * interrupt is off already; devm releases the device node, the work
+	 * queue and the interrupt.
 	 */
-	gif_disable_irq_sync(&gc->irq_gnss2ap_spi);
-	cancel_delayed_work_sync(&ld->rx_dwork);
 	gif_disable_irq_sync(&gc->irq_gnss2ap_spi);
 
 	gpiod_set_value(gc->gpio_ap2gnss_spi.desc, 0);
@@ -186,9 +183,6 @@ static int gnss_probe(struct platform_device *pdev)
 				     pdata->name);
 
 	platform_set_drvdata(pdev, gc);
-
-	/* wa: to prevent wrong irq handling during probe */
-	gif_enable_irq(&gc->irq_gnss2ap_spi);
 
 	gif_info("%s: ---\n", pdev->name);
 
