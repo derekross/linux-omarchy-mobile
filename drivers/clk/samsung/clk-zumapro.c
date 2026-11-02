@@ -287,10 +287,11 @@ static const struct samsung_gate_clock hsi2_gates[] __initconst = {
 	     0x20d0, 21, CLK_IGNORE_UNUSED, 0),
 	GATE(CLK_GOUT_SYSREG_HSI2, "zumapro_sysreg_hsi2", "zumapro_hsi2_noc_user",
 	     0x20e8, 21, CLK_IGNORE_UNUSED, 0),
+	/* GPIO bus clocks stay on, as for PERIC0's below */
 	GATE(CLK_GOUT_GPIO_HSI2UFS, "zumapro_gpio_hsi2ufs", "zumapro_hsi2_noc_user",
-	     0x2008, 21, CLK_IGNORE_UNUSED, 0),
+	     0x2008, 21, CLK_IS_CRITICAL, 0),
 	GATE(CLK_GOUT_GPIO_HSI2, "zumapro_gpio_hsi2", "zumapro_hsi2_noc_user",
-	     0x2060, 21, CLK_IGNORE_UNUSED, 0),
+	     0x2060, 21, CLK_IS_CRITICAL, 0),
 	GATE(CLK_GOUT_PCIE1_CTL_APB, "zumapro_pcie1_ctl_apb",
 	     "zumapro_hsi2_noc_user", 0x2094, 21, CLK_IGNORE_UNUSED, 0),
 	GATE(CLK_GOUT_PCIE1_DBI_ACLK, "zumapro_pcie1_dbi_aclk",
