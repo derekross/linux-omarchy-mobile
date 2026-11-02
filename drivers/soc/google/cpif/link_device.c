@@ -4415,8 +4415,10 @@ struct link_device *create_link_device(struct platform_device *pdev, u32 link_ty
 	return ld;
 
 error:
-	if (mld->dummy_net)
+	if (mld->dummy_net) {
+		napi_disable(&mld->mld_napi);
 		free_netdev(mld->dummy_net);
+	}
 	kfree(mld);
 	mif_err("xxx\n");
 	return NULL;
