@@ -404,17 +404,19 @@ config PCI_EXYNOS
 	  functions to implement the driver.
 
 config PCIE_GS201_CP
-	tristate "Google gs201 PCIe for the modem (bring-up)"
+	tristate "Google gs201 and zumapro PCIe for the modem (bring-up)"
 	depends on ARCH_EXYNOS || COMPILE_TEST
 	depends on OF && PCI_MSI && HAVE_ARM_SMCCC
 	select PCIE_DW
 	select EXYNOS_PMU
 	select MFD_SYSCON
 	help
-	  Bring-up driver for PCIe GEN4A_0 of Google's gs201 (Tensor G2), the
-	  link to the Samsung S5300 modem. It powers the modem through its
-	  control lines and trains the link one debugfs step at a time, for
-	  testing on a bench; it does not register a PCI host yet.
+	  Bring-up driver for the link to the Samsung S5300 modem: PCIe
+	  GEN4A_0 of Google's gs201 (Tensor G2, Pixel 7) and GEN3A_0 of
+	  zumapro (Tensor G4, Pixel 9a), whose two-lane PHY is driven by
+	  PHY_ZUMA_PCIE. It powers the modem through its control lines and
+	  trains the link one debugfs step at a time, for testing on a
+	  bench, or on request of the modem driver (EXYNOS_MODEM_IF).
 
 config PCIE_GS201
 	tristate "Google gs201 PCIe controller (host mode)"
