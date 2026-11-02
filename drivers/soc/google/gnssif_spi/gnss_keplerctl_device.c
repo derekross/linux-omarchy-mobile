@@ -6,8 +6,7 @@
 
 #include <linux/init.h>
 #include <linux/irq.h>
-#include <linux/gpio.h>
-#include <linux/of_gpio.h>
+#include <linux/gpio/consumer.h>
 #include <linux/delay.h>
 
 #include "include/gnss.h"
@@ -37,19 +36,19 @@ static irqreturn_t kepler_spi_irq_handler(int irq, void *data)
 
 static int kepler_spi_status(struct gnss_ctl *gc)
 {
-	return gpio_get_value(gc->gpio_gnss2ap_spi.num);
+	return gpiod_get_value(gc->gpio_gnss2ap_spi.desc);
 }
 
 static void kepler_send_betp_int(struct gnss_ctl *gc, int value)
 {
 	gif_debug("About to Set ap2gnss_spi value to %d\n", value);
-	gpio_set_value(gc->gpio_ap2gnss_spi.num, value);
+	gpiod_set_value(gc->gpio_ap2gnss_spi.desc, value);
 	gif_debug("complete to set ap2gnss_spi value to %d\n", value);
 }
 
 static int kepler_betp_int_status(struct gnss_ctl *gc)
 {
-	return gpio_get_value(gc->gpio_ap2gnss_spi.num);
+	return gpiod_get_value(gc->gpio_ap2gnss_spi.desc);
 }
 
 static void gnss_set_ops(struct gnss_ctl *gc)
@@ -62,29 +61,24 @@ static void gnss_set_ops(struct gnss_ctl *gc)
 static int init_ctl_device(struct gnss_ctl *gc, struct gnss_pdata *pdata)
 {
 	int ret;
-	struct platform_device *pdev;
-	struct device_node *np;
 
 	gnss_set_ops(gc);
 
 	dev_set_drvdata(gc->dev, gc);
 
-	pdev = to_platform_device(gc->dev);
-	np = pdev->dev.of_node;
-
 	/* GNSS2AP SPI INT */
-	gc->gpio_gnss2ap_spi.num = of_get_named_gpio(np, "gpio_gnss2ap_spi", 0);
-	if (gc->gpio_gnss2ap_spi.num < 0) {
-		gif_err("Can't get gpio_gnss2ap_spi!\n");
-		return -ENODEV;
-	}
 	gc->gpio_gnss2ap_spi.label = "GNSS2AP_SPI";
-	ret = gpio_request(gc->gpio_gnss2ap_spi.num, gc->gpio_gnss2ap_spi.label);
-	if (ret) {
-		gif_err("Request gpio fail - gpio_gnss2ap_spi.num failed(%d)\n", ret);
+	gc->gpio_gnss2ap_spi.desc = devm_gpiod_get(gc->dev, "gnss2ap-spi", GPIOD_IN);
+	if (IS_ERR(gc->gpio_gnss2ap_spi.desc)) {
+		gif_err("Can't get gnss2ap-spi-gpios!\n");
+		return PTR_ERR(gc->gpio_gnss2ap_spi.desc);
+	}
+	ret = gpiod_to_irq(gc->gpio_gnss2ap_spi.desc);
+	if (ret < 0) {
+		gif_err("gnss2ap-spi-gpios has no interrupt (%d)\n", ret);
 		return ret;
 	}
-	gc->irq_gnss2ap_spi.num = gpio_to_irq(gc->gpio_gnss2ap_spi.num);
+	gc->irq_gnss2ap_spi.num = ret;
 
 	/* Disable the interrupt until gnss_main.c probe function finish */
 	gif_configure_irq(&gc->irq_gnss2ap_spi, gc->irq_gnss2ap_spi.num,
@@ -93,37 +87,22 @@ static int init_ctl_device(struct gnss_ctl *gc, struct gnss_pdata *pdata)
 	ret = gif_request_irq(&gc->irq_gnss2ap_spi, kepler_spi_irq_handler, gc);
 	if (ret) {
 		gif_err("Request irq fail - kepler_spi_irq_handler(%d)\n", ret);
-		goto free_gpio_gnss2ap;
+		return ret;
 	}
 
+	/* Without a wake source GNSS still works; it can't wake the AP. */
 	ret = enable_irq_wake(gc->irq_gnss2ap_spi.num);
-	if (ret) {
+	if (ret)
 		gif_err("Failed to enable wakeup_source - enable_irq_wake(%d)\n", ret);
-		goto free_gpio_irq;
-	}
 
-	gc->gpio_ap2gnss_spi.num =
-				of_get_named_gpio(np, "gpio_ap2gnss_spi", 0);
-	if (gc->gpio_ap2gnss_spi.num < 0) {
-		gif_err("Can't get gpio_ap2gnss_spi!\n");
-		ret = -ENODEV;
-		goto free_gpio_irq;
-	}
+	/* The line starts low, as Google's driver sets it. */
 	gc->gpio_ap2gnss_spi.label = "AP2GNSS_SPI";
-	ret = gpio_request(gc->gpio_ap2gnss_spi.num, gc->gpio_ap2gnss_spi.label);
-	if (ret) {
-		gif_err("Request gpio fail - gpio_ap2gnss_spi.num failed(%d)\n", ret);
+	gc->gpio_ap2gnss_spi.desc = devm_gpiod_get(gc->dev, "ap2gnss-spi", GPIOD_OUT_LOW);
+	if (IS_ERR(gc->gpio_ap2gnss_spi.desc)) {
+		ret = PTR_ERR(gc->gpio_ap2gnss_spi.desc);
+		gif_err("Can't get ap2gnss-spi-gpios (%d)\n", ret);
 		goto free_gpio_irq;
 	}
-
-	ret = gpio_direction_output(gc->gpio_ap2gnss_spi.num, 0);
-	if (ret) {
-		gif_err("Set gpio direction fail - gpio_ap2gnss_spi.num failed(%d)\n", ret);
-		goto free_gpio_ap2gnss;
-	}
-
-	/* initialize gpio values to all zero */
-	gpio_set_value(gc->gpio_ap2gnss_spi.num, 0);
 
 	init_completion(&gc->gnss_rdy_cmpl);
 
@@ -131,16 +110,10 @@ static int init_ctl_device(struct gnss_ctl *gc, struct gnss_pdata *pdata)
 	atomic_set(&gc->tx_in_progress, 0);
 	atomic_set(&gc->rx_in_progress, 0);
 
-	return ret;
-
-free_gpio_ap2gnss:
-	gpio_free(gc->gpio_ap2gnss_spi.num);
+	return 0;
 
 free_gpio_irq:
-	free_irq(gc->irq_gnss2ap_spi.num, &gc);
-
-free_gpio_gnss2ap:
-	gpio_free(gc->gpio_gnss2ap_spi.num);
+	free_irq(gc->irq_gnss2ap_spi.num, gc);
 
 	return ret;
 

@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config EXYNOS_GNSS_IF_SPI
+	tristate "Samsung Kepler GNSS interface over SPI"
+	depends on SPI && GPIOLIB && OF
+	select WANT_DEV_COREDUMP
+	help
+	  Google's driver for the Kepler GNSS core in Samsung's S5300 modem,
+	  as in the Pixel 9a. gnss_spi binds the core's SPI device, and
+	  gnssif binds its two request lines and gives the GNSS daemon the
+	  character device /dev/gnss_ipc. The core runs only while the modem
+	  is up, with firmware the daemon loads through the modem driver.
+
+	  To compile this driver as modules, choose M here: the modules will
+	  be called gnss_spi and gnssif.

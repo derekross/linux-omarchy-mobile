@@ -95,7 +95,14 @@ static const struct of_device_id gnss_spi_dt_match[] = {
 };
 MODULE_DEVICE_TABLE(of, gnss_spi_dt_match);
 
+static const struct spi_device_id gnss_spi_ids[] = {
+	{ "gnss-spi" },
+	{ }
+};
+MODULE_DEVICE_TABLE(spi, gnss_spi_ids);
+
 static struct spi_driver gnss_spi_driver = {
+	.id_table = gnss_spi_ids,
 	.probe = gnss_spi_probe,
 	.remove = gnss_spi_remove,
 	.driver = {

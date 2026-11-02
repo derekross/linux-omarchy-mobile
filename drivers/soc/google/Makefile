@@ -6,3 +6,4 @@ obj-$(CONFIG_GS201_AOC_RAILS)	+= gs201-aoc-rails.o
 obj-$(CONFIG_GS201_CAM_POWER)	+= gs201-cam-power.o
 obj-y				+= aoc/
 obj-y				+= cpif/
+obj-$(CONFIG_EXYNOS_GNSS_IF_SPI)	+= gnssif_spi/

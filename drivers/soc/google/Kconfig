@@ -95,6 +95,7 @@ config GS201_AOC_ALSA
 	  limits in device/cheetah/AUDIO-PLAN.md.
 
 source "drivers/soc/google/cpif/Kconfig"
+source "drivers/soc/google/gnssif_spi/Kconfig"
 
 endmenu
 
