@@ -18,6 +18,11 @@ description:
   Wi-Fi controller, programmed with the same sequence, so it uses zuma's
   compatible as a fallback.
 
+  zumapro's first PCIe controller, which connects the modem on the Pixel 9a,
+  has a two-lane Gen3 PHY with the same register blocks. It has its own
+  external PLL controls and power-down sequence and two lanes of PMA
+  registers, so it has a compatible of its own.
+
 properties:
   compatible:
     oneOf:
@@ -25,6 +30,7 @@ properties:
       - items:
           - const: google,zumapro-pcie-phy
           - const: google,zuma-pcie-phy
+      - const: google,zumapro-pcie-gen3x2-phy
 
   reg:
     items:
@@ -72,5 +78,15 @@ examples:
               <0x13130000 0x5000>;
         reg-names = "pma", "pcs", "rst", "udbg", "soc";
         samsung,pmu-syscon = <&pmu_system_controller 0x3ec8>;
+        #phy-cells = <0>;
+    };
+  - |
+    phy@12140000 {
+        compatible = "google,zumapro-pcie-gen3x2-phy";
+        reg = <0x12140000 0x3000>, <0x12120000 0x5000>,
+              <0x12101400 0x10>, <0x12130000 0xd000>,
+              <0x12110000 0x5000>;
+        reg-names = "pma", "pcs", "rst", "udbg", "soc";
+        samsung,pmu-syscon = <&pmu_system_controller 0x3ec4>;
         #phy-cells = <0>;
     };
