@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/gnss/samsung,exynos-gnss.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Samsung Kepler GNSS core, handshake lines
+
+maintainers:
+  - W4HO <87742609+W4HO-ham@users.noreply.github.com>
+
+description: |
+  The control side of the Kepler GNSS core's SPI link (samsung,gnss-spi):
+  two lines between the core and the host that pace the transfers. The
+  core raises its line while it has data for the host, and to answer the
+  host's request to write. The host raises its line to ask to write, and
+  pulses it to acknowledge the core's request before reading. The node has
+  no registers, clocks or supplies of its own.
+
+properties:
+  compatible:
+    const: samsung,exynos-gnss
+
+  gnss2ap-spi-gpios:
+    maxItems: 1
+    description:
+      Core to host request line, active high. It is also the host's
+      interrupt, so its GPIO controller must be able to raise one.
+
+  ap2gnss-spi-gpios:
+    maxItems: 1
+    description:
+      Host to core request line, active high. Low when the host is idle.
+
+required:
+  - compatible
+  - gnss2ap-spi-gpios
+  - ap2gnss-spi-gpios
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/gpio/gpio.h>
+
+    gnss {
+        compatible = "samsung,exynos-gnss";
+        gnss2ap-spi-gpios = <&gpa5 4 GPIO_ACTIVE_HIGH>;
+        ap2gnss-spi-gpios = <&gpp2 3 GPIO_ACTIVE_HIGH>;
+    };
