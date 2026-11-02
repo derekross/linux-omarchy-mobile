@@ -34,6 +34,7 @@ struct gs201_pcie_cp_event {
 int gs201_pcie_cp_poweron(unsigned int speed);
 void gs201_pcie_cp_poweroff(void);
 bool gs201_pcie_cp_link_ok(void);
+int gs201_pcie_cp_doorbell(void __iomem *addr, u32 val, u32 *readback);
 int gs201_pcie_cp_check_msi_addr(u64 addr);
 int gs201_pcie_cp_register_queue(irq_handler_t handler, void *ctx, int *irq);
 void gs201_pcie_cp_set_perst_level(int level);
@@ -49,6 +50,8 @@ void gs201_pcie_cp_dump(void);
 static inline int gs201_pcie_cp_poweron(unsigned int speed) { return -ENODEV; }
 static inline void gs201_pcie_cp_poweroff(void) { }
 static inline bool gs201_pcie_cp_link_ok(void) { return false; }
+static inline int gs201_pcie_cp_doorbell(void __iomem *addr, u32 val,
+					 u32 *readback) { return -ENODEV; }
 static inline int gs201_pcie_cp_check_msi_addr(u64 addr) { return -ENODEV; }
 static inline int gs201_pcie_cp_register_queue(irq_handler_t handler,
 					       void *ctx, int *irq)
