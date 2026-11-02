@@ -1620,6 +1620,44 @@ bool gs201_pcie_cp_link_ok(void)
 EXPORT_SYMBOL_GPL(gs201_pcie_cp_link_ok);
 
 /**
+ * gs201_pcie_cp_doorbell() - write the modem's doorbell and read it back
+ * @addr: the doorbell register in the modem's BAR window (ioremapped)
+ * @val: the interrupt number to ring
+ * @readback: the register's value after the write
+ *
+ * The BAR window is reachable only while the endpoint is (link up, iATU
+ * set), and an access while the PHY is isolated or powered down can hang
+ * the SoC. The modem driver checks the link before it writes, but the CP
+ * can ask for the link to go down between its check and its access, and
+ * its read-back loop on the register (a millisecond per try, up to 100)
+ * spans that window. cfg_lock serializes the access against
+ * cp_link_down(), which clears cfg_ep_ok under it before it touches
+ * PERST#, the PHY or the isolation.
+ *
+ * Return: 0, -ENODEV before probe, -ENOLINK while the endpoint is not
+ * reachable (the caller reserves the doorbell for the next link up).
+ */
+int gs201_pcie_cp_doorbell(void __iomem *addr, u32 val, u32 *readback)
+{
+	struct gs201_pcie_cp *cp = READ_ONCE(gs201_cp);
+	unsigned long flags;
+	int ret = -ENOLINK;
+
+	if (!cp)
+		return -ENODEV;
+	raw_spin_lock_irqsave(&cp->cfg_lock, flags);
+	if (cp->cfg_ep_ok) {
+		writel(val, addr);
+		*readback = readl(addr);
+		ret = 0;
+	}
+	raw_spin_unlock_irqrestore(&cp->cfg_lock, flags);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(gs201_pcie_cp_doorbell);
+
+/**
  * gs201_pcie_cp_check_msi_addr() - check the modem driver's MSI target
  * @addr: the MSI page the modem driver expects
  *
