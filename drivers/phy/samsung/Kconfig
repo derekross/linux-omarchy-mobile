@@ -45,11 +45,13 @@ config PHY_ZUMA_PCIE
 	depends on EXYNOS_PMU || COMPILE_TEST
 	select GENERIC_PHY
 	help
-	  Enable support for the one-lane PCIe Gen3 PHY of the Google zuma
-	  (Tensor G3) SoC. It is used by the gs201 PCIe controller driver,
-	  which connects the Wi-Fi chip on Pixel 8 phones. The PHY is
-	  programmed from stock's register tables, and its power-down
-	  isolation is released through the PMU.
+	  Enable support for the PCIe Gen3 PHYs of the Google zuma (Tensor G3)
+	  and zumapro (Tensor G4) SoCs: the one-lane PHY that connects the
+	  Wi-Fi chip on Pixel 8 phones and on the Pixel 9a, and zumapro's
+	  two-lane PHY that connects the Pixel 9a's modem. They are used by
+	  the gs201 PCIe controller driver. Each PHY is programmed from
+	  stock's register tables, and its power-down isolation is released
+	  through the PMU.
 
 config PHY_GS201_MIPI_DCPHY
 	tristate "Google gs201 MIPI DC-PHY receiver driver"
