@@ -493,6 +493,41 @@
 };
 
 /*
+ * The Samsung S5300 modem on pcie_0, with its control lines from stock's
+ * cpif node (Google's GPL zumapro-board-cp-s5300-sit.dtsi and the 9a's
+ * board overlay) and the memory it shares with the host from stock's
+ * cp_shmem node. Raw levels, as Google's CPIF drives them. The link
+ * driver (pcie-gs201-cp) drives the lines while the modem node is
+ * enabled; the modem driver (CPIF) takes them, and the memory, when an
+ * overlay disables it. Nothing reaches the controller, the PHY or the
+ * lines until the link driver is loaded with allow_hw=1.
+ */
+&pcie_0 {
+	memory-region = <&cp_msi_rmem>;
+	status = "okay";
+
+	modem {
+		compatible = "samsung,s5300-modem";
+		memory-region = <&cp_rmem>, <&cp_msi_rmem>, <&cp_rmem_1>;
+		ap2cp-pda-active-gpios = <&gpp16 2 GPIO_ACTIVE_HIGH>;
+		ap2cp-cp-pwr-on-gpios = <&gpp12 2 GPIO_ACTIVE_HIGH>;
+		ap2cp-nreset-gpios = <&gpp12 3 GPIO_ACTIVE_HIGH>;
+		ap2cp-cp-wrst-gpios = <&gpp16 3 GPIO_ACTIVE_HIGH>;
+		ap2cp-pm-wrst-gpios = <&gpp8 3 GPIO_ACTIVE_HIGH>;
+		ap2cp-wakeup-gpios = <&gpp16 0 GPIO_ACTIVE_HIGH>;
+		ap2cp-dump-noti-gpios = <&gpp16 1 GPIO_ACTIVE_HIGH>;
+		cp2ap-cp-wrst-gpios = <&gpa7 3 GPIO_ACTIVE_HIGH>;
+		cp2ap-ps-hold-gpios = <&gpa5 0 GPIO_ACTIVE_HIGH>;
+		cp2ap-wakeup-gpios = <&gpa5 1 GPIO_ACTIVE_HIGH>;
+		cp2ap-phone-active-gpios = <&gpa5 2 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&pcie_0_phy {
+	status = "okay";
+};
+
+/*
  * Wi-Fi: the BCM4383 on pcie_1, one lane at Gen2, the chip's own limit
  * (its LnkCap reads 5 GT/s). Its DMA buffers come from wifi_dma_pool.
  */
@@ -552,12 +587,30 @@
 };
 
 &pinctrl_far_alive {
+	pinctrl-0 = <&cp2ap_float>, <&cp2ap_wakeup_up>;
+	pinctrl-names = "default";
 	status = "okay";
 
 	bt_host_wake: bt-host-wake-pins {
 		samsung,pins = "gpa5-6";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_DOWN>;
+	};
+
+	/*
+	 * The modem's PS_HOLD and PHONE_ACTIVE float, as stock leaves them.
+	 * The bootloader leaves the bank pulled down, which hid both lines
+	 * from the host until the modem drove them high.
+	 */
+	cp2ap_float: cp2ap-float-pins {
+		samsung,pins = "gpa5-0", "gpa5-2";
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+	};
+
+	/* The modem's wake line, pulled up as the Pixel 7's bootloader leaves it */
+	cp2ap_wakeup_up: cp2ap-wakeup-up-pins {
+		samsung,pins = "gpa5-1";
+		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
 	};
 };
 
