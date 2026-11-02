@@ -1816,9 +1816,21 @@ static int pktproc_get_info(struct pktproc_adaptor *ppa, struct device_node *np)
 	}
 #endif
 
-	/* Check if config and dt are consistent */
-	if (ppa->use_hw_iocc != IS_ENABLED(CONFIG_LINK_DEVICE_PCIE_IOCC)) {
+	/*
+	 * Check if config and dt are consistent. A link without IO coherency
+	 * (zumapro's without samsung,sysreg) says use_hw_iocc 0, and is fine
+	 * as long as its buffers are uncached: the cache maintenance that
+	 * cached buffers would need is built only without
+	 * LINK_DEVICE_PCIE_IOCC. pktproc_create() refuses cached info and
+	 * descriptor regions without IO coherency either way.
+	 */
+	if (ppa->use_hw_iocc && !IS_ENABLED(CONFIG_LINK_DEVICE_PCIE_IOCC)) {
 		mif_err("PCIe IOCC config and dt are inconsistent\n");
+		return -EINVAL;
+	}
+	if (!ppa->use_hw_iocc && ppa->buff_rgn_cached &&
+	    IS_ENABLED(CONFIG_LINK_DEVICE_PCIE_IOCC)) {
+		mif_err("cached buffers without IOCC need LINK_DEVICE_PCIE_IOCC off\n");
 		return -EINVAL;
 	}
 
