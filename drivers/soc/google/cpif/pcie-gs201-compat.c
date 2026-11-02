@@ -115,6 +115,12 @@ void exynos_pcie_rc_force_linkdown_work(int ch_num)
 	gs201_pcie_cp_force_linkdown();
 }
 
+/* The doorbell write under the controller's link lock (see gs201_pcie_cp_doorbell()) */
+int exynos_pcie_rc_doorbell(int ch_num, void __iomem *addr, u32 val, u32 *readback)
+{
+	return cp_ch_ok(ch_num) ? gs201_pcie_cp_doorbell(addr, val, readback) : -ENODEV;
+}
+
 int exynos_pcie_rc_chk_link_status(int ch_num)
 {
 	return cp_ch_ok(ch_num) && gs201_pcie_cp_link_ok();
