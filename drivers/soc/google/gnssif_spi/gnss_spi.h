@@ -14,6 +14,8 @@
 #define MAX_SPI_RX_SIZE	SZ_2K
 #define DEFAULT_SPI_TX_SIZE	SZ_4K
 #define SPI_BITS_PER_WORD	32
+/* the core's block, and the FIFO depth of the SPI controller it is on */
+#define GNSS_SPI_BLOCK		64U
 
 struct gnss_spi {
 	struct spi_device *spi;

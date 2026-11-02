@@ -10,6 +10,8 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
+#include <linux/slab.h>
+#include <linux/swab.h>
 
 #include "include/gnss.h"
 #include "gnss_spi.h"
@@ -23,52 +25,82 @@ bool gnss_spi_bound(void)
 }
 EXPORT_SYMBOL_GPL(gnss_spi_bound);
 
-int gnss_spi_send(char *buff, unsigned int size, char *rx_buff)
+/*
+ * Swap the bytes of each 32-bit word. Google's SPI controller driver
+ * sends GNSS's 32-bit words in its swap mode (swap-mode in the board's
+ * device tree: bytes and half-words swapped on TX and RX), which puts
+ * them on the wire in memory order. spi-s3c64xx has no swap mode and
+ * shifts each word out most significant byte first, so swap here.
+ */
+static void gnss_spi_swab(char *buf, unsigned int size)
 {
-	int ret = 0;
+	u32 *w = (u32 *)buf;
+	unsigned int i;
+
+	for (i = 0; i < size / 4; i++)
+		w[i] = swab32(w[i]);
+}
+
+/*
+ * One message of transfers of GNSS_SPI_BLOCK bytes at most. The core's
+ * data comes in 64-byte blocks, and Google's driver reads one block per
+ * transfer. spi-s3c64xx moves a transfer that fills its 64-byte FIFO in
+ * one piece, but cuts a longer one into 60-byte pieces, and on the Pixel
+ * 9a the cuts lost data; so writes go in blocks too.
+ */
+static int gnss_spi_xfer(char *tx_buf, char *rx_buf, unsigned int size)
+{
+	unsigned int n = DIV_ROUND_UP(size, GNSS_SPI_BLOCK);
+	struct spi_transfer *t;
 	struct spi_message msg;
-	struct spi_transfer tx;
+	unsigned int i, off;
+	int ret;
 
 	if (!gnss_spi_bound())
 		return -ENODEV;
+	if (!size || size % sizeof(u32))
+		return -EINVAL;
 
-	memset(&tx, 0, sizeof(struct spi_transfer));
+	t = kcalloc(n, sizeof(*t), GFP_KERNEL);
+	if (!t)
+		return -ENOMEM;
+
+	if (tx_buf)
+		gnss_spi_swab(tx_buf, size);
+
 	spi_message_init(&msg);
-	tx.len = size;
-	tx.tx_buf = buff;
-	tx.bits_per_word = SPI_BITS_PER_WORD;
-	if (rx_buff)
-		tx.rx_buf = rx_buff;
-	spi_message_add_tail(&tx, &msg);
+	for (i = 0, off = 0; i < n; i++, off += GNSS_SPI_BLOCK) {
+		t[i].len = min(size - off, GNSS_SPI_BLOCK);
+		t[i].tx_buf = tx_buf ? tx_buf + off : NULL;
+		t[i].rx_buf = rx_buf ? rx_buf + off : NULL;
+		t[i].bits_per_word = SPI_BITS_PER_WORD;
+		spi_message_add_tail(&t[i], &msg);
+	}
+
 	ret = spi_sync(gnss_if.spi, &msg);
 	if (ret < 0)
 		gif_err("spi_sync() error:%d\n", ret);
 
+	/* Give the caller its buffer back as it was. */
+	if (tx_buf)
+		gnss_spi_swab(tx_buf, size);
+	if (rx_buf && !ret)
+		gnss_spi_swab(rx_buf, size);
+
+	kfree(t);
+
 	return ret;
+}
+
+int gnss_spi_send(char *buff, unsigned int size, char *rx_buff)
+{
+	return gnss_spi_xfer(buff, rx_buff, size);
 }
 EXPORT_SYMBOL_GPL(gnss_spi_send);
 
 int gnss_spi_recv(char *buff, unsigned int size)
 {
-	int ret = 0;
-	struct spi_message msg;
-	struct spi_transfer rx;
-
-	if (!gnss_spi_bound())
-		return -ENODEV;
-
-	memset(&rx, 0, sizeof(struct spi_transfer));
-	rx.len = size;
-	rx.rx_buf = buff;
-	rx.bits_per_word = SPI_BITS_PER_WORD;
-	spi_message_init(&msg);
-	spi_message_add_tail(&rx, &msg);
-	ret = spi_sync(gnss_if.spi, &msg);
-	if (ret < 0)
-		gif_err("spi_sync() error:%d\n", ret);
-
-	return ret;
-
+	return gnss_spi_xfer(NULL, buff, size);
 }
 EXPORT_SYMBOL_GPL(gnss_spi_recv);
 
