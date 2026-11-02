@@ -13,6 +13,7 @@
 #include <linux/vmalloc.h>
 
 #include "gnss_prj.h"
+#include "gnss_spi.h"
 #include "gnss_utils.h"
 
 /* Hand a dump to devcoredump, which frees it. */
@@ -151,6 +152,14 @@ static int gnss_probe(struct platform_device *pdev)
 		gif_err("No DT data!\n");
 		return -ENODEV;
 	}
+
+	/*
+	 * The core's requests are read over gnss_spi: without its device
+	 * the read work would find nothing to read from while the request
+	 * line stays high.
+	 */
+	if (!gnss_spi_bound())
+		return dev_err_probe(dev, -EPROBE_DEFER, "no GNSS SPI device yet\n");
 
 	pdata = gnss_if_parse_dt_pdata(dev);
 	if (IS_ERR(pdata)) {

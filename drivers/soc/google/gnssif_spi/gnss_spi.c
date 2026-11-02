@@ -14,12 +14,23 @@
 #include "include/gnss.h"
 #include "gnss_spi.h"
 
+static struct gnss_spi gnss_if;
+
+/* gnssif binds only once the SPI device is there. */
+bool gnss_spi_bound(void)
+{
+	return !!READ_ONCE(gnss_if.spi);
+}
+EXPORT_SYMBOL_GPL(gnss_spi_bound);
 
 int gnss_spi_send(char *buff, unsigned int size, char *rx_buff)
 {
 	int ret = 0;
 	struct spi_message msg;
 	struct spi_transfer tx;
+
+	if (!gnss_spi_bound())
+		return -ENODEV;
 
 	memset(&tx, 0, sizeof(struct spi_transfer));
 	spi_message_init(&msg);
@@ -35,13 +46,16 @@ int gnss_spi_send(char *buff, unsigned int size, char *rx_buff)
 
 	return ret;
 }
-EXPORT_SYMBOL(gnss_spi_send);
+EXPORT_SYMBOL_GPL(gnss_spi_send);
 
 int gnss_spi_recv(char *buff, unsigned int size)
 {
 	int ret = 0;
 	struct spi_message msg;
 	struct spi_transfer rx;
+
+	if (!gnss_spi_bound())
+		return -ENODEV;
 
 	memset(&rx, 0, sizeof(struct spi_transfer));
 	rx.len = size;
@@ -56,7 +70,7 @@ int gnss_spi_recv(char *buff, unsigned int size)
 	return ret;
 
 }
-EXPORT_SYMBOL(gnss_spi_recv);
+EXPORT_SYMBOL_GPL(gnss_spi_recv);
 
 static int gnss_spi_probe(struct spi_device *spi)
 {
@@ -71,7 +85,7 @@ static int gnss_spi_probe(struct spi_device *spi)
 		goto err_setup;
 	}
 	spi_set_drvdata(spi, &gnss_if);
-	gnss_if.spi = spi;
+	WRITE_ONCE(gnss_if.spi, spi);
 	gif_info("---\n");
 
 	return 0;
@@ -86,6 +100,7 @@ static void gnss_spi_remove (struct spi_device *spi)
 {
 	struct gnss_spi *gnss_if = spi_get_drvdata(spi);
 
+	WRITE_ONCE(gnss_if->spi, NULL);
 	mutex_destroy(&gnss_if->lock);
 }
 
@@ -107,7 +122,6 @@ static struct spi_driver gnss_spi_driver = {
 	.remove = gnss_spi_remove,
 	.driver = {
 		.name = "gnss_spi",
-		.owner = THIS_MODULE,
 		.of_match_table = of_match_ptr(gnss_spi_dt_match),
 		.suppress_bind_attrs = true,
 	},
