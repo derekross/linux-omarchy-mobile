@@ -76,7 +76,8 @@ static inline int gnssif_wlock_active(struct wakeup_source *ws)
 /* gnss irq */
 void gif_configure_irq(struct gnss_irq *irq, unsigned int num, const char *name,
 			unsigned long flags);
-int gif_request_irq(struct gnss_irq *irq, irq_handler_t isr, void *data);
+int gif_request_irq(struct device *dev, struct gnss_irq *irq, irq_handler_t isr,
+		    void *data);
 void gif_enable_irq(struct gnss_irq *irq);
 void gif_disable_irq_nosync(struct gnss_irq *irq);
 void gif_disable_irq_sync(struct gnss_irq *irq);

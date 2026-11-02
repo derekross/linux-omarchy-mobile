@@ -24,11 +24,12 @@ void gif_configure_irq(struct gnss_irq *irq, unsigned int num, const char *name,
 	gif_info("name:%s num:%d flags:0x%08lX\n", name, num, flags);
 }
 
-int gif_request_irq(struct gnss_irq *irq, irq_handler_t isr, void *data)
+int gif_request_irq(struct device *dev, struct gnss_irq *irq, irq_handler_t isr,
+		    void *data)
 {
 	int ret;
 
-	ret = request_irq(irq->num, isr, irq->flags, irq->name, data);
+	ret = devm_request_irq(dev, irq->num, isr, irq->flags, irq->name, data);
 	if (ret) {
 		gif_err("%s: ERR! request_irq fail (%d)\n", irq->name, ret);
 		return ret;
@@ -80,25 +81,27 @@ exit:
 
 void gif_disable_irq_sync(struct gnss_irq *irq)
 {
+	unsigned long flags;
+
 	if (irq->registered == false)
 		return;
 
-	spin_lock(&irq->lock);
+	spin_lock_irqsave(&irq->lock, flags);
 
 	if (!irq->active) {
-		spin_unlock(&irq->lock);
+		spin_unlock_irqrestore(&irq->lock, flags);
 		gif_debug("%s(#%d) is not active <%ps>\n",
 				irq->name, irq->num, CALLER);
 		return;
 	}
 
-	spin_unlock(&irq->lock);
+	spin_unlock_irqrestore(&irq->lock, flags);
 
 	disable_irq(irq->num);
 
-	spin_lock(&irq->lock);
+	spin_lock_irqsave(&irq->lock, flags);
 	irq->active = false;
-	spin_unlock(&irq->lock);
+	spin_unlock_irqrestore(&irq->lock, flags);
 
 	gif_debug("%s(#%d) is disabled <%ps>\n",
 			irq->name, irq->num, CALLER);

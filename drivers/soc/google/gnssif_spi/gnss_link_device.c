@@ -215,13 +215,13 @@ struct link_device *create_link_device(struct platform_device *pdev)
 	pdata = (struct gnss_pdata *)dev->platform_data;
 	if (!pdata) {
 		gif_err("ERR! gnss == NULL\n");
-		return NULL;
+		return ERR_PTR(-EINVAL);
 	}
 
 	ld = devm_kzalloc(dev, sizeof(struct link_device), GFP_KERNEL);
 	if (!ld) {
 		gif_err("ERR! link device kzalloc fail\n");
-		return NULL;
+		return ERR_PTR(-ENOMEM);
 	}
 
 	ld->pdata = pdata;
@@ -231,16 +231,15 @@ struct link_device *create_link_device(struct platform_device *pdev)
 	ld->max_spi_rx_size = MAX_SPI_RX_SIZE;
 	ld->spi_tx_size = DEFAULT_SPI_TX_SIZE;
 
-	ld->rx_wq = alloc_workqueue("gnss_spi_wq",
-					__WQ_LEGACY | WQ_MEM_RECLAIM | WQ_UNBOUND, 1);
+	/* Google's: unbound, one work item at a time */
+	ld->rx_wq = devm_alloc_ordered_workqueue(dev, "gnss_spi_wq", WQ_MEM_RECLAIM);
 	if (!ld->rx_wq) {
 		gif_err("alloc_workqueue() error\n");
-		goto exit;
+		return ERR_PTR(-ENOMEM);
 	}
 	INIT_DELAYED_WORK(&ld->rx_dwork, rx_work);
 
 	gif_info("---\n");
 
-exit:
 	return ld;
 }
