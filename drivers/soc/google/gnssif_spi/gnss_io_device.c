@@ -60,7 +60,11 @@ static int misc_open(struct inode *inode, struct file *filp)
 
 	filp->private_data = (void *)iod;
 
+	mutex_lock(&iod->open_lock);
 	ref_cnt = atomic_inc_return(&iod->opened);
+	if (ref_cnt == 1)
+		gnss_ctl_irq_on(iod->gc);
+	mutex_unlock(&iod->open_lock);
 
 	gif_info("%s (opened %d)\n", iod->name, ref_cnt);
 
@@ -72,9 +76,13 @@ static int misc_release(struct inode *inode, struct file *filp)
 	struct io_device *iod = (struct io_device *)filp->private_data;
 	int ref_cnt;
 
+	mutex_lock(&iod->open_lock);
 	ref_cnt = atomic_dec_return(&iod->opened);
-	if (ref_cnt == 0)
+	if (ref_cnt == 0) {
+		gnss_ctl_irq_off(iod->gc);
 		skb_queue_purge(&iod->sk_rx_q);
+	}
+	mutex_unlock(&iod->open_lock);
 
 	gif_info("%s (opened %d)\n", iod->name, ref_cnt);
 
@@ -216,6 +224,7 @@ static int init_io_device(struct io_device *iod, struct device *dev)
 
 	init_waitqueue_head(&iod->wq);
 	skb_queue_head_init(&iod->sk_rx_q);
+	mutex_init(&iod->open_lock);
 
 	iod->miscdev.minor = MISC_DYNAMIC_MINOR;
 	iod->miscdev.name = iod->name;

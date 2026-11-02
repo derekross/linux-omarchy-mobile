@@ -8,6 +8,7 @@
 #define __GNSS_PRJ_H__
 
 #include <linux/miscdevice.h>
+#include <linux/mutex.h>
 #include <linux/skbuff.h>
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
@@ -22,6 +23,7 @@ struct io_device {
 	struct link_device *ld;
 	struct gnss_ctl *gc;
 	atomic_t opened;
+	struct mutex open_lock;	/* the first open and the last release */
 	wait_queue_head_t wq;
 	struct miscdevice miscdev;
 	struct sk_buff_head sk_rx_q;
@@ -67,9 +69,12 @@ struct gnss_ctl {
 	atomic_t wait_rdy;
 	atomic_t tx_in_progress;
 	atomic_t rx_in_progress;
+	bool irq_wake;
 };
 
 struct gnss_ctl *create_ctl_device(struct platform_device *pdev);
+void gnss_ctl_irq_on(struct gnss_ctl *gc);
+void gnss_ctl_irq_off(struct gnss_ctl *gc);
 struct link_device *create_link_device(struct platform_device *pdev);
 struct io_device *create_io_device(struct platform_device *pdev,
 		struct link_device *ld, struct gnss_ctl *gc, struct gnss_pdata *pdata);
