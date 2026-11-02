@@ -52,6 +52,7 @@ properties:
       - description: Google Tensor G3 (zuma) boards
         items:
           - enum:
+              - google,zuma-akita
               - google,zuma-husky
           - const: google,zuma
       - description: Google Tensor G4 (zumapro) boards
