@@ -57,7 +57,10 @@ config LINK_DEVICE_PCIE_IOCC
 	  The gs201 modem link driver turns IO coherency on for the link at
 	  every link-up, before the modem may DMA, so the packet processor
 	  treats its cacheable regions as coherent, as stock does
-	  (pantah_defconfig: CONFIG_LINK_DEVICE_PCIE_IOCC=y).
+	  (pantah_defconfig: CONFIG_LINK_DEVICE_PCIE_IOCC=y). On zumapro it
+	  does so only when the device tree gives it samsung,sysreg; a link
+	  without it sets pktproc_dl_use_hw_iocc and pktproc_ul_use_hw_iocc
+	  to 0 and keeps the packet processor's regions uncached.
 
 config CP_PKTPROC
 	bool "Packet processor, downlink (bring-up)"
