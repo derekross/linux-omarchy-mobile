@@ -5,7 +5,6 @@
  */
 
 #include <linux/irq.h>
-#include <linux/gpio.h>
 #include <linux/interrupt.h>
 #include <linux/skbuff.h>
 #include <linux/delay.h>

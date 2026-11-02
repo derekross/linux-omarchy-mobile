@@ -3,36 +3,24 @@
  * Copyright (C) 2022 Samsung Electronics.
  *
  */
+#include <linux/devcoredump.h>
 #include <linux/init.h>
-#include <linux/gpio.h>
+#include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
-#include <linux/platform_data/sscoredump.h>
 #include <linux/time.h>
+#include <linux/vmalloc.h>
 
 #include "gnss_prj.h"
 #include "gnss_utils.h"
 
-#define DEVICE_NAME "gnss"
-
-static void sscd_release(struct device *dev);
-
-static struct sscd_platform_data sscd_pdata;
-
-static struct platform_device sscd_dev = {
-	.name            = DEVICE_NAME,
-	.driver_override = SSCD_NAME,
-	.id              = -1,
-	.dev             = {
-		.platform_data = &sscd_pdata,
-		.release       = sscd_release,
-		},
-};
-
-static void sscd_release(struct device *dev)
+/* Hand a dump to devcoredump, which frees it. */
+static void gnss_set_coredump(struct device *dev, void *dump, size_t len,
+			      const char *reason)
 {
-	gif_info("%s: enter\n", __FUNCTION__);
+	gif_err("GNSS coredump: %s (%zu bytes)\n", reason, len);
+	dev_coredumpv(dev, dump, len, GFP_KERNEL);
 }
 
 static ssize_t coredump_store(struct device *dev, struct device_attribute *attr, const char *buf,
@@ -43,7 +31,7 @@ static ssize_t coredump_store(struct device *dev, struct device_attribute *attr,
 	char *coredump = NULL;
 	char *reason = NULL;
 	int length = 0;
-	static time64_t last_trigger_time = 0;
+	static time64_t last_trigger_time;
 	time64_t trigger_time = ktime_get_seconds();
 
 	// Ignore the trigger time less than 30 seconds
@@ -64,19 +52,18 @@ static ssize_t coredump_store(struct device *dev, struct device_attribute *attr,
 		memcpy(reason, buf, length);
 		reason[length] = '\0';
 		length = strlen(next + 1);
-		coredump = kmalloc(length, GFP_KERNEL);
+		coredump = vmalloc(length);
 		if (!coredump) {
 			gif_err("Allocate crash coredump failed\n");
 			goto clean;
 		}
 		memcpy(coredump, next + 1, length);
-		gnss_set_coredump(coredump, length, reason);
+		gnss_set_coredump(dev, coredump, length, reason);
+		coredump = NULL;
 	}
 clean:
-	if (reason)
-		kfree(reason);
-	if (coredump)
-		kfree(coredump);
+	kfree(reason);
+	vfree(coredump);
 	return count;
 }
 
@@ -84,8 +71,13 @@ static DEVICE_ATTR_WO(coredump);
 
 static int parse_dt_common_pdata(struct device_node *np, struct gnss_pdata *pdata)
 {
-	gif_dt_read_string(np, "device,name", pdata->name);
-	gif_dt_read_string(np, "device_node_name", pdata->node_name);
+	/*
+	 * Google's device tree names these in device,name and
+	 * device_node_name. They describe no hardware, and the GNSS daemon
+	 * opens /dev/gnss_ipc, so they are fixed here.
+	 */
+	pdata->name = "KEPLER";
+	pdata->node_name = "gnss_ipc";
 
 	gif_info("device name: %s node name: %s\n", pdata->name, pdata->node_name);
 	return 0;
@@ -120,25 +112,17 @@ parse_dt_pdata_err:
 	return ERR_PTR(-EINVAL);
 }
 
-static int gnss_remove(struct platform_device *pdev)
+static void gnss_remove(struct platform_device *pdev)
 {
 	struct gnss_ctl *gc = platform_get_drvdata(pdev);
 
 	gif_disable_irq_sync(&gc->irq_gnss2ap_spi);
 
-	gpio_set_value(gc->gpio_ap2gnss_spi.num, 0);
+	gpiod_set_value(gc->gpio_ap2gnss_spi.desc, 0);
 
-	free_irq(gc->irq_gnss2ap_spi.num, &gc);
-
-	gpio_free(gc->gpio_ap2gnss_spi.num);
-
-	gpio_free(gc->gpio_gnss2ap_spi.num);
-
-	platform_device_unregister(&sscd_dev);
+	free_irq(gc->irq_gnss2ap_spi.num, gc);
 
 	device_remove_file(&pdev->dev, &dev_attr_coredump);
-
-	return 0;
 }
 
 static int gnss_probe(struct platform_device *pdev)
@@ -186,8 +170,6 @@ static int gnss_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, gc);
 
-	platform_device_register(&sscd_dev);
-
 	if (device_create_file(dev, &dev_attr_coredump))
 		gif_err("Unable to create sysfs coredump entry");
 
@@ -229,20 +211,6 @@ static struct platform_driver gnss_driver = {
 };
 
 module_platform_driver(gnss_driver);
-
-int gnss_set_coredump(const char *buf, int buf_len, const char *info)
-{
-	struct sscd_platform_data *pdata = dev_get_platdata(&sscd_dev.dev);
-	struct sscd_segment seg;
-
-	if (pdata->sscd_report) {
-		memset(&seg, 0, sizeof(seg));
-		seg.addr = (void *)buf;
-		seg.size = buf_len;
-		pdata->sscd_report(&sscd_dev, &seg, 1, 0, info);
-	}
-	return 0;
-}
 
 MODULE_DESCRIPTION("Exynos GNSS interface driver");
 MODULE_LICENSE("GPL");

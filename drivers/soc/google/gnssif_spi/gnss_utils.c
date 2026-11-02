@@ -8,7 +8,7 @@
 #include <linux/platform_device.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
-#include <linux/gpio.h>
+#include <linux/string.h>
 
 #include "gnss_prj.h"
 #include "gnss_utils.h"
@@ -19,7 +19,7 @@ void gif_configure_irq(struct gnss_irq *irq, unsigned int num, const char *name,
 {
 	spin_lock_init(&irq->lock);
 	irq->num = num;
-	strncpy(irq->name, name, sizeof(irq->name) - 1);
+	strscpy(irq->name, name, sizeof(irq->name));
 	irq->flags = flags;
 	gif_info("name:%s num:%d flags:0x%08lX\n", name, num, flags);
 }

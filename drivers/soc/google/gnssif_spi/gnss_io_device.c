@@ -9,7 +9,6 @@
 #include <linux/fs.h>
 #include <linux/poll.h>
 #include <linux/irq.h>
-#include <linux/gpio.h>
 #include <linux/if_arp.h>
 #include <linux/ip.h>
 #include <linux/if_ether.h>
@@ -57,12 +56,9 @@ static int misc_open(struct inode *inode, struct file *filp)
 {
 	struct io_device *iod = container_of(filp->private_data, struct io_device,
 			miscdev);
-	struct link_device *ld;
 	int ref_cnt;
 
 	filp->private_data = (void *)iod;
-
-	ld = iod->ld;
 
 	ref_cnt = atomic_inc_return(&iod->opened);
 
@@ -85,7 +81,7 @@ static int misc_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-static unsigned int misc_poll(struct file *filp, struct poll_table_struct *wait)
+static __poll_t misc_poll(struct file *filp, struct poll_table_struct *wait)
 {
 	struct io_device *iod = (struct io_device *)filp->private_data;
 
@@ -93,7 +89,7 @@ static unsigned int misc_poll(struct file *filp, struct poll_table_struct *wait)
 		poll_wait(filp, &iod->wq, wait);
 
 	if (!skb_queue_empty(&iod->sk_rx_q))
-		return POLLIN | POLLRDNORM;
+		return EPOLLIN | EPOLLRDNORM;
 
 	return 0;
 }
@@ -121,7 +117,7 @@ static ssize_t misc_write(struct file *filp, const char __user *data,
 		return -ENOMEM;
 
 	if (copy_from_user(buff, data, count)) {
-		gif_err("%s->%s: ERR! copy_from_user fail (count %ld)\n",
+		gif_err("%s->%s: ERR! copy_from_user fail (count %zu)\n",
 			iod->name, ld->name, count);
 		kfree(buff);
 		return -EFAULT;
@@ -129,7 +125,7 @@ static ssize_t misc_write(struct file *filp, const char __user *data,
 
 	ret = ld->send(ld, iod, buff, roundup(count, ALIGNMENT_4BYTE));
 	if (ret < 0) {
-		gif_err("%s->%s: ERR! ld->send fail (err %d, count %ld)\n",
+		gif_err("%s->%s: ERR! ld->send fail (err %d, count %zu)\n",
 			iod->name, ld->name, ret, count);
 		kfree(buff);
 		return ret;
@@ -139,8 +135,8 @@ static ssize_t misc_write(struct file *filp, const char __user *data,
 	return count;
 }
 
-static ssize_t misc_read(struct file *filp, char *buf, size_t count,
-			loff_t *fpos)
+static ssize_t misc_read(struct file *filp, char __user *buf, size_t count,
+			 loff_t *fpos)
 {
 	struct io_device *iod = (struct io_device *)filp->private_data;
 	struct sk_buff_head *rxq = &iod->sk_rx_q;
@@ -197,7 +193,7 @@ static const struct file_operations misc_io_fops = {
 	.read = misc_read,
 };
 
-int init_io_device(struct io_device *iod, struct device *dev)
+static int init_io_device(struct io_device *iod, struct device *dev)
 {
 	int ret = 0;
 

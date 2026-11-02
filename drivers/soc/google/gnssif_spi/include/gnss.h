@@ -34,45 +34,9 @@ struct gnss_irq {
 };
 
 struct gnss_gpio {
-	unsigned int num;
+	struct gpio_desc *desc;
 	const char *label;
 };
-
-#define gif_dt_read_enum(np, prop, dest) \
-		do { \
-				u32 val; \
-				if (of_property_read_u32(np, prop, &val)) \
-						return -EINVAL; \
-				dest = (__typeof__(dest))(val); \
-		} while (0)
-
-#define gif_dt_read_bool(np, prop, dest) \
-		do { \
-				u32 val; \
-				if (of_property_read_u32(np, prop, &val)) \
-						return -EINVAL; \
-				dest = val ? true : false; \
-		} while (0)
-
-#define gif_dt_read_string(np, prop, dest) \
-		do { \
-				if (of_property_read_string(np, prop, \
-								(const char **)&dest)) \
-				return -EINVAL; \
-		} while (0)
-
-#define gif_dt_read_u32(np, prop, dest) \
-		do { \
-				u32 val; \
-				if (of_property_read_u32(np, prop, &val)) \
-						return -EINVAL; \
-								dest = val; \
-		} while (0)
-#define gif_dt_read_u32_array(np, prop, dest, sz) \
-		do { \
-				if (of_property_read_u32_array(np, prop, dest, (sz))) \
-						return -EINVAL; \
-		} while (0)
 
 #define LOG_TAG "gif: "
 #define CALLEE  (__func__)
@@ -86,10 +50,5 @@ struct gnss_gpio {
 		pr_debug(LOG_TAG "%s: " pr_fmt(fmt), __func__, ##__VA_ARGS__)
 #define gif_info(fmt, ...) \
 		pr_info(LOG_TAG "%s: " pr_fmt(fmt), __func__, ##__VA_ARGS__)
-#define gif_trace(fmt, ...) \
-		printk(KERN_DEBUG "gif: %s: %d: called(%pF): " fmt, \
-				__func__, __LINE__, __builtin_return_address(0), ##__VA_ARGS__)
-
-int gnss_set_coredump(const char *buf, int buf_len, const char *info);
 
 #endif /* __GNSS_IF_H__ */
