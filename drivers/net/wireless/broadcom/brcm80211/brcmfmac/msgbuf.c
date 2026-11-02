@@ -1886,10 +1886,14 @@ int brcmf_proto_msgbuf_attach(struct brcmf_pub *drvr)
 	msgbuf->max_eventbuf = BRCMF_MSGBUF_MAX_EVENTBUF_POST;
 
 	/* Data, ioctl response and event buffers share the rx packet IDs
-	 * (ID 0 is never used): leave enough for the control buffers.
+	 * (ID 0 is never used): leave enough for the control buffers, plus
+	 * one ID of slack. A completed rx buffer still holds its ID when
+	 * the refill runs (brcmf_msgbuf_process_rx_complete updates the
+	 * post count before it frees the ID), so a refill of N buffers
+	 * needs N free IDs while N - 1 are available.
 	 */
 	msgbuf->max_rxbufpost = min_t(u32, if_msgbuf->max_rxbufpost,
-				      NR_RX_PKTIDS - 1 -
+				      NR_RX_PKTIDS - 2 -
 				      2 * (msgbuf->max_ioctlrespbuf +
 					   msgbuf->max_eventbuf));
 
