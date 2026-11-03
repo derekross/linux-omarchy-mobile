@@ -214,3 +214,36 @@
 		pinctrl-0 = <&tp_irq_active &tp_rst_active &tp_1v8_active>;
 	};
 };
+
+/*
+ * Remote processors, squashed .mbn from the phone's modem partition. A missing
+ * file just leaves the remoteproc offline. The modem doesn't boot by itself
+ * (auto_boot off): rmtfs starts it once it serves the EFS partitions.
+ * The ELF images are relocatable and each one spans its whole region
+ * (adsp 0x1e00000, modem 0x9600000, cdsp/slpi 0x1400000).
+ */
+&remoteproc_adsp {
+	firmware-name = "qcom/sm8150/oneplus/hotdog/adsp.mbn";
+	status = "okay";
+};
+
+&remoteproc_cdsp {
+	firmware-name = "qcom/sm8150/oneplus/hotdog/cdsp.mbn";
+	status = "okay";
+};
+
+&remoteproc_mpss {
+	firmware-name = "qcom/sm8150/oneplus/hotdog/modem.mbn";
+	status = "okay";
+};
+
+/*
+ * SLPI boots, but its sensor_process user PD hits its watchdog ~40 s later
+ * ("USER-PD DOG detects stalled initialization"): nothing serves it the
+ * sensor registry yet. Its SSR then collides with any modem recovery and
+ * the SoC ends in crash dump mode. Off until sensors get their own step.
+ */
+&remoteproc_slpi {
+	firmware-name = "qcom/sm8150/oneplus/hotdog/slpi.mbn";
+	status = "disabled";
+};
