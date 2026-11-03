@@ -66,3 +66,44 @@
 
 	status = "okay";
 };
+
+/* Keep Bluetooth off until the current kernel has been qualified on Oriole. */
+&serial_apm1 {
+	bluetooth {
+		compatible = "brcm,bcm4389-bt";
+		shutdown-gpios = <&gpp16 2 GPIO_ACTIVE_HIGH>;
+		device-wakeup-gpios = <&gpp14 3 GPIO_ACTIVE_HIGH>;
+		interrupts-extended = <&gpa6 6 IRQ_TYPE_EDGE_RISING>;
+		interrupt-names = "host-wakeup";
+		pinctrl-0 = <&bt_reg_on &bt_dev_wake &bt_host_wake>;
+		pinctrl-names = "default";
+		max-speed = <3000000>;
+		status = "disabled";
+	};
+};
+
+/* Bluetooth control lines match the shared gs101 wiring. */
+&pinctrl_far_alive {
+	bt_host_wake: bt-host-wake-pins {
+		samsung,pins = "gpa6-6";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_DOWN>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+};
+
+&pinctrl_peric0 {
+	bt_dev_wake: bt-dev-wake-pins {
+		samsung,pins = "gpp14-3";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
+	bt_reg_on: bt-reg-on-pins {
+		samsung,pins = "gpp16-2";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+};
