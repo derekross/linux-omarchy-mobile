@@ -1,0 +1,216 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Devicetree for the OnePlus 7T Pro (hotdog, project 19801).
+ *
+ * The board is the OnePlus 7 Pro's (guacamole): OnePlus's downstream
+ * kernel builds both from the same sm8150-oem.dtsi (panel, S6SY761 touch
+ * on QUP SE17, UFS, USB) and differs only in charger and battery
+ * properties, which mainline doesn't describe. ABL picks the appended DTB
+ * by qcom,msm-id: given a DTB without one, it answered `fastboot boot`
+ * with OKAY and stayed in fastboot (Android 12 ABL). The phone's ABL
+ * reports SoC 339 (SM8150); downstream also builds the board on SM8150P
+ * (361), so both are listed at v2. board-id <8 0> is downstream hotdog's.
+ *
+ * Based on sm8150-oneplus-guacamole.dts:
+ * Copyright (c) 2021, Caleb Connolly <caleb@connolly.tech>
+ * Reserved regions from OnePlus's downstream sm8150.dtsi and sm8150-oem.dtsi.
+ *
+ * Enabled: the panel as ABL left it (simple-framebuffer), UFS, USB
+ * peripheral, touch (S6SY761), the fuel gauge (BQ27411) and the power
+ * key.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/arm/qcom,ids.h>
+#include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include <dt-bindings/gpio/gpio.h>
+#include "sm8150-oneplus-common.dtsi"
+
+/* Redone below, with guard pages, where this phone's modem expects it. */
+/delete-node/ &rmtfs_mem;
+
+/ {
+	model = "OnePlus 7T Pro";
+	compatible = "oneplus,hotdog", "qcom,sm8150";
+
+	qcom,msm-id = <QCOM_ID_SM8150 0x20000>, <361 0x20000>; /* SM8150, SM8150P v2 */
+	qcom,board-id = <8 0>;
+
+	aliases {
+		display0 = &framebuffer0;
+	};
+
+	chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+		stdout-path = "display0";
+
+		/* The panel as ABL left it (cont_splash_region, 1440x3120). */
+		framebuffer0: framebuffer@9c000000 {
+			compatible = "simple-framebuffer";
+			reg = <0 0x9c000000 0 (1440 * 3120 * 4)>;
+			width = <1440>;
+			height = <3120>;
+			stride = <(1440 * 4)>;
+			format = "a8r8g8b8";
+		};
+	};
+
+	/*
+	 * The touchscreen's 1.8 V: a load switch from S4A whose enable, GPIO 119,
+	 * is held high by its pull-up (tp_1v8_active), as downstream leaves it.
+	 */
+	ts_vdd_1p8: regulator-ts-vdd {
+		compatible = "regulator-fixed";
+		regulator-name = "ts_vdd_1p8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+		regulator-boot-on;
+		vin-supply = <&vreg_s4a_1p8>;
+	};
+
+	/*
+	 * Downstream regions mainline's sm8150.dtsi leaves as System RAM.
+	 * Firmware owns some of them at runtime, so keep Linux out of all.
+	 */
+	reserved-memory {
+		/*
+		 * Downstream xbl_aop_mem is 0x85e00000-0x85f40000. Mainline's
+		 * xbl_mem, aop_mem and aop_cmd_db cover all of it except this gap.
+		 */
+		xbl_aop_gap_mem: memory@85e40000 {
+			reg = <0 0x85e40000 0 0xc0000>;
+			no-map;
+		};
+
+		/* The tail of downstream removed_regions, past mainline tz_mem. */
+		removed_mem: memory@89b00000 {
+			reg = <0 0x89b00000 0 0x1c00000>;
+			no-map;
+		};
+
+		/* Downstream cont_splash_region: ABL's display buffers. */
+		splash_mem: memory@9c000000 {
+			reg = <0 0x9c000000 0 0x2400000>;
+			no-map;
+		};
+
+		/* OnePlus's bootloader_log_mem. */
+		bootloader_log_mem: memory@9fff7000 {
+			reg = <0 0x9fff7000 0 0x9000>;
+			no-map;
+		};
+
+		cdsp_sec_mem: memory@a4c00000 {
+			reg = <0 0xa4c00000 0 0x3c00000>;
+			no-map;
+		};
+
+		/*
+		 * Stock's ramoops region. ramoops_probe() rounds each zone size
+		 * down to a power of two and gives the dmesg records what is
+		 * left, so the layout is: six 0x40000 dmesg records at +0,
+		 * the console at +0x180000, pmsg at +0x1c0000 and ftrace at
+		 * +0x3c0000. OnePlus's downstream kernel keeps a 0x1000
+		 * devinfo zone in the same region, and its console starts
+		 * 0x1000 lower (the crash-dump table names it KMSG, at
+		 * 0xa997f008), so the two kernels' zones don't line up.
+		 */
+		ramoops@a9800000 {
+			compatible = "ramoops";
+			reg = <0 0xa9800000 0 0x400000>;
+			record-size = <0x40000>;
+			console-size = <0x40000>;
+			ftrace-size = <0x40000>;
+			pmsg-size = <0x200000>;
+			ecc-size = <0>;
+		};
+
+		/* OnePlus's param_mem and mtp_mem. */
+		param_mem: memory@ac200000 {
+			reg = <0 0xac200000 0 0xc00000>;
+			no-map;
+		};
+
+		/*
+		 * Downstream allocates rmtfs at runtime (qcom,rmtfs_sharedmem,
+		 * 2 MiB with qcom,guard-memory). On the OnePlus 7 Pro it always
+		 * ends up at 0xf2901000 (sm8150-oneplus-common.dtsi). Same
+		 * region here, plus the 4 KiB guard page on each side so no
+		 * Linux allocation sits next to the XPU-protected range.
+		 */
+		rmtfs_mem: memory@f2900000 {
+			compatible = "qcom,rmtfs-mem";
+			reg = <0 0xf2900000 0 0x202000>;
+			no-map;
+
+			qcom,client-id = <1>;
+			qcom,vmid = <QCOM_SCM_VMID_MSS_MSA>;
+			qcom,use-guard-pages;
+		};
+	};
+};
+
+/*
+ * This board's apps RSC never answers an RPMh read: refuse them rather
+ * than lose both active TCSes to two reads that never complete.
+ */
+&apps_rsc {
+	qcom,no-read-support;
+};
+
+/*
+ * `reboot bootloader` / `reboot recovery`: the same PON spare codes as
+ * downstream's qpnp_pon_set_restart_reason() (gen2: reason << 1), which ABL reads.
+ */
+&pon {
+	mode-bootloader = <0x2>;
+	mode-recovery = <0x1>;
+};
+
+/* Downstream qupv3_se8_i2c: fuel gauge and OnePlus's fast-charge MCU. */
+&i2c8 {
+	clock-frequency = <100000>;
+	status = "okay";
+
+	/*
+	 * Downstream calls it bq27541, but its driver also detects a BQ27411
+	 * (device type 0x0421) and the classic bq27541 register map reads
+	 * garbage on this phone.
+	 */
+	fuel-gauge@55 {
+		compatible = "ti,bq27411";
+		reg = <0x55>;
+	};
+};
+
+&qupv3_id_2 {
+	status = "okay";
+};
+
+&i2c17 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	/*
+	 * Downstream hotdog: 3.0 V from L17A for the analog side, 1.8 V switched
+	 * by GPIO 119 (tp_1v8_active), reset GPIO 54 held by tp_rst_active.
+	 */
+	touchscreen@48 {
+		compatible = "samsung,s6sy761";
+		reg = <0x48>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <122 IRQ_TYPE_LEVEL_LOW>;
+		avdd-supply = <&vreg_l17a_3p0>;
+		vdd-supply = <&ts_vdd_1p8>;
+
+		touchscreen-size-x = <1440>;
+		touchscreen-size-y = <3120>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&tp_irq_active &tp_rst_active &tp_1v8_active>;
+	};
+};
