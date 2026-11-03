@@ -5,8 +5,8 @@
  * USB (NCM + ACM), the cluster watchdogs from gs201.dtsi, a
  * simple-framebuffer on the buffer ABL leaves DPP0 scanning out, UFS, the
  * three keys, the touchscreen with its rails on the main PMIC, the GPU, the
- * haptics, the MAX77759's I2C bus with its fuel gauge and the DSI command
- * path to the panel. The display itself stays on simple-framebuffer.
+ * haptics, the MAX77759's I2C bus with its fuel gauge, and the display
+ * through gs-decon, which takes over from the simple-framebuffer.
  */
 
 /dts-v1/;
@@ -36,7 +36,7 @@
 		 * ABL leaves DECON0 -> DSIM0 -> panel (sdc-s6e3fc3) running in
 		 * command mode with DPP0 scanning 0xfac00000 (RDMA_BASEADDR_Y8,
 		 * read on this phone). simplefb scans it out and takes the size
-		 * from this node; the panel under dsi0 only takes commands.
+		 * from this node until gs-decon takes the screen over.
 		 */
 		framebuffer0: framebuffer@fac00000 {
 			compatible = "simple-framebuffer";
@@ -123,6 +123,21 @@
 			reg = <0x0 0xfac00000 (1080 * 2400 * 4)>;
 			no-map;
 		};
+
+		/*
+		 * Scanout buffers for gs-decon: DPP0 takes 32-bit addresses and
+		 * the DPU SysMMU is bypassed. Room for five 1080x2400 XRGB8888
+		 * buffers. Reusable, so the pages serve movable allocations
+		 * while unused.
+		 */
+		display_pool: display-pool {
+			compatible = "shared-dma-pool";
+			reusable;
+			size = <0x3800000>;
+			/* read with the root's #address-cells (2), not #size-cells */
+			alignment = <0x0 0x200000>;
+			alloc-ranges = <0x0 0x80000000 0x80000000>;
+		};
 	};
 };
 
@@ -162,16 +177,26 @@
 };
 
 /*
- * Display bring-up, gate D1 (device/panther/DISPLAY-PLAN.md): the DPU and
- * DISP clock controllers, and DSIM0 with the panel, so the panel driver can
- * take the bootloader's panel over and send it DCS commands. DECON0 stays
- * disabled, and simplefb keeps scanning out.
+ * Display bring-up (device/panther/DISPLAY-PLAN.md): the DPU and DISP clock
+ * controllers, and DSIM0 with the panel (gate D1), so the panel driver can
+ * take the bootloader's panel over and send it DCS commands.
  */
 &cmu_disp {
 	status = "okay";
 };
 
 &cmu_dpu {
+	status = "okay";
+};
+
+/*
+ * Flip-only KMS on the bootloader's pipeline (gate D3): gs-decon takes the
+ * screen over from simpledrm once it and the DSIM and panel drivers have
+ * probed.
+ */
+&decon0 {
+	memory-region = <&display_pool>, <&cont_splash_mem>;
+	memory-region-names = "pool", "boot-framebuffer";
 	status = "okay";
 };
 

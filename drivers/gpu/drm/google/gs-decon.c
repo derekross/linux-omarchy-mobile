@@ -210,6 +210,27 @@ static const struct drm_display_mode gs_decon_modes[] = {
 };
 
 /*
+ * The Pixel 7's S6E3FC3 P10 at 1080x2400, as in Google's panel driver. The
+ * bootloader starts it at 60 Hz; its 90 Hz mode is not offered yet.
+ */
+static const struct drm_display_mode panther_decon_modes[] = {
+	{
+		.clock = (1080 + 32 + 12 + 26) * (2400 + 12 + 4 + 26) * 60 / 1000,
+		.hdisplay = 1080,
+		.hsync_start = 1080 + 32,
+		.hsync_end = 1080 + 32 + 12,
+		.htotal = 1080 + 32 + 12 + 26,
+		.vdisplay = 2400,
+		.vsync_start = 2400 + 12,
+		.vsync_end = 2400 + 12 + 4,
+		.vtotal = 2400 + 12 + 4 + 26,
+		.width_mm = 66,
+		.height_mm = 146,
+		.type = DRM_MODE_TYPE_DRIVER,
+	},
+};
+
+/*
  * TG4B/TG4C timings from panel-gs-tg4b.c and panel-gs-tg4c.c, at 60 Hz (the
  * bootloader's) and 120 Hz. TG4A uses different porches; DECON only needs
  * the active size and the totals.
@@ -232,9 +253,16 @@ static const struct drm_display_mode tegu_decon_modes[] = {
 	TEGU_DECON_MODE(120),
 };
 
-struct gs_decon_soc_data {
+/* The modes of one panel; the first is the bootloader's. */
+struct gs_decon_mode_set {
 	const struct drm_display_mode *modes;
 	unsigned int num_modes;
+};
+
+struct gs_decon_soc_data {
+	/* one per panel, picked by the size the bootloader scans out */
+	const struct gs_decon_mode_set *mode_sets;
+	unsigned int num_mode_sets;
 	u32 image_size_reg;
 	u32 source_offset_reg;
 	u32 shadow_update_mask;
@@ -245,17 +273,28 @@ struct gs_decon_soc_data {
 	bool floors_optional;
 };
 
+static const struct gs_decon_mode_set gs201_mode_sets[] = {
+	{ gs_decon_modes, ARRAY_SIZE(gs_decon_modes) },
+	{ panther_decon_modes, ARRAY_SIZE(panther_decon_modes) },
+};
+
+static const struct gs_decon_mode_set zumapro_mode_sets[] = {
+	{ tegu_decon_modes, ARRAY_SIZE(tegu_decon_modes) },
+};
+
 static const struct gs_decon_soc_data gs201_decon_data = {
-	.modes = gs_decon_modes,
-	.num_modes = ARRAY_SIZE(gs_decon_modes),
+	.mode_sets = gs201_mode_sets,
+	.num_mode_sets = ARRAY_SIZE(gs201_mode_sets),
 	.image_size_reg = RDMA_IMG_SIZE,
 	.source_offset_reg = RDMA_SRC_OFFSET,
 	.shadow_update_mask = SHD_REG_UP_REQ_FLIP(SHD_REG_UP_REQ_ALL_WIN),
+	/* 1080-pixel rows (Pixel 7) get padded to 64 bytes by allocators */
+	.padded_pitch = true,
 };
 
 static const struct gs_decon_soc_data zumapro_decon_data = {
-	.modes = tegu_decon_modes,
-	.num_modes = ARRAY_SIZE(tegu_decon_modes),
+	.mode_sets = zumapro_mode_sets,
+	.num_mode_sets = ARRAY_SIZE(zumapro_mode_sets),
 	.image_size_reg = 0x001c,
 	.source_offset_reg = 0x0018,
 	.shadow_update_mask = SHD_REG_UP_REQ_FLIP(0x3fff),
@@ -276,6 +315,9 @@ struct gs_decon {
 
 	struct device *dev;
 	const struct gs_decon_soc_data *soc;
+	/* the panel's modes, from soc->mode_sets */
+	const struct drm_display_mode *modes;
+	unsigned int num_modes;
 	void __iomem *regs;
 	void __iomem *dma;
 	int irq_fs;
@@ -399,6 +441,7 @@ static int gs_decon_check_boot_state(struct gs_decon *dc)
 	u32 src = readl(dc->dma + RDMA_SRC_SIZE);
 	u32 addr = readl(dc->dma + RDMA_BASEADDR_Y8);
 	u32 source_width, source_height;
+	unsigned int i;
 
 	if ((global & run) != run) {
 		dev_err(dc->dev, "DECON is not running in command mode (GLOBAL_CON 0x%08x)\n",
@@ -417,9 +460,17 @@ static int gs_decon_check_boot_state(struct gs_decon *dc)
 	}
 	/* the source width is the stride in pixels */
 	dc->pitch = source_width * 4;
-	if (dc->width != dc->soc->modes[0].hdisplay ||
-	    dc->height != dc->soc->modes[0].vdisplay ||
-	    source_height != dc->height || dc->pitch < dc->width * 4) {
+	for (i = 0; i < dc->soc->num_mode_sets; i++) {
+		const struct drm_display_mode *boot = &dc->soc->mode_sets[i].modes[0];
+
+		if (dc->width == boot->hdisplay && dc->height == boot->vdisplay) {
+			dc->modes = dc->soc->mode_sets[i].modes;
+			dc->num_modes = dc->soc->mode_sets[i].num_modes;
+			break;
+		}
+	}
+	if (!dc->modes || source_height != dc->height ||
+	    dc->pitch < dc->width * 4) {
 		dev_err(dc->dev, "unexpected scanout size %ux%u (source %ux%u)\n",
 			dc->width, dc->height, source_width, source_height);
 		return -ENODEV;
@@ -599,9 +650,14 @@ static void gs_decon_set_scanout_locked(struct gs_decon *dc, dma_addr_t addr,
 		dc->xrgb = true;
 	}
 
-	/* G4's source width includes row padding, in pixels, not bytes. */
+	/*
+	 * The source width includes row padding, in pixels, not bytes. On G4
+	 * the height has its own register; on gs201 it shares this one.
+	 */
 	if (dc->soc->padded_pitch)
-		writel(pitch / 4, dc->dma + RDMA_SRC_SIZE);
+		writel(dc->soc->separate_source_height ? pitch / 4 :
+		       (dc->height << 16) | (pitch / 4),
+		       dc->dma + RDMA_SRC_SIZE);
 	writel(lower_32_bits(addr), dc->dma + RDMA_BASEADDR_Y8);
 	writel(readl(dc->regs + DECON_SHD_REG_UP_REQ) | dc->soc->shadow_update_mask,
 	       dc->regs + DECON_SHD_REG_UP_REQ);
@@ -824,10 +880,10 @@ static unsigned int gs_decon_mode_hz(struct gs_decon *dc,
 {
 	int i;
 
-	for (i = 0; i < dc->soc->num_modes; i++)
-		if (drm_mode_equal(mode, &dc->soc->modes[i]) &&
-		    drm_mode_vrefresh(&dc->soc->modes[i]) <= dc->max_hz)
-			return drm_mode_vrefresh(&dc->soc->modes[i]);
+	for (i = 0; i < dc->num_modes; i++)
+		if (drm_mode_equal(mode, &dc->modes[i]) &&
+		    drm_mode_vrefresh(&dc->modes[i]) <= dc->max_hz)
+			return drm_mode_vrefresh(&dc->modes[i]);
 
 	return 0;
 }
@@ -858,12 +914,13 @@ static int gs_decon_plane_atomic_check(struct drm_plane *plane,
 	if (ret)
 		return ret;
 
-	/* G4 accepts padded RGB rows; older variants keep the boot layout. */
+	/* Padded RGB rows, up to the source width field's limit */
 	if (fb->width != dc->width || fb->height != dc->height ||
 	    new->src_x || new->src_y ||
 	    (dc->soc->padded_pitch ?
 	     (fb->pitches[0] < dc->width * 4 || fb->pitches[0] % 4 ||
-	      fb->pitches[0] / 4 > 0xffffff) :
+	      fb->pitches[0] / 4 > (dc->soc->separate_source_height ?
+				    0xffffff : 0xffff)) :
 	     fb->pitches[0] != dc->pitch)) {
 		drm_dbg_kms(plane->dev, "fb %ux%u pitch %u does not match %ux%u pitch %u\n",
 			    fb->width, fb->height, fb->pitches[0],
@@ -1060,13 +1117,13 @@ static int gs_decon_connector_get_modes(struct drm_connector *connector)
 	struct gs_decon *dc = drm_to_decon(connector->dev);
 	int i, count = 0;
 
-	for (i = 0; i < dc->soc->num_modes; i++) {
-		unsigned int hz = drm_mode_vrefresh(&dc->soc->modes[i]);
+	for (i = 0; i < dc->num_modes; i++) {
+		unsigned int hz = drm_mode_vrefresh(&dc->modes[i]);
 		struct drm_display_mode *mode;
 
 		if (hz > dc->max_hz)
 			continue;
-		mode = drm_mode_duplicate(connector->dev, &dc->soc->modes[i]);
+		mode = drm_mode_duplicate(connector->dev, &dc->modes[i]);
 		if (!mode)
 			break;
 		if (hz == dc->max_hz)
@@ -1075,8 +1132,8 @@ static int gs_decon_connector_get_modes(struct drm_connector *connector)
 		drm_mode_probed_add(connector, mode);
 		count++;
 	}
-	connector->display_info.width_mm = dc->soc->modes[0].width_mm;
-	connector->display_info.height_mm = dc->soc->modes[0].height_mm;
+	connector->display_info.width_mm = dc->modes[0].width_mm;
+	connector->display_info.height_mm = dc->modes[0].height_mm;
 
 	return count;
 }
