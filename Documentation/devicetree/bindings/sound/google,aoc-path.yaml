@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/sound/google,aoc-path.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Google Tensor AoC audio path and PCM drivers
+
+maintainers:
+  - W4HO <87742609+W4HO-ham@users.noreply.github.com>
+
+description:
+  The pieces the AoC sound card (google,aoc-snd-card.yaml) is built from.
+  The path is the DAI component every DAI link runs on, one DAI per AoC
+  entry point and port. The others are the AoC drivers a DAI link's
+  platform names to serve its PCM, by the kind of stream.
+
+properties:
+  compatible:
+    enum:
+      - google-aoc-path
+      - google-aoc-snd-pcm
+      - google-aoc-snd-voice
+      - google-aoc-snd-compr
+      - google-aoc-snd-nohost
+      - google-aoc-snd-voip
+      - google-aoc-snd-incall
+
+  "#sound-dai-cells":
+    const: 1
+
+required:
+  - compatible
+
+allOf:
+  - if:
+      properties:
+        compatible:
+          const: google-aoc-path
+    then:
+      required:
+        - "#sound-dai-cells"
+    else:
+      properties:
+        "#sound-dai-cells": false
+
+additionalProperties: false
+
+examples:
+  - |
+    aoc_path {
+        compatible = "google-aoc-path";
+        #sound-dai-cells = <1>;
+    };
+
+    aoc_pcm_drv {
+        compatible = "google-aoc-snd-pcm";
+    };
