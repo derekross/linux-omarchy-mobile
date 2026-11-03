@@ -69,6 +69,12 @@ properties:
     description:
       The ID of the DRV in the RSC block that will be used by this controller.
 
+  qcom,no-read-support:
+    type: boolean
+    description:
+      The RSC does not answer read requests. A read would never complete
+      and would keep its TCS busy, so reads are refused instead.
+
   qcom,tcs-config:
     $ref: /schemas/types.yaml#/definitions/uint32-matrix
     minItems: 4
