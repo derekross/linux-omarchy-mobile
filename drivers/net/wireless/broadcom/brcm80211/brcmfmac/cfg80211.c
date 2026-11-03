@@ -3440,7 +3440,7 @@ static s32 brcmf_inform_single_bss(struct brcmf_cfg80211_info *cfg,
 	struct brcmf_pub *drvr = cfg->pub;
 	struct cfg80211_bss *bss;
 	enum nl80211_band band;
-	struct brcmu_chan ch;
+	struct brcmu_chan ch = {};
 	u16 channel;
 	u32 freq;
 	u16 notify_capability;
@@ -3454,11 +3454,16 @@ static s32 brcmf_inform_single_bss(struct brcmf_cfg80211_info *cfg,
 		return -EINVAL;
 	}
 
-	if (!bi->ctl_ch) {
-		ch.chspec = le16_to_cpu(bi->chanspec);
-		cfg->d11inf.decchspec(&ch);
-		bi->ctl_ch = ch.control_ch_num;
+	ch.chspec = le16_to_cpu(bi->chanspec);
+	cfg->d11inf.decchspec(&ch);
+	/* No 6 GHz band is registered (brcmf_construct_chaninfo() skips it) */
+	if (ch.band == BRCMU_CHAN_BAND_6G) {
+		brcmf_dbg(SCAN, "%pM: 6 GHz chanspec 0x%04x, skipped\n",
+			  bi->BSSID, ch.chspec);
+		return 0;
 	}
+	if (!bi->ctl_ch)
+		bi->ctl_ch = ch.control_ch_num;
 	channel = bi->ctl_ch;
 
 	if (channel <= CH_MAX_2G_CHANNEL)
@@ -3468,6 +3473,11 @@ static s32 brcmf_inform_single_bss(struct brcmf_cfg80211_info *cfg,
 
 	freq = ieee80211_channel_to_frequency(channel, band);
 	bss_data.chan = ieee80211_get_channel(wiphy, freq);
+	if (!bss_data.chan) {
+		brcmf_dbg(SCAN, "%pM: channel %d (%u MHz) not in the wiphy, skipped\n",
+			  bi->BSSID, channel, freq);
+		return 0;
+	}
 	bss_data.boottime_ns = ktime_to_ns(ktime_get_boottime());
 
 	notify_capability = le16_to_cpu(bi->capability);
