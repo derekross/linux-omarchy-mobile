@@ -13,6 +13,7 @@
 /dts-v1/;
 
 #include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
 #include <dt-bindings/soc/samsung,exynos-usi.h>
 #include "gs201.dtsi"
 
@@ -434,5 +435,35 @@
 		pinctrl-names = "default";
 		touchscreen-size-x = <1080>;
 		touchscreen-size-y = <2400>;
+	};
+};
+
+/*
+ * Rear flash LED: TI LM3644 at 0x63 on PERIC1 USI15 (Google's I2C bus 15,
+ * shared with the camera EEPROM at 0x50 and the wireless charger at 0x3c),
+ * HWEN on gpp8-2, as on the Pixel 7 Pro: the stock panther dtbo's hsi2c_15
+ * fragments, flash-en pin and LWIS flash-lm3644 node match cheetah's. The
+ * chip on this phone reads ID 0x02 (LM3644; cheetah's reads 0x04,
+ * LM3644TT), which the driver also handles. Torch only, with cheetah's
+ * bring-up cap. Disabled until the torch overlay.
+ */
+&usi15 {
+	samsung,mode = <USI_MODE_I2C>;
+};
+
+&hsi2c_15 {
+	clock-frequency = <400000>;
+
+	led-controller@63 {
+		compatible = "ti,lm3644";
+		reg = <0x63>;
+		enable-gpios = <&gpp8 2 GPIO_ACTIVE_HIGH>;
+
+		led {
+			function = LED_FUNCTION_TORCH;
+			color = <LED_COLOR_ID_WHITE>;
+			led-sources = <1 2>;
+			led-max-microamp = <50000>;
+		};
 	};
 };
