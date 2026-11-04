@@ -445,6 +445,22 @@
 		interrupt-controller;
 		#interrupt-cells = <2>;
 	};
+
+	/* USI14, the rear flash LED's bus: gpp16-0/1 in function 2, as stock. */
+	hsi2c14_bus: hsi2c14-bus-pins {
+		samsung,pins = "gpp16-0", "gpp16-1";
+		samsung,pin-function = <GS101_PIN_FUNC_2>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
+	/* The LM3644's HWEN (flashlight enable), gpp8-2; the LED driver takes it as a GPIO. */
+	flash_en: flash-en-pins {
+		samsung,pins = "gpp8-2";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
 };
 
 &pinctrl_hsi1 {
