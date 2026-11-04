@@ -602,6 +602,41 @@
 			clock-names = "oscclk";
 		};
 
+		sysreg_apm: syscon@154204e0 {
+			compatible = "google,zuma-apm-sysreg", "syscon";
+			/* Only the USI mode selectors. */
+			reg = <0x154204e0 0x8>;
+			clocks = <&cmu_apm CLK_GOUT_APM_SYSREG>;
+			status = "disabled";
+		};
+
+		/* The APM's USI1, the UART of the Bluetooth chip on the 8 Pro. */
+		usi_apm1: usi@155d00c0 {
+			compatible = "google,zuma-usi", "samsung,exynos850-usi";
+			reg = <0x155d00c0 0x20>;
+			clocks = <&cmu_apm CLK_GOUT_APM_USI1_UART_PCLK>,
+				 <&cmu_apm CLK_GOUT_APM_USI1_UART_IPCLK>;
+			clock-names = "pclk", "ipclk";
+			samsung,sysreg = <&sysreg_apm 0x4>;
+			samsung,mode = <USI_MODE_UART>;
+			samsung,clkreq-on;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+			status = "disabled";
+
+			uart18: serial@155d0000 {
+				compatible = "google,zuma-uart", "google,gs101-uart";
+				reg = <0x155d0000 0xc0>;
+				interrupts = <GIC_SPI 71 IRQ_TYPE_LEVEL_HIGH>;
+				clocks = <&cmu_apm CLK_GOUT_APM_USI1_UART_PCLK>,
+					 <&cmu_apm CLK_GOUT_APM_USI1_UART_IPCLK>;
+				clock-names = "uart", "clk_uart_baud0";
+				samsung,uart-fifosize = <256>;
+				status = "disabled";
+			};
+		};
+
 		/* Writes go through EL3 (SMC), as on gs101. */
 		pmu_system_controller: system-controller@15460000 {
 			compatible = "google,zuma-pmu";
