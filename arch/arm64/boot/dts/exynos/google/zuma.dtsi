@@ -365,11 +365,6 @@
 			interrupts = <GIC_SPI 649 IRQ_TYPE_LEVEL_HIGH>;
 		};
 
-		/*
-		 * CMU_PERIC1 and USI11, the I2C bus of the MAX77759 gauge,
-		 * charger and Type-C controller. Firmware leaves them running;
-		 * board files enable them.
-		 */
 		/* CMU_PERIC0 and USI14, the I2C bus of the rear flash LED. */
 		cmu_peric0: clock-controller@10800000 {
 			compatible = "google,zuma-cmu-peric0";
@@ -418,6 +413,11 @@
 			};
 		};
 
+		/*
+		 * CMU_PERIC1 and USI11, the I2C bus of the MAX77759 gauge,
+		 * charger and Type-C controller. Firmware leaves them running;
+		 * board files enable them.
+		 */
 		cmu_peric1: clock-controller@10c00000 {
 			compatible = "google,zuma-cmu-peric1";
 			reg = <0x10c00000 0x8000>;

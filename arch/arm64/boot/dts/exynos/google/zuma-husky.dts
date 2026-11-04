@@ -7,6 +7,7 @@
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/usb/pd.h>
 #include "zuma.dtsi"
@@ -375,5 +376,46 @@
 		cirrus,lra-f0-hz = <145>;
 		cirrus,lra-redc-micro-ohms = <13000000>;
 		cirrus,vpbr-threshold-microvolt = <3008000>;
+	};
+};
+
+/*
+ * Rear flash LED: TI LM3644 at 0x63 on PERIC0 USI14 (Google's I2C bus 14,
+ * 390 kHz in stock, 400 kHz here), HWEN on gpp8-2. Stock drives it from the
+ * camera HAL through LWIS. Torch only; the cap is the 7 Pro's bring-up limit
+ * (50 mA per LED), not a stock value. CMU_PERIC0 and its sysreg are enabled
+ * here, as CMU_PERIC1 is for the haptics: the torch's I2C bus (USI14) sits
+ * on them.
+ */
+&cmu_peric0 {
+	status = "okay";
+};
+
+&sysreg_peric0 {
+	status = "okay";
+};
+
+&usi14 {
+	status = "okay";
+};
+
+&hsi2c_14 {
+	clock-frequency = <400000>;
+	/* The bus pins and HWEN's mux, as in Google's zuma-husky-camera.dtsi. */
+	pinctrl-0 = <&hsi2c14_bus &flash_en>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	led-controller@63 {
+		compatible = "ti,lm3644";
+		reg = <0x63>;
+		enable-gpios = <&gpp8 2 GPIO_ACTIVE_HIGH>;
+
+		led {
+			function = LED_FUNCTION_TORCH;
+			color = <LED_COLOR_ID_WHITE>;
+			led-sources = <1 2>;
+			led-max-microamp = <50000>;
+		};
 	};
 };
