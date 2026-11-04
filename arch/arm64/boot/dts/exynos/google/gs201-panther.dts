@@ -180,17 +180,41 @@
 	};
 
 	/*
-	 * Sub PMIC, the fingerprint sensor's supply only: L15S_UDFPS_AVDD
-	 * with stock's 2.5-3.3 V range (stock dtbo 0x30406, LDO15S, the
-	 * same as the Pixel 7 Pro's). Only described rails can be switched;
-	 * the others stay as the bootloader set them. Disabled until the
-	 * fingerprint overlay, which enables its own rail.
+	 * Sub PMIC, for the fingerprint sensor's and the GNSS receiver's
+	 * supplies: L15S_UDFPS_AVDD with stock's 2.5-3.3 V range, and
+	 * L9S_GNSS_CORE, L10S_GNSS_RF and L11S_GNSS_AUX with stock's ranges
+	 * (stock dtbo 0x30406, the same as the Pixel 7 Pro's), so
+	 * registering them sets no voltage. Only described rails can be
+	 * switched; the others stay as the bootloader set them. Disabled
+	 * until the fingerprint or GNSS overlay, each of which enables its
+	 * own rails.
 	 */
 	pmic-2 {
 		compatible = "samsung,s2mpg13-pmic";
 		status = "disabled";
 
 		regulators {
+			ldo9s: ldo9s {
+				regulator-name = "vdd_gnss_core";
+				regulator-min-microvolt = <725000>;
+				regulator-max-microvolt = <1300000>;
+				status = "disabled";
+			};
+
+			ldo10s: ldo10s {
+				regulator-name = "vdd_gnss_rf";
+				regulator-min-microvolt = <1600000>;
+				regulator-max-microvolt = <1950000>;
+				status = "disabled";
+			};
+
+			ldo11s: ldo11s {
+				regulator-name = "vdd_gnss_aux";
+				regulator-min-microvolt = <1600000>;
+				regulator-max-microvolt = <1950000>;
+				status = "disabled";
+			};
+
 			ldo15s: ldo15s {
 				regulator-name = "vdd_udfps";
 				regulator-min-microvolt = <2500000>;
@@ -513,6 +537,83 @@
 			led-sources = <1 2>;
 			led-max-microamp = <50000>;
 		};
+	};
+};
+
+/*
+ * GNSS: Broadcom BCM4775x on PERIC0 USI5 SPI, wired as on the Pixel 7 Pro:
+ * the stock panther dtbo's spi5 node, its bcm4775@0 child (26 MHz, mode 3)
+ * and the four GPS pin groups are identical to the cheetah dtbo's (host_req
+ * gpa6-4, mcu_req gpp4-3, mcu_resp gph2-2, nstandby gph2-3), so this is
+ * cheetah's node. Chip select is driven as a GPIO. Disabled until
+ * omarchy-mobile's device/panther/overlays/gnss.dtso, which also has to turn
+ * on gph2's pin controller (pinctrl_hsi2, disabled in gs201.dtsi) for
+ * mcu_resp and nstandby; the driver keeps the chip in standby and its rails
+ * off until /dev/ttyBCM is opened.
+ */
+&usi5 {
+	samsung,mode = <USI_MODE_SPI>;
+};
+
+&spi_5 {
+	pinctrl-0 = <&spi5_bus &spi5_cs_gpio>;
+	cs-gpios = <&gpp10 3 GPIO_ACTIVE_LOW>;
+	num-cs = <1>;
+
+	gnss@0 {
+		compatible = "brcm,bcm4775-gnss";
+		reg = <0>;
+		spi-max-frequency = <26000000>;
+		spi-cpol;
+		spi-cpha;
+		interrupts-extended = <&gpa6 4 IRQ_TYPE_LEVEL_HIGH>;
+		/* Raw levels: lhd writes 1 to the nstandby attribute to run it */
+		nstandby-gpios = <&gph2 3 GPIO_ACTIVE_HIGH>;
+		mcu-req-gpios = <&gpp4 3 GPIO_ACTIVE_HIGH>;
+		mcu-resp-gpios = <&gph2 2 GPIO_ACTIVE_HIGH>;
+		host-req-gpios = <&gpa6 4 GPIO_ACTIVE_HIGH>;
+		vddcore-supply = <&ldo9s>;
+		vddrf-supply = <&ldo10s>;
+		vddaux-supply = <&ldo11s>;
+		pinctrl-0 = <&gnss_nstandby &gnss_mcu_resp &gnss_mcu_req
+			     &gnss_host_req>;
+		pinctrl-names = "default";
+	};
+};
+
+&pinctrl_hsi2 {
+	gnss_mcu_resp: gnss-mcu-resp-pins {
+		samsung,pins = "gph2-2";
+		samsung,pin-function = <GS101_PIN_FUNC_INPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_DOWN>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
+		samsung,pin-pud-pdn = <GS101_PIN_PULL_DOWN>;
+	};
+
+	gnss_nstandby: gnss-nstandby-pins {
+		samsung,pins = "gph2-3";
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
+		samsung,pin-pud-pdn = <GS101_PIN_PULL_NONE>;
+	};
+};
+
+&pinctrl_peric0 {
+	gnss_mcu_req: gnss-mcu-req-pins {
+		samsung,pins = "gpp4-3";
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+};
+
+&pinctrl_far_alive {
+	gnss_host_req: gnss-host-req-pins {
+		samsung,pins = "gpa6-4";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
 	};
 };
 
