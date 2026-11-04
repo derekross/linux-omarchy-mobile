@@ -22650,6 +22650,7 @@ M:	johannSo <jzeug@soppa.de>
 L:	linux-arm-msm@vger.kernel.org
 S:	Maintained
 F:	Documentation/devicetree/bindings/firmware/omamobile,qseecom-compat.yaml
+F:	drivers/firmware/qcom/qcom_qseecom_compat.c
 
 QUALCOMM QSEECOM DRIVER
 M:	Maximilian Luz <luzmaximilian@gmail.com>

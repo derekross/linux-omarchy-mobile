@@ -94,4 +94,33 @@ config QCOM_QSEECOM_UEFISECAPP
 	  Select Y here to provide access to EFI variables on the aforementioned
 	  platforms.
 
+config QCOM_QSEECOM_COMPAT
+	tristate "Downstream-compatible /dev/qseecom for vendor HALs"
+	depends on QCOM_QSEECOM
+	depends on ARCH_QCOM || COMPILE_TEST
+	depends on OF && DMA_SHARED_BUFFER
+	select GENERIC_ALLOCATOR
+	default n
+	help
+	  Provides /dev/qseecom with the subset of the downstream msm kernels'
+	  ioctl ABI that a vendor HAL (run from its Android vendor image in a
+	  chroot) and qseecomd use to load a trusted application, share
+	  buffers with it, call it and serve its listener requests. Shared
+	  buffers come from the SoC's qseecom carve-out as dma-bufs.
+
+	  This is a compatibility layer for one vendor ABI, not upstreamable.
+	  It is for vendor userspace on phones such as the OnePlus 7T Pro,
+	  whose fingerprint HAL needs it, and stays off unless a board's own
+	  kernel configuration enables it.
+
+	  It opens a path from root to the secure world: root can load the
+	  trusted applications the module's allowlists name, call them and
+	  serve their listeners. Nothing loads or registers until the
+	  allowlists name it.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the module will
+	  be called qcom_qseecom_compat.
+
 endmenu
