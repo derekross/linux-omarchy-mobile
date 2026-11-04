@@ -2165,7 +2165,7 @@ static int qcom_scm_qseecom_call(const struct qcom_scm_desc *desc,
  *
  * Return: Zero on success, nonzero on failure.
  */
-static int qcom_scm_qseecom_get_version(u32 *version)
+int qcom_scm_qseecom_get_version(u32 *version)
 {
 	struct qcom_scm_desc desc = {};
 	struct qcom_scm_qseecom_resp res = {};
@@ -2185,6 +2185,67 @@ static int qcom_scm_qseecom_get_version(u32 *version)
 	*version = res.result;
 	return 0;
 }
+EXPORT_SYMBOL_GPL(qcom_scm_qseecom_get_version);
+
+/**
+ * qcom_scm_qseecom_raw_call() - Perform one QSEECOM SCM call, unfiltered.
+ * @owner:   TZ syscall owner: QSEE OS (50, the app manager and listener
+ *           services) or TZ apps (48, calls into a loaded app). Any other
+ *           owner is refused, so this reaches QSEE and nothing else.
+ * @svc:     TZ service.
+ * @cmd:     TZ command.
+ * @arginfo: Argument metadata (QCOM_SCM_ARGS()).
+ * @args:    Arguments, @nargs of them.
+ * @nargs:   Number of arguments, at most MAX_QCOM_SCM_ARGS.
+ * @res:     The call's three return values (output).
+ *
+ * Unlike the internal helper, an incomplete or blocked result is not
+ * treated as unexpected: it is returned in @res for the caller to finish,
+ * by answering the listener TZ names or continuing the blocked request.
+ * The caller must serialize whole sequences itself; this function only
+ * serializes the single call.
+ *
+ * Return: Zero if the SCM call itself completed (check @res->result),
+ * -EINVAL for an owner other than the two above or bad arguments, or
+ * another negative error code.
+ */
+int qcom_scm_qseecom_raw_call(u32 owner, u32 svc, u32 cmd, u32 arginfo,
+			      const u64 *args, unsigned int nargs,
+			      struct qcom_scm_qseecom_raw_res *res)
+{
+	struct qcom_scm_qseecom_resp resp = {};
+	struct qcom_scm_desc desc = {};
+	int status;
+
+	if (!__scm)
+		return -EPROBE_DEFER;
+	if (owner != QSEECOM_TZ_OWNER_QSEE_OS &&
+	    owner != QSEECOM_TZ_OWNER_TZ_APPS)
+		return -EINVAL;
+	if (nargs > MAX_QCOM_SCM_ARGS || (nargs && !args) || !res)
+		return -EINVAL;
+
+	desc.owner = owner;
+	desc.svc = svc;
+	desc.cmd = cmd;
+	desc.arginfo = arginfo;
+	memcpy(desc.args, args, nargs * sizeof(*args));
+
+	mutex_lock(&qcom_scm_qseecom_call_lock);
+	status = __qcom_scm_qseecom_call(&desc, &resp);
+	mutex_unlock(&qcom_scm_qseecom_call_lock);
+
+	dev_dbg(__scm->dev, "%s: owner=%x, svc=%x, cmd=%x, result=%lld, type=%llx, data=%llx\n",
+		__func__, owner, svc, cmd, resp.result, resp.resp_type,
+		resp.data);
+
+	res->result = resp.result;
+	res->resp_type = resp.resp_type;
+	res->data = resp.data;
+
+	return status;
+}
+EXPORT_SYMBOL_GPL(qcom_scm_qseecom_raw_call);
 
 /**
  * qcom_scm_qseecom_app_get_id() - Query the app ID for a given QSEE app name.

@@ -167,11 +167,29 @@ int qcom_scm_shm_bridge_create(u64 pfn_and_ns_perm_flags,
 			       u64 ns_vmids, u64 *handle);
 int qcom_scm_shm_bridge_delete(u64 handle);
 
+/**
+ * struct qcom_scm_qseecom_raw_res - the return values of one QSEECOM SCM call
+ * @result:    Result or status: success, incomplete, blocked on a listener or
+ *             failure.
+ * @resp_type: Type of @data (an app ID or a listener ID), or, for a request
+ *             blocked on a listener, the blocked session.
+ * @data:      Response data.
+ */
+struct qcom_scm_qseecom_raw_res {
+	u64 result;
+	u64 resp_type;
+	u64 data;
+};
+
 #ifdef CONFIG_QCOM_QSEECOM
 
 int qcom_scm_qseecom_app_get_id(const char *app_name, u32 *app_id);
 int qcom_scm_qseecom_app_send(u32 app_id, void *req, size_t req_size,
 			      void *rsp, size_t rsp_size);
+int qcom_scm_qseecom_get_version(u32 *version);
+int qcom_scm_qseecom_raw_call(u32 owner, u32 svc, u32 cmd, u32 arginfo,
+			      const u64 *args, unsigned int nargs,
+			      struct qcom_scm_qseecom_raw_res *res);
 
 #else /* CONFIG_QCOM_QSEECOM */
 
@@ -185,6 +203,19 @@ static inline int qcom_scm_qseecom_app_send(u32 app_id,
 					    void *rsp, size_t rsp_size)
 {
 	return -EINVAL;
+}
+
+static inline int qcom_scm_qseecom_get_version(u32 *version)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int qcom_scm_qseecom_raw_call(u32 owner, u32 svc, u32 cmd,
+					    u32 arginfo, const u64 *args,
+					    unsigned int nargs,
+					    struct qcom_scm_qseecom_raw_res *res)
+{
+	return -EOPNOTSUPP;
 }
 
 #endif /* CONFIG_QCOM_QSEECOM */
