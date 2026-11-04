@@ -23,4 +23,10 @@
 #define GS101_CLK_ACPM_DVFS_DISP			12
 #define GS101_CLK_ACPM_DVFS_BO				13
 
+/*
+ * The GPU as one clock: its rate is the shader (G3D) rate, and setting it
+ * also moves the top/L2 domain (G3DL2) to the level paired with it.
+ */
+#define GS101_CLK_ACPM_GPU				14
+
 #endif /* _DT_BINDINGS_CLOCK_GOOGLE_GS101_ACPM_H */
