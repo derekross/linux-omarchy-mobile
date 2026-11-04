@@ -1245,6 +1245,8 @@ patternProperties:
     description: OLIMEX Ltd.
   "^olpc,.*":
     description: One Laptop Per Child
+  "^omamobile,.*":
+    description: Omarchy Mobile (downstream software interfaces, not hardware)
   "^oneplus,.*":
     description: OnePlus Technology (Shenzhen) Co., Ltd.
   "^onething,.*":
