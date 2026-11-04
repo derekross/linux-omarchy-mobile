@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/firmware/omamobile,qseecom-compat.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Downstream-compatible QSEECOM userspace interface
+
+maintainers:
+  - johannSo <jzeug@soppa.de>
+
+description:
+  A /dev/qseecom with the downstream msm kernels' ioctl ABI, for vendor
+  HALs that reach their trusted applications in QSEE through
+  libQSEEComAPI. Buffers shared with QSEE are allocated from the SoC's
+  qseecom carve-out.
+
+properties:
+  compatible:
+    const: omamobile,qseecom-compat
+
+  memory-region:
+    maxItems: 1
+    description: The no-map carve-out shared with QSEE.
+
+required:
+  - compatible
+  - memory-region
+
+additionalProperties: false
+
+examples:
+  - |
+    qseecom {
+        compatible = "omamobile,qseecom-compat";
+        memory-region = <&qseecom_mem>;
+    };
