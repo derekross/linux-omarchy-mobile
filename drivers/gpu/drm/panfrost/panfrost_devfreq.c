@@ -126,8 +126,9 @@ int panfrost_devfreq_init(struct panfrost_device *pfdev)
 	struct thermal_cooling_device *cooling;
 	struct panfrost_devfreq *pfdevfreq = &pfdev->pfdevfreq;
 	unsigned long freq = ULONG_MAX;
+	bool fw_dvfs = pfdev->comp->pm_features & BIT(GPU_PM_FW_DVFS);
 
-	if (pfdev->comp->num_supplies > 1) {
+	if (pfdev->comp->num_supplies > 1 && !fw_dvfs) {
 		/*
 		 * GPUs with more than 1 supply require platform-specific handling:
 		 * continue without devfreq
@@ -140,7 +141,7 @@ int panfrost_devfreq_init(struct panfrost_device *pfdev)
 	if (ret)
 		return ret;
 
-	ret = devm_pm_opp_set_regulators(dev, pfdev->comp->supply_names);
+	ret = fw_dvfs ? 0 : devm_pm_opp_set_regulators(dev, pfdev->comp->supply_names);
 	if (ret) {
 		/* Continue if the optional regulator is missing */
 		if (ret != -ENODEV) {
