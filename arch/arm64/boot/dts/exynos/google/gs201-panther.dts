@@ -29,7 +29,7 @@
 
 	chosen {
 		/* ABL requires bootargs to exist; it appends its own after these. */
-		bootargs = "console=tty0 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init omamobile.ufs-probe mem_sleep_default=s2idle";
+		bootargs = "console=tty0 panic=10 reboot=warm clk_ignore_unused pd_ignore_unused rdinit=/init omamobile.ufs-probe mem_sleep_default=s2idle";
 		#address-cells = <2>;
 		#size-cells = <1>;
 		ranges;
