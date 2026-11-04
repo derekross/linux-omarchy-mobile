@@ -102,9 +102,42 @@ static const struct acpm_clk_variant gs101_acpm_clks[] = {
 	ACPM_CLK("bo"),
 };
 
+/*
+ * gs101 GPU operating points: shader (G3D) rate and the top/L2 (G3DL2) rate
+ * paired with it, in kHz, from Google's gs101 GPU DVFS table
+ * (gpu_dvfs_table_v2 in gs101-gpu.dtsi, the levels up to its
+ * gpu_dvfs_max_freq of 800 MHz). Stock's gpu_dvfs_min_freq of 250 MHz
+ * leaves out the 151 and 202 MHz rows; they are kept, as gs201's are.
+ */
+static const struct acpm_clk_pair gs101_gpu_pairs[] = {
+	{ 151000, 302000 },
+	{ 202000, 302000 },
+	{ 251000, 434000 },
+	{ 302000, 434000 },
+	{ 351000, 603000 },
+	{ 400000, 603000 },
+	{ 471000, 603000 },
+	{ 510000, 750000 },
+	{ 572000, 750000 },
+	{ 701000, 885000 },
+	{ 762000, 996000 },
+};
+
+static const struct acpm_clk_paired gs101_acpm_paired[] = {
+	{
+		.name = "gpu",
+		.id = 5,	/* G3D: shader cores */
+		.id2 = 6,	/* G3DL2: top level and L2 */
+		.pairs = gs101_gpu_pairs,
+		.nr_pairs = ARRAY_SIZE(gs101_gpu_pairs),
+	},
+};
+
 static const struct acpm_clk_driver_data acpm_clk_gs101 = {
 	.clks = gs101_acpm_clks,
 	.nr_clks = ARRAY_SIZE(gs101_acpm_clks),
+	.paired = gs101_acpm_paired,
+	.nr_paired = ARRAY_SIZE(gs101_acpm_paired),
 	.mbox_chan_id = 0,
 };
 
