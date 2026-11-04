@@ -382,3 +382,42 @@
 		interrupt-names = "host-wakeup";
 	};
 };
+
+/*
+ * Haptics: Cirrus Logic CS40L26A at 0x43 on PERIC1 USI0 (Google's I2C bus 0,
+ * 1 MHz in stock, 400 kHz here), INTb on gpa6-3, RESET on gph2-3 (the
+ * trigger line gph2-0 is claimed but unused). Boost and actuator values are
+ * the stock ones from Google's zuma-shusky-haptics.dtsi, as on the 7 Pro.
+ */
+/*
+ * The HSI1 pin controller is off in zuma.dtsi (HSI1 is the PCIe block, and
+ * reading a pin controller Linux does not own has aborted the SoC on gs101),
+ * so this board enables it for the haptics' reset and trigger lines. The
+ * interrupt, gpa6-3, is on an alive bank.
+ */
+&pinctrl_hsi1 {
+	status = "okay";
+};
+
+&usi0 {
+	status = "okay";
+};
+
+&hsi2c_0 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	haptics: haptic-driver@43 {
+		compatible = "cirrus,cs40l26a";
+		reg = <0x43>;
+		interrupts-extended = <&gpa6 3 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&gph2 3 GPIO_ACTIVE_LOW>;
+		pinctrl-0 = <&hapt_amp1_irq &hapt_amp1_rst &hapt_amp_trig>;
+		pinctrl-names = "default";
+		cirrus,boost-peak-microamp = <2500000>;
+		cirrus,boost-ctl-microvolt = <11000000>;
+		cirrus,lra-f0-hz = <145>;
+		cirrus,lra-redc-micro-ohms = <13000000>;
+		cirrus,vpbr-threshold-microvolt = <3008000>;
+	};
+};

@@ -26,6 +26,7 @@
 	aliases {
 		pinctrl0 = &pinctrl_gpio_alive;
 		pinctrl1 = &pinctrl_custom_alive;
+		pinctrl8 = &pinctrl_hsi1;
 		pinctrl10 = &pinctrl_hsi2ufs;
 		pinctrl11 = &pinctrl_peric0;
 		pinctrl12 = &pinctrl_peric1;
@@ -347,6 +348,15 @@
 			interrupts = <GIC_SPI 634 IRQ_TYPE_LEVEL_HIGH>;
 		};
 
+		pinctrl_hsi1: pinctrl@12040000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x12040000 0x1000>;
+			clocks = <&clk_gpio_stub>;
+			clock-names = "pclk";
+			interrupts = <GIC_SPI 413 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+
 		pinctrl_peric1: pinctrl@10c40000 {
 			compatible = "google,zuma-pinctrl";
 			reg = <0x10c40000 0x1000>;
@@ -360,6 +370,54 @@
 		 * charger and Type-C controller. Firmware leaves them running;
 		 * board files enable them.
 		 */
+		/* CMU_PERIC0 and USI14, the I2C bus of the rear flash LED. */
+		cmu_peric0: clock-controller@10800000 {
+			compatible = "google,zuma-cmu-peric0";
+			reg = <0x10800000 0x8000>;
+			#clock-cells = <1>;
+			clocks = <&oscclk>, <&cmu_top CLK_DOUT_PERIC0_NOC>,
+				 <&cmu_top CLK_DOUT_PERIC0_IP>;
+			clock-names = "oscclk", "bus", "ip";
+			status = "disabled";
+		};
+
+		sysreg_peric0: syscon@10821000 {
+			compatible = "google,zuma-peric0-sysreg", "syscon";
+			reg = <0x10821000 0x1000>;
+			clocks = <&cmu_peric0 CLK_GOUT_PERIC0_SYSREG>;
+			status = "disabled";
+		};
+
+		usi14: usi@109800c0 {
+			compatible = "google,zuma-usi", "samsung,exynos850-usi";
+			reg = <0x109800c0 0x20>;
+			clocks = <&cmu_peric0 CLK_GOUT_PERIC0_USI14_PCLK>,
+				 <&cmu_peric0 CLK_GOUT_PERIC0_USI14_IPCLK>;
+			clock-names = "pclk", "ipclk";
+			samsung,sysreg = <&sysreg_peric0 0x28>;
+			samsung,mode = <USI_MODE_I2C>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+			status = "disabled";
+
+			hsi2c_14: i2c@10980000 {
+				compatible = "google,zuma-hsi2c",
+					     "samsung,exynosautov9-hsi2c";
+				/* USI control starts at 0xc0; do not claim it twice. */
+				reg = <0x10980000 0xc0>;
+				interrupts = <GIC_SPI 648 IRQ_TYPE_LEVEL_HIGH>;
+				clocks = <&cmu_peric0 CLK_GOUT_PERIC0_USI14_IPCLK>,
+					 <&cmu_peric0 CLK_GOUT_PERIC0_USI14_PCLK>;
+				clock-names = "hsi2c", "hsi2c_pclk";
+				pinctrl-0 = <&hsi2c14_bus>;
+				pinctrl-names = "default";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				status = "disabled";
+			};
+		};
+
 		cmu_peric1: clock-controller@10c00000 {
 			compatible = "google,zuma-cmu-peric1";
 			reg = <0x10c00000 0x8000>;
@@ -400,6 +458,37 @@
 					 <&cmu_peric1 CLK_GOUT_PERIC1_USI9_PCLK>;
 				clock-names = "hsi2c", "hsi2c_pclk";
 				pinctrl-0 = <&hsi2c9_bus>;
+				pinctrl-names = "default";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				status = "disabled";
+			};
+		};
+
+		/* USI0 on PERIC1: the haptics driver's I2C bus on the 8 Pro. */
+		usi0: usi@10c800c0 {
+			compatible = "google,zuma-usi", "samsung,exynos850-usi";
+			reg = <0x10c800c0 0x20>;
+			clocks = <&cmu_peric1 CLK_GOUT_PERIC1_USI0_PCLK>,
+				 <&cmu_peric1 CLK_GOUT_PERIC1_USI0_IPCLK>;
+			clock-names = "pclk", "ipclk";
+			samsung,sysreg = <&sysreg_peric1 0x0>;
+			samsung,mode = <USI_MODE_I2C>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+			status = "disabled";
+
+			hsi2c_0: i2c@10c80000 {
+				compatible = "google,zuma-hsi2c",
+					     "samsung,exynosautov9-hsi2c";
+				/* USI control starts at 0xc0; do not claim it twice. */
+				reg = <0x10c80000 0xc0>;
+				interrupts = <GIC_SPI 656 IRQ_TYPE_LEVEL_HIGH>;
+				clocks = <&cmu_peric1 CLK_GOUT_PERIC1_USI0_IPCLK>,
+					 <&cmu_peric1 CLK_GOUT_PERIC1_USI0_PCLK>;
+				clock-names = "hsi2c", "hsi2c_pclk";
+				pinctrl-0 = <&hsi2c0_bus>;
 				pinctrl-names = "default";
 				#address-cells = <1>;
 				#size-cells = <0>;
