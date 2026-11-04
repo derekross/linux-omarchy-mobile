@@ -1079,13 +1079,17 @@ static const struct panfrost_compatible default_data = {
 	.pm_domain_names = NULL,
 };
 
-/* gs101 (Pixel 6): the G3D rails, all always-on; no DVFS yet */
+/*
+ * gs101 (Pixel 6): the G3D rails, all always-on. The APM firmware (ACPM)
+ * sets their voltages with the G3D and G3D L2 clock rates.
+ */
 static const char * const gs101_supplies[] = { "mali", "g3d-l2", "g3d-m", "int-m", NULL };
 static const struct panfrost_compatible gs101_data = {
 	.num_supplies = ARRAY_SIZE(gs101_supplies) - 1,
 	.supply_names = gs101_supplies,
 	.num_pm_domains = 1, /* optional */
 	.pm_domain_names = NULL,
+	.pm_features = BIT(GPU_PM_FW_DVFS),
 	.gpu_quirks = BIT(GPU_QUIRK_FORCE_AARCH64_PGTABLE),
 };
 
