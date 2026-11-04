@@ -63,6 +63,8 @@
 #define S5KGN1_REG_FRAME_LENGTH		CCI_REG16(0x0340)
 #define S5KGN1_REG_LINE_LENGTH		CCI_REG16(0x0342)
 #define S5KGN1_REG_TEST_PATTERN		CCI_REG16(0x0600)
+/* The GN1's second stream, its phase-detection lines on VC 1 [I: name] */
+#define S5KGN1_REG_PHASE_OUT		CCI_REG16(0x0b02)
 
 /*
  * Samsung's page pointers (0x6028 for the indirect window, 0xfcfc for
@@ -169,6 +171,7 @@ struct s5kgn1_variant {
 	bool clock_enable;		/* reset as the GN1, then enable the clock */
 	u32 soft_reset_us;
 	unsigned int crop_x_div;	/* x addresses per output column of a full mode */
+	bool phase_off;			/* no phase-detection stream (see post_tables) */
 };
 
 /*
@@ -195,6 +198,7 @@ static const struct s5kgn1_variant s5kgn1_variant = {
 	.clock_enable = true,
 	.soft_reset_us = 10000,
 	.crop_x_div = 2,
+	.phase_off = true,
 };
 
 /*
@@ -920,7 +924,14 @@ static int s5kgn1_reset(struct s5kgn1 *s)
 	return ret;
 }
 
-/* Back to the standard registers' page, and the board's readout direction */
+/*
+ * Back to the standard registers' page, and the board's readout direction.
+ * The GN1's settings also turn on a second stream on VC 1 (0x0b02 = 0x203),
+ * its phase-detection lines. No receiver channel takes VC 1, so each of
+ * those lines raises ERR_WRONG_CONFIG on the link (about 200 interrupts a
+ * frame), and nothing uses the data: turn the stream off. extra_regs, which
+ * runs later, can turn it back on.
+ */
 static int s5kgn1_post_tables(struct s5kgn1 *s)
 {
 	int ret = 0;
@@ -929,6 +940,8 @@ static int s5kgn1_post_tables(struct s5kgn1 *s)
 		  S5KGN1_REG_PAGE, S5KGN1_PAGE_REGS, &ret);
 	if (s->vflip)
 		cci_write(s->regmap, S5KGN1_REG_ORIENTATION, S5KGN1_VFLIP, &ret);
+	if (s->var->phase_off)
+		cci_write(s->regmap, S5KGN1_REG_PHASE_OUT, 0, &ret);
 
 	return ret;
 }
