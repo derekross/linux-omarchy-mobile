@@ -1082,8 +1082,6 @@ static void brcmf_pcie_attach(struct brcmf_pciedev_info *devinfo)
 	brcmf_pcie_write_reg32(devinfo, BRCMF_PCIE_PCIE2REG_CONFIGADDR, 0x4e0);
 	config = brcmf_pcie_read_reg32(devinfo, BRCMF_PCIE_PCIE2REG_CONFIGDATA);
 	brcmf_pcie_write_reg32(devinfo, BRCMF_PCIE_PCIE2REG_CONFIGDATA, config);
-
-	device_wakeup_enable(&devinfo->pdev->dev);
 }
 
 
@@ -2109,6 +2107,12 @@ static void brcmf_pcie_wowl_config(struct device *dev, bool enabled)
 
 	brcmf_dbg(PCIE, "Configuring WOWL, enabled=%d\n", enabled);
 	devinfo->wowl_enabled = enabled;
+	/*
+	 * Arm PME only for WoWLAN, as the USB bus does. Without it the device
+	 * has been disassociated before suspend and has nothing to wake the
+	 * host for.
+	 */
+	device_set_wakeup_enable(dev, enabled);
 }
 
 
