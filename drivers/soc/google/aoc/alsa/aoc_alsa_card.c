@@ -2069,6 +2069,11 @@ static int snd_aoc_init(struct aoc_chip *chip)
 	chip->skip_mmap_offload = of_property_read_bool(aoc_node, "skip-mmap-offload");
 
 	of_node_put(aoc_node);
+
+	/* Only the zuma AoC firmware drops the pre-start playback data; gs201 is left as it was. */
+	aoc_node = of_find_compatible_node(NULL, NULL, "google,zuma-aoc");
+	chip->deep_buffer_drops_prefill = !!aoc_node;
+	of_node_put(aoc_node);
 	return 0;
 }
 

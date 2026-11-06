@@ -3136,6 +3136,12 @@ int aoc_audio_write(struct aoc_alsa_stream *alsa_stream, struct iov_iter *src,
 			goto out;
 		}
 
+		if (alsa_stream->prefill && !alsa_stream->running &&
+		    alsa_stream->prefill_len + block_size <= alsa_stream->prefill_cap) {
+			memcpy(alsa_stream->prefill + alsa_stream->prefill_len, tmp, block_size);
+			alsa_stream->prefill_len += block_size;
+		}
+
 		err = aoc_service_write(dev, tmp, block_size, NONBLOCKING);
 		if (err != block_size) {
 			pr_err("ERR: unwritten data - %d bytes\n", block_size - err);
