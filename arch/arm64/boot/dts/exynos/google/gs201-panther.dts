@@ -132,8 +132,7 @@
 	/*
 	 * Main PMIC, touch rails only. LDO25M is the touch controller's VDD
 	 * and LDO26M its AVDD; nothing else on the stock board consumes
-	 * them. Stock constrains them to 1.6-1.95 V and 2.5-3.0 V. The sub-PMIC
-	 * is not described.
+	 * them. Stock constrains them to 1.6-1.95 V and 2.5-3.0 V.
 	 */
 	pmic-1 {
 		compatible = "samsung,s2mpg12-pmic";
@@ -158,6 +157,27 @@
 				regulator-name = "avdd-ts";
 				regulator-min-microvolt = <3000000>;
 				regulator-max-microvolt = <3000000>;
+			};
+		};
+	};
+
+	/*
+	 * Sub PMIC, the fingerprint sensor's supply only: L15S_UDFPS_AVDD
+	 * with stock's 2.5-3.3 V range (stock dtbo 0x30406, LDO15S, the
+	 * same as the Pixel 7 Pro's). Only described rails can be switched;
+	 * the others stay as the bootloader set them. Disabled until the
+	 * fingerprint overlay, which enables its own rail.
+	 */
+	pmic-2 {
+		compatible = "samsung,s2mpg13-pmic";
+		status = "disabled";
+
+		regulators {
+			ldo15s: ldo15s {
+				regulator-name = "vdd_udfps";
+				regulator-min-microvolt = <2500000>;
+				regulator-max-microvolt = <3300000>;
+				status = "disabled";
 			};
 		};
 	};
@@ -465,5 +485,43 @@
 			led-sources = <1 2>;
 			led-max-microamp = <50000>;
 		};
+	};
+};
+
+/*
+ * Goodix optical under-display fingerprint sensor, as on the Pixel 7 Pro:
+ * the stock dtbo for board 0x30406 has the same goodixfp node as cheetah's
+ * 0x30306 ("goodix,fingerprint", IRQ gpa9-2, reset gpp1-1 active low,
+ * supply LDO15S). Trusty owns its SPI bus; Linux only switches its supply,
+ * reset and interrupt lines. Disabled until the fingerprint bring-up: it
+ * needs Trusty and the sub-PMIC.
+ */
+/ {
+	fingerprint {
+		compatible = "goodix,g7-udfps";
+		interrupt-parent = <&gpa9>;
+		interrupts = <2 IRQ_TYPE_EDGE_RISING>;
+		reset-gpios = <&gpp1 1 GPIO_ACTIVE_LOW>;
+		vdd-supply = <&ldo15s>;
+		pinctrl-0 = <&fp_irq &fp_reset>;
+		pinctrl-names = "default";
+		status = "disabled";
+	};
+};
+
+&pinctrl_gpio_alive {
+	fp_irq: fp-irq-pins {
+		samsung,pins = "gpa9-2";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+};
+
+&pinctrl_peric0 {
+	fp_reset: fp-reset-pins {
+		samsung,pins = "gpp1-1";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
 	};
 };
