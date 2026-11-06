@@ -138,6 +138,17 @@
 			     <GIC_SPI 59 IRQ_TYPE_LEVEL_HIGH>;
 	};
 
+	/*
+	 * The APM USI1 UART (Bluetooth): gpa3-0..3 in function 2, as Google's
+	 * uart18_bus.
+	 */
+	uart18_bus: uart18-bus-pins {
+		samsung,pins = "gpa3-0", "gpa3-1", "gpa3-2", "gpa3-3";
+		samsung,pin-function = <GS101_PIN_FUNC_2>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
 	key_power: key-power-pins {
 		samsung,pins = "gpa4-0";
 		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
@@ -271,6 +282,25 @@
 		#interrupt-cells = <2>;
 		interrupt-parent = <&gic>;
 		interrupts = <GIC_SPI 9 IRQ_TYPE_LEVEL_HIGH>;
+	};
+
+	/*
+	 * Bluetooth: BT_REG_ON gpn8-0 and BT_DEV_WAKE gpn9-0, from Google's
+	 * zuma-board-bluetooth.dtsi.
+	 */
+	bt_power: bt-power-pins {
+		samsung,pins = "gpn8-0", "gpn9-0";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
+	/* BT_HOST_WAKE: gpn6-0 as an interrupt, pulled down (function F in stock). */
+	bt_host_wake: bt-host-wake-pins {
+		samsung,pins = "gpn6-0";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_DOWN>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
 	};
 
 	ts_irq: ts-irq-pins {
@@ -455,6 +485,17 @@
 	ts_reset: ts-reset-pins {
 		samsung,pins = "gpp21-2";
 		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
+	/*
+	 * BT_BLE_DBO_LE: the clock of the flip-flop that latches BT_REG_ON
+	 * (Google's bt_ble_dbo_le, an input at reset).
+	 */
+	bt_ble_dbo: bt-ble-dbo-pins {
+		samsung,pins = "gpp24-3";
+		samsung,pin-function = <GS101_PIN_FUNC_INPUT>;
 		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
 		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
 	};
