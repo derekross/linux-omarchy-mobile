@@ -91,6 +91,19 @@
 			reg = <0x0 0xfac00000 (1080 * 2400 * 4)>;
 			no-map;
 		};
+
+		/*
+		 * Scanout buffers for gs-decon. Inside the c3080000-d80fffff
+		 * System RAM block from /proc/iomem on the phone; below 4 GiB
+		 * because DPP0 takes 32-bit addresses.
+		 */
+		display_pool: display-pool {
+			compatible = "shared-dma-pool";
+			reusable;
+			size = <0x5c00000>;
+			alignment = <0x0 0x200000>;
+			alloc-ranges = <0x0 0xc4000000 0x5c00000>;
+		};
 	};
 };
 
@@ -190,7 +203,7 @@
 
 	/*
 	 * Stand-in for the PMIC rails behind the chip's I/O, 1.3 V and 1.9 V
-	 * inputs. Stock's device tree names no supply on its cnss2 or btpower
+	 * inputs. Stock's device tree names no supply on its cnss2 or btpowe
 	 * node (only the three GPIOs), so which PMIC regulators feed them is
 	 * unknown; they are on at boot and the host never switches them.
 	 */
@@ -305,3 +318,27 @@
 &usi_apm1 {
 	status = "okay";
 };
+
+&dsi0 {
+	status = "okay";
+	panel: panel@0 {
+		compatible = "samsung,s6e3fc5";
+		reg = <0>;
+		reset-gpios = <&gpp23 2 GPIO_ACTIVE_LOW>;
+		vddio-supply = <&ldo25m>;
+		avdd-supply = <&ldo26m>;
+		width-mm = <70>;
+		height-mm = <149>;
+	};
+};
+
+&decon0 {
+	compatible = "google,gs201-decon-lynx";
+	memory-region = <&display_pool>, <&cont_splash_mem>;
+	memory-region-names = "pool", "boot-framebuffer";
+	status = "okay";
+};
+
+&cmu_dpu { status = "okay"; };
+&cmu_disp { status = "okay"; };
+&gpu { status = "okay"; };
