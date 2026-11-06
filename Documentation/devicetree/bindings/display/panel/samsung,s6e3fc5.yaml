@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/display/panel/samsung,s6e3fc5.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Samsung S6E3FC5 AMOLED DSI panel
+
+description:
+  The S6E3FC5 is a display driver IC from Samsung Mobile Display, driving
+  the 1080x2400 command-mode AMOLED panel of the Google Pixel 7a. The panel
+  takes DSC-compressed pixel data over four MIPI DSI lanes and reports its
+  refresh timing on a tearing effect (TE) line.
+
+maintainers:
+  - Derek Ross <derekross@gmail.com>
+
+allOf:
+  - $ref: panel-common.yaml#
+
+properties:
+  compatible:
+    const: samsung,s6e3fc5
+
+  reg:
+    maxItems: 1
+
+  reset-gpios: true
+
+  vddio-supply:
+    description: I/O supply
+
+  avdd-supply:
+    description: Analog supply
+
+required:
+  - compatible
+  - reg
+  - reset-gpios
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/gpio/gpio.h>
+
+    dsi {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        panel@0 {
+            compatible = "samsung,s6e3fc5";
+            reg = <0>;
+            reset-gpios = <&gpp23 2 GPIO_ACTIVE_LOW>;
+            vddio-supply = <&ldo25m>;
+            avdd-supply = <&ldo26m>;
+            width-mm = <70>;
+            height-mm = <149>;
+        };
+    };
+
+...
