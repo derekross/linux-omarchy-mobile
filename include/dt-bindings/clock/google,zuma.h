@@ -55,7 +55,7 @@
 #define CLK_GOUT_PERIC1_USI9_PCLK	12
 #define CLK_GOUT_PERIC1_USI9_RSTNSYNC	13
 
-/* CMU_APM: the APM mailbox, its SRAM and the always-on GPIO banks. */
+/* CMU_APM: the APM mailbox, its SRAM, the always-on GPIO banks, the USI1 UART and the SYSREG. */
 #define CLK_APM_PLL_ALV_DIV2		1
 #define CLK_APM_PLL_ALV_DIV4		2
 #define CLK_APM_PLL_ALV_DIV8		3
@@ -70,5 +70,10 @@
 #define CLK_GOUT_APM_GPIO_ALIVE		12
 #define CLK_GOUT_APM_GPIO_FAR_ALIVE	13
 #define CLK_GOUT_APM_GPIO_CUSTOM_ALIVE	14
+#define CLK_DOUT_APM_USI1_UART		15
+#define CLK_GOUT_APM_USI1_UART_IPCLK	16
+#define CLK_GOUT_APM_USI1_UART_PCLK	17
+#define CLK_GOUT_APM_USI1_UART_RSTNSYNC	18
+#define CLK_GOUT_APM_SYSREG		19
 
 #endif /* _DT_BINDINGS_CLOCK_GOOGLE_ZUMA_H */
