@@ -1097,6 +1097,17 @@ config DRM_PANEL_SAMSUNG_S6E3HC3
 	  left it running: the driver sends no initialisation sequence, and
 	  the display modes come from the display controller's driver.
 
+config DRM_PANEL_SAMSUNG_S6E3FC5
+	tristate "Samsung S6E3FC5 DSI panel"
+	depends on OF
+	depends on DRM_MIPI_DSI
+	depends on BACKLIGHT_CLASS_DEVICE
+	help
+	  Say Y here to enable support for the Samsung S6E3FC5 panel used
+	  on the Pixel 7a (lynx). It is a command-mode AMOLED panel with
+	  runtime DSC configuration and two refresh rates. To compile this
+	  driver as a module, choose M here.
+
 config DRM_PANEL_SAMSUNG_S6E3HC4
 	tristate "Samsung S6E3HC4 DSI command mode panel"
 	depends on GPIOLIB
