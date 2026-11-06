@@ -5,6 +5,7 @@
 
 /dts-v1/;
 
+#include <dt-bindings/gpio/gpio.h>
 #include "zuma.dtsi"
 
 / {
@@ -31,6 +32,17 @@
 			minor = <1>;
 			pkg_mode = <1>;
 		};
+	};
+
+	/*
+	 * UFS VCC, switched by gpp0-1 as on stock, and as on the Pixel 8 Pro.
+	 * ABL hands over with it off, so the UFS driver must turn it on.
+	 */
+	ufs_0_fixed_vcc_reg: regulator-ufs-vcc {
+		compatible = "regulator-fixed";
+		regulator-name = "ufs-vcc";
+		gpio = <&gpp0 1 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 	};
 
 	chosen {
@@ -75,6 +87,19 @@
 			no-map;
 		};
 	};
+};
+
+/*
+ * Behind the init's storage guard (only slot B's boot images and userdata
+ * writable), which runs before the disks appear.
+ */
+&ufs_0 {
+	vcc-supply = <&ufs_0_fixed_vcc_reg>;
+	status = "okay";
+};
+
+&ufs_0_phy {
+	status = "okay";
 };
 
 &usb_dwc3 {
