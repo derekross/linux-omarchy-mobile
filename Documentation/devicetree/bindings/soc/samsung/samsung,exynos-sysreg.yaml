@@ -30,6 +30,7 @@ properties:
               - google,gs201-vgpio2ap-sysreg
               - google,zuma-apm-sysreg
               - google,zuma-hsi0-sysreg
+              - google,zuma-peric0-sysreg
               - google,zuma-peric1-sysreg
               - google,zuma-ufs-sysreg
               - google,zumapro-apm-sysreg
@@ -120,6 +121,7 @@ allOf:
               - google,gs201-peric0-sysreg
               - google,gs201-peric1-sysreg
               - google,zuma-apm-sysreg
+              - google,zuma-peric0-sysreg
               - google,zuma-peric1-sysreg
               - google,zumapro-apm-sysreg
               - google,zumapro-hsi0-sysreg
