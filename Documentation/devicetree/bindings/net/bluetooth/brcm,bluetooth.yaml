@@ -19,6 +19,9 @@ properties:
           - enum:
               - infineon,cyw43439-bt
           - const: brcm,bcm4329-bt
+      - items:
+          - const: brcm,bcm4398-bt
+          - const: brcm,bcm4389-bt
       - enum:
           - brcm,bcm20702a1
           - brcm,bcm4329-bt
@@ -57,7 +60,7 @@ properties:
     maxItems: 1
     description: GPIO specifier for the clock of the flip-flop that holds
       BT_REG_ON on boards that latch it (the BCM4383 on the Google Pixel
-      9a). BT_REG_ON only reaches the chip on a rising edge of this line.
+      9a and the BCM4398 on the Pixel 8 Pro). BT_REG_ON only reaches the chip on a rising edge of this line.
 
   host-wakeup-gpios:
     maxItems: 1
