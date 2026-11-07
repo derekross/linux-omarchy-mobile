@@ -91,7 +91,8 @@
 
 /*
  * Behind the init's storage guard (only slot B's boot images and userdata
- * writable), which runs before the disks appear.
+ * writable), which sets every partition read-only before anything mounts
+ * them.
  */
 &ufs_0 {
 	vcc-supply = <&ufs_0_fixed_vcc_reg>;
