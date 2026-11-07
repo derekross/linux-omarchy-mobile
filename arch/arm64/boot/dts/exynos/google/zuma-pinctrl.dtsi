@@ -180,6 +180,14 @@
 		samsung,pin-pud = <GS101_PIN_PULL_UP>;
 		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
 	};
+
+	/* Haptics INTb: gpa6-3 (XEINT_11), as stock. */
+	hapt_amp1_irq: hapt-amp1-irq-pins {
+		samsung,pins = "gpa6-3";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
 };
 
 &pinctrl_custom_alive {
@@ -407,9 +415,65 @@
 		interrupt-controller;
 		#interrupt-cells = <2>;
 	};
+
+	/* USI14, the rear flash LED's bus: gpp16-0/1 in function 2, as stock. */
+	hsi2c14_bus: hsi2c14-bus-pins {
+		samsung,pins = "gpp16-0", "gpp16-1";
+		samsung,pin-function = <GS101_PIN_FUNC_2>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
+	/* The LM3644's HWEN (flashlight enable), gpp8-2; the LED driver takes it as a GPIO. */
+	flash_en: flash-en-pins {
+		samsung,pins = "gpp8-2";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+};
+
+&pinctrl_hsi1 {
+	gph0: gph0-gpio-bank {
+		gpio-controller;
+		#gpio-cells = <2>;
+	};
+
+	gph1: gph1-gpio-bank {
+		gpio-controller;
+		#gpio-cells = <2>;
+	};
+
+	gph2: gph2-gpio-bank {
+		gpio-controller;
+		#gpio-cells = <2>;
+	};
+
+	/* Haptics (CS40L26A): RESET gph2-3, TRIG gph2-0, from Google's zuma-shusky-haptics.dtsi. */
+	hapt_amp1_rst: hapt-amp1-rst-pins {
+		samsung,pins = "gph2-3";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
+	hapt_amp_trig: hapt-amp-trig-pins {
+		samsung,pins = "gph2-0";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
 };
 
 &pinctrl_peric1 {
+	/* USI0, the haptics driver's bus: gpp19-0/1 in function 3, as stock. */
+	hsi2c0_bus: hsi2c0-bus-pins {
+		samsung,pins = "gpp19-0", "gpp19-1";
+		samsung,pin-function = <GS101_PIN_FUNC_3>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
 	gpp19: gpp19-gpio-bank {
 		gpio-controller;
 		#gpio-cells = <2>;
