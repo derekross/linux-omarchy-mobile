@@ -17,7 +17,9 @@ description:
 
 properties:
   compatible:
-    const: google,gs201-aoc-mbox
+    enum:
+      - google,gs201-aoc-mbox
+      - google,zumapro-aoc-mbox
 
   reg:
     maxItems: 1
