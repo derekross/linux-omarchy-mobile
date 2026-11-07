@@ -730,6 +730,7 @@
 		pmu_system_controller: system-controller@15460000 {
 			compatible = "google,zuma-pmu";
 			reg = <0x15460000 0x10000>;
+			#clock-cells = <1>;
 
 			/*
 			 * The bootloader reads the reboot reason from SYSIP_DAT0,
