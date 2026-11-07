@@ -4,7 +4,7 @@
 $id: http://devicetree.org/schemas/phy/google,gs201-mipi-dcphy-rx.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
-title: Google gs201 MIPI DC-PHY receiver
+title: Google gs201 and zumapro MIPI DC-PHY receiver
 
 maintainers:
   - Derek Ross <derekross@gmail.com>
@@ -17,11 +17,15 @@ description:
   one PMU isolation control. The PHY cell selects the link. Each slave
   receives D-PHY or C-PHY (up to three trios on links 0 and 1, two on the
   others); the consumer selects the mode at run time, from its endpoint's
-  bus type.
+  bus type. zumapro (Tensor G4) has nine slaves for twelve CSIS links, the
+  clock lane first on each, and one reset bit per slave; the PHY cell is
+  the CSIS link.
 
 properties:
   compatible:
-    const: google,gs201-mipi-dcphy-rx
+    enum:
+      - google,gs201-mipi-dcphy-rx
+      - google,zumapro-mipi-dcphy-rx
 
   reg:
     maxItems: 1
@@ -42,7 +46,7 @@ properties:
     items:
       - items:
           - description: the camera block's system registers
-          - description: offset of the per-slave reset register (bit = link)
+          - description: offset of the per-slave reset register (bit = slave)
     description:
       The register that holds each DC-PHY slave in reset (bit clear) or
       releases it (bit set).

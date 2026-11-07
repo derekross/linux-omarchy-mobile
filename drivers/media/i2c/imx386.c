@@ -23,6 +23,7 @@
 #include <linux/math64.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
+#include <linux/property.h>
 #include <linux/regulator/consumer.h>
 #include <linux/unaligned.h>
 
@@ -40,6 +41,7 @@
 #define IMX386_REG_FRAME_COUNT		CCI_REG8(0x0005)
 #define IMX386_REG_CHIP_ID		CCI_REG16(0x0016)
 #define IMX386_CHIP_ID			0x0386
+#define IMX712_CHIP_ID			0x0712
 #define IMX386_REG_EXPOSURE		CCI_REG16(0x0202)
 #define IMX386_REG_ANALOG_GAIN		CCI_REG16(0x0204)
 /* per colour channel: Gr, R, B, Gb (CCS) */
@@ -152,6 +154,7 @@ struct imx386 {
 
 	struct clk *mclk;
 	struct gpio_desc *reset;
+	u16 chip_id;	/* IMX386 (Pixel 7 Pro) or IMX712 (Pixel 9a), from the compatible */
 	struct regulator *supplies[IMX386_NUM_SUPPLIES];
 	u32 delays_us[3];	/* after the last supply, after MCLK, after reset */
 	u32 max_line_mbps;	/* receiver's line throughput, MB/s; 0: none */
@@ -297,7 +300,7 @@ static int imx386_load_data(struct imx386 *s)
 	h = (const void *)s->fw->data;
 	if (le32_to_cpu(h->magic) != IMX386_FW_MAGIC ||
 	    le16_to_cpu(h->version) != IMX386_FW_VERSION ||
-	    le16_to_cpu(h->chip_id) != IMX386_CHIP_ID)
+	    le16_to_cpu(h->chip_id) != s->chip_id)
 		goto bad;
 
 	s->num_modes = le16_to_cpu(h->num_modes);
@@ -897,10 +900,10 @@ static int imx386_identify(struct imx386 *s)
 	if (ret)
 		return dev_err_probe(s->dev, ret, "chip ID read failed\n");
 
-	if (id != IMX386_CHIP_ID)
+	if (id != s->chip_id)
 		return dev_err_probe(s->dev, -ENODEV,
 				     "chip ID 0x%04llx, expected 0x%04x\n",
-				     id, IMX386_CHIP_ID);
+				     id, s->chip_id);
 
 	dev_info(s->dev, "model 0x%04llx\n", id);
 
@@ -919,6 +922,7 @@ static int imx386_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	s->dev = dev;
+	s->chip_id = (uintptr_t)device_get_match_data(dev) ?: IMX386_CHIP_ID;
 	v4l2_i2c_subdev_init(&s->sd, client, &imx386_subdev_ops);
 	s->sd.internal_ops = &imx386_internal_ops;
 
@@ -1042,7 +1046,9 @@ static DEFINE_RUNTIME_DEV_PM_OPS(imx386_pm_ops, imx386_power_off,
 				 imx386_power_on, NULL);
 
 static const struct of_device_id imx386_of_match[] = {
-	{ .compatible = "sony,imx386" },
+	{ .compatible = "sony,imx386", .data = (void *)IMX386_CHIP_ID },
+	/* Pixel 9a ultrawide: same CCS-style register map, own init and modes in its data file */
+	{ .compatible = "sony,imx712", .data = (void *)IMX712_CHIP_ID },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, imx386_of_match);
@@ -1058,5 +1064,5 @@ static struct i2c_driver imx386_driver = {
 };
 module_i2c_driver(imx386_driver);
 
-MODULE_DESCRIPTION("Sony IMX386 sensor driver");
+MODULE_DESCRIPTION("Sony IMX386 and IMX712 sensor driver");
 MODULE_LICENSE("GPL");
