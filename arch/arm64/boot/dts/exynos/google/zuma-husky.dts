@@ -205,6 +205,40 @@
 			};
 		};
 	};
+
+	/*
+	 * The sub PMIC (S2MPG15), for the GNSS receiver's three rails. On
+	 * stock these are always on, which is why the ranges below are stock's
+	 * and nothing sets a voltage at probe: the GNSS driver will switch
+	 * them. Only these rails are described; every other rail of the chip
+	 * is left as the bootloader set it. No interrupt. Disabled until it
+	 * has been tried on the phone.
+	 */
+	pmic-2 {
+		compatible = "samsung,s2mpg15-pmic";
+		status = "disabled";
+
+		regulators {
+			/* L9S_GNSS_CORE, L10S_GNSS_RF and L11S_GNSS_AUX. */
+			ldo9s: ldo9s {
+				regulator-name = "vdd_gnss_core";
+				regulator-min-microvolt = <725000>;
+				regulator-max-microvolt = <1300000>;
+			};
+
+			ldo10s: ldo10s {
+				regulator-name = "vdd_gnss_rf";
+				regulator-min-microvolt = <1600000>;
+				regulator-max-microvolt = <1950000>;
+			};
+
+			ldo11s: ldo11s {
+				regulator-name = "vdd_gnss_aux";
+				regulator-min-microvolt = <1600000>;
+				regulator-max-microvolt = <1950000>;
+			};
+		};
+	};
 };
 
 /*
