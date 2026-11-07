@@ -594,6 +594,26 @@
 		};
 	};
 
+	/* Trusty, the secure OS that runs from the bootloader's tzsw image. */
+	trusty: trusty {
+		compatible = "android,trusty-smc-v1";
+		status = "disabled";
+
+		irq {
+			compatible = "android,trusty-irq-v1";
+			/* Trusty IPIs 8-15 are GIC SGIs 8-15 */
+			ipi-range = <8 15 8>;
+		};
+
+		log {
+			compatible = "android,trusty-log-v1";
+		};
+
+		virtio {
+			compatible = "android,trusty-virtio-v1";
+		};
+	};
+
 	soc: soc {
 		compatible = "simple-bus";
 		#address-cells = <2>;
@@ -1099,6 +1119,34 @@
 			};
 		};
 
+		usi4_hsi0: usi@111f00c0 {
+			compatible = "google,zumapro-usi", "samsung,exynos850-usi";
+			reg = <0x0 0x111f00c0 0x20>;
+			clocks = <&cmu_hsi0 CLK_GOUT_HSI0_USI4_PCLK>,
+				 <&cmu_hsi0 CLK_GOUT_HSI0_USI4_IP>;
+			clock-names = "pclk", "ipclk";
+			samsung,sysreg = <&sysreg_hsi0 0x1024>;
+			samsung,mode = <USI_MODE_I2C>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges = <0x111f0000 0x0 0x111f0000 0x1000>;
+			status = "disabled";
+
+			hsi2c19: i2c@111f0000 {
+				compatible = "google,zumapro-hsi2c",
+					     "samsung,exynosautov9-hsi2c";
+				/* USI control starts at 0xc0; do not claim it twice. */
+				reg = <0x111f0000 0xc0>;
+				interrupts = <GIC_SPI 410 IRQ_TYPE_LEVEL_HIGH>;
+				clocks = <&cmu_hsi0 CLK_GOUT_HSI0_USI4_IP>,
+					 <&cmu_hsi0 CLK_GOUT_HSI0_USI4_PCLK>;
+				clock-names = "hsi2c", "hsi2c_pclk";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				status = "disabled";
+			};
+		};
+
 		usb: usb@11210000 {
 			compatible = "snps,dwc3";
 			reg = <0x0 0x11210000 0x10000>;
@@ -1322,6 +1370,30 @@
 			status = "disabled";
 		};
 
+		aoc_mbox_a32: mailbox@15200000 {
+			compatible = "google,zumapro-aoc-mbox";
+			reg = <0x0 0x15200000 0x1000>;
+			interrupts = <GIC_SPI 77 IRQ_TYPE_LEVEL_HIGH>;
+			#mbox-cells = <1>;
+			status = "disabled";
+		};
+
+		aoc_mbox_f1: mailbox@15220000 {
+			compatible = "google,zumapro-aoc-mbox";
+			reg = <0x0 0x15220000 0x1000>;
+			interrupts = <GIC_SPI 78 IRQ_TYPE_LEVEL_HIGH>;
+			#mbox-cells = <1>;
+			status = "disabled";
+		};
+
+		aoc_mbox_p6: mailbox@15240000 {
+			compatible = "google,zumapro-aoc-mbox";
+			reg = <0x0 0x15240000 0x1000>;
+			interrupts = <GIC_SPI 79 IRQ_TYPE_LEVEL_HIGH>;
+			#mbox-cells = <1>;
+			status = "disabled";
+		};
+
 		cmu_apm: clock-controller@15400000 {
 			compatible = "google,zumapro-cmu-apm";
 			reg = <0x0 0x15400000 0x8000>;
@@ -1352,6 +1424,62 @@
 				mode-bootloader = <0xfc>;
 				status = "disabled";
 			};
+		};
+
+		/*
+		 * The audio and sensor DSP. Its authenticated firmware owns its
+		 * memory protection: Linux touches neither its S2MPU nor its
+		 * System MMU, so neither is described.
+		 */
+		aoc: aoc@154b0000 {
+			compatible = "google,zumapro-aoc";
+			reg = <0x0 0x154b0000 0x1000>, <0x0 0x10000000 0x20>;
+			reg-names = "aoc_req", "chipid";
+			interrupts = <GIC_SPI 130 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "watchdog";
+			clocks = <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_MIF>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_INT>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_CPUCL0>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_CPUCL1>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_CPUCL2>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_DSU>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_BCI>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_G3D>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_G3DL2>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_TPU>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_INTCAM>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_TNR>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_CAM>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_MFC>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_DISP>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_AOC>,
+				 <&acpm_ipc ZUMAPRO_CLK_ACPM_DVFS_BW>;
+			google,gsa = <&gsa>;
+			mboxes = <&aoc_mbox_a32 0>, <&aoc_mbox_a32 1>,
+				 <&aoc_mbox_a32 2>, <&aoc_mbox_a32 3>,
+				 <&aoc_mbox_a32 4>, <&aoc_mbox_a32 5>,
+				 <&aoc_mbox_a32 6>, <&aoc_mbox_a32 7>,
+				 <&aoc_mbox_a32 8>, <&aoc_mbox_a32 9>,
+				 <&aoc_mbox_a32 10>, <&aoc_mbox_a32 11>,
+				 <&aoc_mbox_a32 12>, <&aoc_mbox_a32 13>,
+				 <&aoc_mbox_a32 14>, <&aoc_mbox_a32 15>,
+				 <&aoc_mbox_f1 0>, <&aoc_mbox_f1 1>,
+				 <&aoc_mbox_f1 2>, <&aoc_mbox_f1 3>,
+				 <&aoc_mbox_f1 4>, <&aoc_mbox_f1 5>,
+				 <&aoc_mbox_f1 6>, <&aoc_mbox_f1 7>,
+				 <&aoc_mbox_f1 8>, <&aoc_mbox_f1 9>,
+				 <&aoc_mbox_f1 10>, <&aoc_mbox_f1 11>,
+				 <&aoc_mbox_f1 12>, <&aoc_mbox_f1 13>,
+				 <&aoc_mbox_f1 14>, <&aoc_mbox_f1 15>,
+				 <&aoc_mbox_p6 0>, <&aoc_mbox_p6 1>,
+				 <&aoc_mbox_p6 2>, <&aoc_mbox_p6 3>,
+				 <&aoc_mbox_p6 4>, <&aoc_mbox_p6 5>,
+				 <&aoc_mbox_p6 6>, <&aoc_mbox_p6 7>,
+				 <&aoc_mbox_p6 8>, <&aoc_mbox_p6 9>,
+				 <&aoc_mbox_p6 10>, <&aoc_mbox_p6 11>,
+				 <&aoc_mbox_p6 12>, <&aoc_mbox_p6 13>,
+				 <&aoc_mbox_p6 14>, <&aoc_mbox_p6 15>;
+			status = "disabled";
 		};
 
 		pinctrl_alive: pinctrl@154d0000 {
@@ -1483,6 +1611,14 @@
 			firmware-sram@0 {
 				reg = <0x0 0x58000>;
 			};
+		};
+
+		gsa: gsa@16490000 {
+			compatible = "google,zumapro-gsa";
+			reg = <0x0 0x16490000 0x1000>;
+			reg-names = "mbox";
+			interrupts = <GIC_SPI 375 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
 		};
 
 		dsi0: dsi@19440000 {
