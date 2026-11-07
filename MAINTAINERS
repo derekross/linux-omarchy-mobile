@@ -8492,6 +8492,11 @@ S:	Maintained
 F:	Documentation/devicetree/bindings/display/panel/samsung,s6e3ha8.yaml
 F:	drivers/gpu/drm/panel/panel-samsung-s6e3ha8.c
 
+DRM DRIVER FOR SAMSUNG S6E3HC3 PANELS
+M:	saiththerobo <the.tom.sharp@gmail.com>
+S:	Maintained
+F:	drivers/gpu/drm/panel/panel-samsung-s6e3hc3.c
+
 DRM DRIVER FOR SAMSUNG S6E8FC0 PANELS
 M:	Yedaya Katsman <yedaya.ka@gmail.com>
 S:	Maintained

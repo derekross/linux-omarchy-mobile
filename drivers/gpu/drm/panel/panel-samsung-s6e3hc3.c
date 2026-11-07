@@ -1,0 +1,204 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Samsung S6E3HC3 DSI command-mode AMOLED panel (Google Pixel 6 Pro)
+ *
+ * Brightness levels and the display off/on commands from Google's GPL panel
+ * driver (google-modules/display/samsung/panel/panel-samsung-s6e3hc3.c).
+ *
+ * The bootloader powers the panel on and leaves it running, scanned out by
+ * simpledrm or gs-decon. This driver takes it over as it is: it never drives
+ * the reset line or the rails, and sends nothing until the brightness or the
+ * backlight power state changes. A blanked backlight (bl_power) turns the
+ * display off, which stops the OLED emitting but keeps the panel out of
+ * sleep with its registers intact; unblanking turns it back on. Level 0
+ * is the dimmest level, not off. It switches between 60 and 120 Hz for the
+ * DSIM (drm_panel_set_refresh_rate()).
+ */
+
+#include <linux/backlight.h>
+#include <linux/mod_devicetable.h>
+#include <linux/module.h>
+#include <linux/mutex.h>
+
+#include <drm/drm_connector.h>
+#include <drm/drm_mipi_dsi.h>
+#include <drm/drm_panel.h>
+
+/* Normal range; 2232..3152 are the high brightness mode (HBM) levels. */
+#define S6E3HC3_MIN_BRIGHTNESS		4
+#define S6E3HC3_MAX_BRIGHTNESS		2047
+#define S6E3HC3_DEFAULT_BRIGHTNESS	1023
+
+struct s6e3hc3 {
+	struct drm_panel panel;
+	struct mipi_dsi_device *dsi;
+	/* guards the state below and keeps sequences from interleaving */
+	struct mutex lock;
+	bool display_off;
+};
+
+static int s6e3hc3_bl_update_status(struct backlight_device *bl)
+{
+	struct s6e3hc3 *ctx = bl_get_data(bl);
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+	u16 brightness = backlight_get_brightness(bl);
+	int ret;
+
+	guard(mutex)(&ctx->lock);
+
+	/*
+	 * Only a blanked backlight turns the display off. Level 0 is the
+	 * dimmest level: Omarchy darkens with 0 before locking and puts the
+	 * level back afterwards, and a level left at 0 must not leave the
+	 * panel dark with nothing to wake it.
+	 */
+	if (backlight_is_blank(bl)) {
+		if (!ctx->display_off) {
+			mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
+			/* as the vendor driver: 20 ms after display off */
+			mipi_dsi_msleep(&dsi_ctx, 20);
+			if (!dsi_ctx.accum_err)
+				ctx->display_off = true;
+		}
+		return dsi_ctx.accum_err;
+	}
+
+	/* DBV, most significant byte first */
+	brightness = max_t(u16, brightness, S6E3HC3_MIN_BRIGHTNESS);
+	ret = mipi_dsi_dcs_set_display_brightness_large(ctx->dsi, brightness);
+	if (ret < 0)
+		return ret;
+
+	if (ctx->display_off) {
+		mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
+		if (!dsi_ctx.accum_err)
+			ctx->display_off = false;
+	}
+
+	return dsi_ctx.accum_err;
+}
+
+static const struct backlight_ops s6e3hc3_bl_ops = {
+	.update_status = s6e3hc3_bl_update_status,
+};
+
+/*
+ * Manual 60/120 Hz, as the vendor driver's s6e3hc3_set_manual_mode(): the
+ * rate takes effect at the panel's next frame (frequency update), with no
+ * power cycle. The DSIM switches its link timers around this.
+ */
+static int s6e3hc3_set_refresh_rate(struct drm_panel *panel, unsigned int hz)
+{
+	struct s6e3hc3 *ctx = container_of(panel, struct s6e3hc3, panel);
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+
+	if (hz != 60 && hz != 120)
+		return -EINVAL;
+
+	guard(mutex)(&ctx->lock);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+	/* manual mode, then 0x00 for 120 Hz or 0x01 for 60 Hz */
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xbd, 0x21);
+	if (hz == 120)
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x60, 0x00);
+	else
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x60, 0x01);
+	/* frequency update */
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf7, 0x0f);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+
+	return dsi_ctx.accum_err;
+}
+
+static const struct drm_panel_funcs s6e3hc3_panel_funcs = {
+	.set_refresh_rate = s6e3hc3_set_refresh_rate,
+};
+
+static int s6e3hc3_probe(struct mipi_dsi_device *dsi)
+{
+	struct device *dev = &dsi->dev;
+	struct backlight_properties props = {
+		.type = BACKLIGHT_RAW,
+		.brightness = S6E3HC3_DEFAULT_BRIGHTNESS,
+		.max_brightness = S6E3HC3_MAX_BRIGHTNESS,
+		.scale = BACKLIGHT_SCALE_NON_LINEAR,
+	};
+	struct backlight_device *bl;
+	struct s6e3hc3 *ctx;
+	int ret;
+
+	ctx = devm_drm_panel_alloc(dev, struct s6e3hc3, panel,
+				   &s6e3hc3_panel_funcs,
+				   DRM_MODE_CONNECTOR_DSI);
+	if (IS_ERR(ctx))
+		return PTR_ERR(ctx);
+
+	ret = devm_mutex_init(dev, &ctx->lock);
+	if (ret)
+		return ret;
+
+	ctx->dsi = dsi;
+	mipi_dsi_set_drvdata(dsi, ctx);
+	/*
+	 * Unknown after a module reload: the first unblanked update sends
+	 * display on, which is harmless on a lit panel.
+	 */
+	ctx->display_off = true;
+
+	dsi->lanes = 4;
+	dsi->format = MIPI_DSI_FMT_RGB888;
+	dsi->mode_flags = MIPI_DSI_CLOCK_NON_CONTINUOUS;
+
+	/*
+	 * The bootloader's level is unknown, so the first write sets the
+	 * default. Nothing is sent until then.
+	 */
+	bl = devm_backlight_device_register(dev, dev_name(dev), dev, ctx,
+					    &s6e3hc3_bl_ops, &props);
+	if (IS_ERR(bl))
+		return dev_err_probe(dev, PTR_ERR(bl),
+				     "failed to register backlight\n");
+	ctx->panel.backlight = bl;
+
+	drm_panel_add(&ctx->panel);
+
+	ret = mipi_dsi_attach(dsi);
+	if (ret < 0) {
+		drm_panel_remove(&ctx->panel);
+		return dev_err_probe(dev, ret, "failed to attach to DSI host\n");
+	}
+
+	dev_info(dev, "taken over from the bootloader\n");
+	return 0;
+}
+
+static void s6e3hc3_remove(struct mipi_dsi_device *dsi)
+{
+	struct s6e3hc3 *ctx = mipi_dsi_get_drvdata(dsi);
+	int ret;
+
+	ret = mipi_dsi_detach(dsi);
+	if (ret < 0)
+		dev_err(&dsi->dev, "failed to detach from DSI host: %d\n", ret);
+
+	drm_panel_remove(&ctx->panel);
+}
+
+static const struct of_device_id s6e3hc3_of_match[] = {
+	{ .compatible = "samsung,s6e3hc3" },
+	{ /* sentinel */ }
+};
+MODULE_DEVICE_TABLE(of, s6e3hc3_of_match);
+
+static struct mipi_dsi_driver s6e3hc3_driver = {
+	.probe = s6e3hc3_probe,
+	.remove = s6e3hc3_remove,
+	.driver = {
+		.name = "panel-samsung-s6e3hc3",
+		.of_match_table = s6e3hc3_of_match,
+	},
+};
+module_mipi_dsi_driver(s6e3hc3_driver);
+
+MODULE_DESCRIPTION("Samsung S6E3HC3 panel: brightness and display on/off");
+MODULE_LICENSE("GPL");

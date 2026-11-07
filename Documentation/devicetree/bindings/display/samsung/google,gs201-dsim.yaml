@@ -25,7 +25,9 @@ properties:
     oneOf:
       - const: google,gs201-dsim
       - items:
-          - const: google,zumapro-dsim
+          - enum:
+              - google,gs101-dsim
+              - google,zumapro-dsim
           - const: google,gs201-dsim
 
   reg:
