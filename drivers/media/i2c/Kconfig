@@ -983,6 +983,17 @@ config VIDEO_SEM1215
 	  To compile this driver as a module, choose M here: the
 	  module will be called sem1215.
 
+config VIDEO_LC898129
+	tristate "onsemi LC898129 lens focus support"
+	select V4L2_CCI_I2C
+	help
+	  This is a driver for the focus part of the onsemi LC898129
+	  autofocus and image stabilisation controller, as in the Google
+	  Pixel 9a's main camera.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called lc898129.
+
 endif
 
 menu "Flash devices"
