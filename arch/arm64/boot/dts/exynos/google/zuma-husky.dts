@@ -7,6 +7,7 @@
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/usb/pd.h>
 #include "zuma.dtsi"
@@ -328,5 +329,130 @@
 		reg = <0x50>;
 		pagesize = <16>;
 		read-only;
+	};
+};
+
+/*
+ * Haptics: Cirrus Logic CS40L26A at 0x43 on PERIC1 USI0 (Google's I2C bus 0,
+ * 1 MHz in stock, 400 kHz here), INTb on gpa6-3, RESET on gph2-3 (the
+ * trigger line gph2-0 is claimed but unused). Boost and actuator values are
+ * the stock ones from Google's zuma-shusky-haptics.dtsi, as on the 7 Pro.
+ */
+/*
+ * USI0 sits on CMU_PERIC1, which only the bring-up overlays turned on so far.
+ * The HSI1 pin controller is off in zuma.dtsi (HSI1 is the PCIe block, and
+ * reading a pin controller Linux does not own has aborted the SoC on gs101),
+ * so this board enables it for the haptics' interrupt and reset lines.
+ */
+&pinctrl_hsi1 {
+	status = "okay";
+
+	nfc_en: nfc-en-pins {
+		samsung,pins = "gph1-6";
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
+		samsung,pin-pud-pdn = <GS101_PIN_PULL_NONE>;
+	};
+
+	nfc_pidle: nfc-pidle-pins {
+		samsung,pins = "gph1-3";
+		samsung,pin-pud = <GS101_PIN_PULL_DOWN>;
+		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
+		samsung,pin-pud-pdn = <GS101_PIN_PULL_DOWN>;
+	};
+};
+
+&cmu_peric1 {
+	status = "okay";
+};
+
+&sysreg_peric1 {
+	status = "okay";
+};
+
+&usi0 {
+	status = "okay";
+};
+
+&hsi2c_0 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	haptics: haptic-driver@43 {
+		compatible = "cirrus,cs40l26a";
+		reg = <0x43>;
+		interrupts-extended = <&gpa6 3 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&gph2 3 GPIO_ACTIVE_LOW>;
+		pinctrl-0 = <&hapt_amp1_irq &hapt_amp1_rst &hapt_amp_trig>;
+		pinctrl-names = "default";
+		cirrus,boost-peak-microamp = <2500000>;
+		cirrus,boost-ctl-microvolt = <11000000>;
+		cirrus,lra-f0-hz = <145>;
+		cirrus,lra-redc-micro-ohms = <13000000>;
+		cirrus,vpbr-threshold-microvolt = <3008000>;
+	};
+
+	/*
+	 * The ST54L NFC controller at 0x08 on this bus: plain NCI over I2C,
+	 * nxp-nci's transport, as on the 9a and the zumapro-tegu node. Pins
+	 * from the stock DT: interrupt gpa7-6, enable (the chip's RST_N)
+	 * gph1-6, power-idle gph1-3. The pin groups are stock's and set only
+	 * the power-down state (and the power-idle pull-down), no pin
+	 * function. The chip's reference clock is the PMU's NFC pad (stock:
+	 * pmu_clk_pad 0x3e84), clock 0 of the PMU node; without it the 9a's
+	 * ST54L does not ACK its I2C address. The eSE half of the chip (spi_12,
+	 * reset gph1-5) is not described. Disabled: nothing binds to it until
+	 * a bring-up overlay enables it.
+	 */
+	nfc: nfc@8 {
+		compatible = "st,st54l", "nxp,nxp-nci-i2c";
+		reg = <0x08>;
+		clocks = <&pmu_system_controller 0>;
+		interrupts-extended = <&gpa7 6 IRQ_TYPE_LEVEL_HIGH>;
+		enable-gpios = <&gph1 6 GPIO_ACTIVE_HIGH>;
+		pinctrl-0 = <&nfc_en &nfc_pidle>;
+		pinctrl-names = "default";
+		status = "disabled";
+	};
+};
+
+/*
+ * Rear flash LED: TI LM3644 at 0x63 on PERIC0 USI14 (Google's I2C bus 14,
+ * 390 kHz in stock, 400 kHz here), HWEN on gpp8-2. Stock drives it from the
+ * camera HAL through LWIS. Torch only; the cap is the 7 Pro's bring-up limit
+ * (50 mA per LED), not a stock value. CMU_PERIC0 and its sysreg are enabled
+ * here, as CMU_PERIC1 is for the haptics: the torch's I2C bus (USI14) sits
+ * on them.
+ */
+&cmu_peric0 {
+	status = "okay";
+};
+
+&sysreg_peric0 {
+	status = "okay";
+};
+
+&usi14 {
+	status = "okay";
+};
+
+&hsi2c_14 {
+	clock-frequency = <400000>;
+	/* The bus pins and HWEN's mux, as in Google's zuma-husky-camera.dtsi. */
+	pinctrl-0 = <&hsi2c14_bus &flash_en>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	led-controller@63 {
+		compatible = "ti,lm3644";
+		reg = <0x63>;
+		enable-gpios = <&gpp8 2 GPIO_ACTIVE_HIGH>;
+
+		led {
+			function = LED_FUNCTION_TORCH;
+			color = <LED_COLOR_ID_WHITE>;
+			led-sources = <1 2>;
+			led-max-microamp = <50000>;
+		};
 	};
 };

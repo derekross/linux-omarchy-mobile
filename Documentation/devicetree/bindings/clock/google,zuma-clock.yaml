@@ -27,6 +27,7 @@ properties:
       - google,zuma-cmu-top
       - google,zuma-cmu-apm
       - google,zuma-cmu-hsi0
+      - google,zuma-cmu-peric0
       - google,zuma-cmu-peric1
 
   reg:
@@ -83,6 +84,22 @@ allOf:
             - const: bus
             - const: peri
             - const: alt
+  - if:
+      properties:
+        compatible:
+          const: google,zuma-cmu-peric0
+    then:
+      properties:
+        clocks:
+          items:
+            - description: External oscillator reference clock
+            - description: PERIC0 NoC clock from CMU_TOP
+            - description: PERIC0 USI input clock from CMU_TOP
+        clock-names:
+          items:
+            - const: oscclk
+            - const: bus
+            - const: ip
   - if:
       properties:
         compatible:

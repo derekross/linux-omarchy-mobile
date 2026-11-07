@@ -41,12 +41,13 @@
 #define GS101_CLKOUT_EN			BIT(0)
 
 /*
- * Tensor G4 (zumapro) feeds the NFC controller's reference clock from a PMU
- * pad as well. With EXTPAD_EN set the PMU follows the controller's clock
- * request line and drives the clock onto the pad, which is how Google's
- * st21nfc driver runs it (pmu_clk_pad = <0x3e84>, st,extpad_control_en);
- * without it the Pixel 9a's ST54L does not ACK its I2C address. Nothing
- * else about this register is known, so its source field is left alone.
+ * Tensor G3 (zuma) and G4 (zumapro) feed the NFC controller's reference
+ * clock from a PMU pad as well. With EXTPAD_EN set the PMU follows the
+ * controller's clock request line and drives the clock onto the pad, which
+ * is how Google's st21nfc driver runs it (pmu_clk_pad = <0x3e84>,
+ * st,extpad_control_en); without it the Pixel 9a's ST54L does not ACK its
+ * I2C address. Nothing else about this register is known, so its source
+ * field is left alone.
  */
 #define ZUMAPRO_PAD_CTRL_NFC_CLK	0x3e84
 #define ZUMAPRO_CLKOUT_EXTPAD_EN	BIT(16)
@@ -164,6 +165,9 @@ static const struct of_device_id exynos_clkout_ids[] = {
 		.compatible = "google,gs201-pmu",
 		.data = &exynos_clkout_gs101,
 	}, {
+		.compatible = "google,zuma-pmu",
+		.data = &exynos_clkout_zumapro,
+	}, {
 		.compatible = "google,zumapro-pmu",
 		.data = &exynos_clkout_zumapro,
 	}, {
@@ -264,7 +268,7 @@ static const struct clk_ops exynos_clkout_pad_ops = {
 };
 
 /*
- * GS101/GS201 and Tensor G4: one gate per pad, parented to mux input 0 (the
+ * GS101/GS201 and Tensor G3/G4: one gate per pad, parented to mux input 0 (the
  * TCXO, named "clkout0" in the PMU node) where the PMU node names it; a pad
  * whose source the node does not describe is a root clock. The pads may be
  * in use by devices that Linux does not describe, so leave them as the
