@@ -357,8 +357,10 @@ static int s5m_rtc_read_time(struct device *dev, struct rtc_time *tm)
 		 * read at once, a read could return a time seconds old, and
 		 * an alarm set from it fired early or not at all. Clear it
 		 * first and wait for the copy, as Google's s2mpg10 driver does.
+		 * The S2MPG12's RTC has the same registers and the same copy.
 		 */
-		if (info->device_type == S2MPG10) {
+		if (info->device_type == S2MPG10 ||
+		    info->device_type == S2MPG12) {
 			ret = regmap_clear_bits(info->regmap, info->regs->udr_update,
 						info->regs->read_time_udr_mask);
 			if (ret)
@@ -369,7 +371,8 @@ static int s5m_rtc_read_time(struct device *dev, struct rtc_time *tm)
 				      info->regs->read_time_udr_mask);
 		if (ret)
 			goto udr_fail;
-		if (info->device_type == S2MPG10)
+		if (info->device_type == S2MPG10 ||
+		    info->device_type == S2MPG12)
 			usleep_range(1000, 1100);
 	}
 	ret = regmap_bulk_read(info->regmap, info->regs->time, data,
