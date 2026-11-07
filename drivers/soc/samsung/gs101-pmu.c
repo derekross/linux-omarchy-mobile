@@ -365,7 +365,7 @@ static const struct regmap_range zuma_pmu_registers[] = {
 	regmap_reg_range(ZUMA_PHY_CTRL_PCIE1, ZUMA_PHY_CTRL_PCIE1),
 	/* a hint TF-A reads, not a status register: see zuma_pmu_regmap_init() */
 	regmap_reg_range(ZUMA_PMU_INFORM0, ZUMA_PMU_INFORM0),
-	/* Tensor G4's NFC reference clock pad, a clock of clk-exynos-clkout */
+	/* Tensor G3 and G4's NFC reference clock pad (clk-exynos-clkout) */
 	regmap_reg_range(ZUMA_PAD_CTRL_NFC_CLK, ZUMA_PAD_CTRL_NFC_CLK),
 };
 
