@@ -368,6 +368,17 @@ static void s3c64xx_spi_set_cs(struct spi_device *spi, bool enable)
 	if (sdd->cntrlr_info->no_cs)
 		return;
 
+	/*
+	 * A device on a GPIO chip select leaves the native nSS to the controller's
+	 * auto mode (chip-select-mode 2 on the stock kernel), so it does not drive
+	 * the pad another device shares.
+	 */
+	if (sdd->port_conf->manual_native_cs && spi_is_csgpiod(spi)) {
+		writel(S3C64XX_SPI_CS_AUTO | S3C64XX_SPI_CS_NSC_CNT_2 | S3C64XX_SPI_CS_SIG_INACT,
+		       sdd->regs + S3C64XX_SPI_CS_REG);
+		return;
+	}
+
 	if (sdd->port_conf->manual_native_cs && !spi_is_csgpiod(spi)) {
 		bool high = true;
 
