@@ -615,15 +615,17 @@
 	 * from the stock DT: interrupt gpa7-6, enable (the chip's RST_N)
 	 * gph1-6, power-idle gph1-3. The pin groups are stock's and set only
 	 * the power-down state (and the power-idle pull-down), no pin
-	 * function. The chip's reference clock (stock: PMU pad CLKOUT1) has no
-	 * provider on zuma yet, so there is no clocks property and the pad
-	 * stays as the bootloader left it. The eSE half of the chip (spi_12,
-	 * reset gph1-5) is not described. Disabled: nothing binds to it until
-	 * a bring-up overlay enables it.
+	 * function. The chip's reference clock is the PMU's NFC pad (stock:
+	 * pmu_clk_pad 0x3e84), clock 0 of the PMU node; without it the 9a's
+	 * ST54L does not ACK its I2C address (on the 8 Pro the chip did answer
+	 * without the pad and only found no tag, in one run). The eSE half of
+	 * the chip (spi_12, reset gph1-5) is not described. Disabled: nothing
+	 * binds to it until a bring-up overlay enables it.
 	 */
 	nfc: nfc@8 {
 		compatible = "st,st54l", "nxp,nxp-nci-i2c";
 		reg = <0x08>;
+		clocks = <&pmu_system_controller 0>;
 		interrupts-extended = <&gpa7 6 IRQ_TYPE_LEVEL_HIGH>;
 		enable-gpios = <&gph1 6 GPIO_ACTIVE_HIGH>;
 		pinctrl-0 = <&nfc_en &nfc_pidle>;
