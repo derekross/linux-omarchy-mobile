@@ -33,7 +33,7 @@
 #define CLK_DOUT_PERIC0_NOC		26
 #define CLK_DOUT_PERIC0_IP		27
 
-/* CMU_HSI0: USI2, the touchscreen's SPI. */
+/* CMU_HSI0: USI2, the touchscreen's SPI, and USI3, the GNSS receiver's SPI. */
 #define CLK_GOUT_HSI0_ALT		1
 #define CLK_MOUT_HSI0_NOC_USER		2
 #define CLK_MOUT_HSI0_ALT_USER		3
@@ -44,6 +44,11 @@
 #define CLK_DOUT_HSI0_USI2		8
 #define CLK_GOUT_HSI0_USI2_IP		9
 #define CLK_GOUT_HSI0_USI2_PCLK		10
+#define CLK_MOUT_HSI0_USI3		11
+#define CLK_GOUT_HSI0_USI3_SOURCE	12
+#define CLK_DOUT_HSI0_USI3		13
+#define CLK_GOUT_HSI0_USI3_IP		14
+#define CLK_GOUT_HSI0_USI3_PCLK		15
 
 /*
  * CMU_PERIC1: USI11, the I2C bus of the battery, charger and USB-C chips, and
