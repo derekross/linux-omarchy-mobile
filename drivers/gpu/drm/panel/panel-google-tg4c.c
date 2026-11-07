@@ -58,12 +58,16 @@ static const u8 tg4c_cmd2_page2[] = { 0xF0, 0x55, 0xAA, 0x52, 0x08, 0x02 };
  * The panel's ID as Google's gs_panel reads it: MIPI DCS ID1 (the module's
  * manufacturer), ID2 (its version), ID3 (the module/driver ID), and the first
  * byte of the device descriptor block. The bootloader appends the same four
- * bytes, last first, to exynos_drm.panel_name: google-tg4c.2d008004 on the
- * Pixel 9a's TG4C, so ID1 0x04 and ID3 0x00.
+ * bytes, last first, to exynos_drm.panel_name. Pixel 9a TG4Cs come in two
+ * builds: google-tg4c.2d008004 (ID3 0x00) and google-tg4c.2d408004 (ID3
+ * 0x40). Both read ID1 0x04 and ID2 0x80, the build code Google's
+ * panel-gs-tg4c.c picks its command revisions from, so both get the same
+ * commands.
  */
 static const u8 tg4c_id_regs[] = { 0xda, 0xdb, 0xdc, MIPI_DCS_READ_DDB_START };
 #define TG4C_ID1		0x04
 #define TG4C_ID3		0x00
+#define TG4C_ID3_ALT		0x40
 
 enum tg4c_id {
 	TG4C_ID_UNREAD,
@@ -127,7 +131,7 @@ static bool tg4c_check_id(struct tg4c *ctx)
 		}
 	}
 
-	if (id[0] != TG4C_ID1 || id[2] != TG4C_ID3) {
+	if (id[0] != TG4C_ID1 || (id[2] != TG4C_ID3 && id[2] != TG4C_ID3_ALT)) {
 		dev_err(dev, "panel ID %*ph is not a TG4C's: sending it no commands\n",
 			(int)sizeof(id), id);
 		ctx->id = TG4C_ID_OTHER;
