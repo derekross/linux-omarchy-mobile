@@ -346,6 +346,20 @@
  */
 &pinctrl_hsi1 {
 	status = "okay";
+
+	nfc_en: nfc-en-pins {
+		samsung,pins = "gph1-6";
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
+		samsung,pin-pud-pdn = <GS101_PIN_PULL_NONE>;
+	};
+
+	nfc_pidle: nfc-pidle-pins {
+		samsung,pins = "gph1-3";
+		samsung,pin-pud = <GS101_PIN_PULL_DOWN>;
+		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
+		samsung,pin-pud-pdn = <GS101_PIN_PULL_DOWN>;
+	};
 };
 
 &cmu_peric1 {
@@ -376,6 +390,28 @@
 		cirrus,lra-f0-hz = <145>;
 		cirrus,lra-redc-micro-ohms = <13000000>;
 		cirrus,vpbr-threshold-microvolt = <3008000>;
+	};
+
+	/*
+	 * The ST54L NFC controller at 0x08 on this bus: plain NCI over I2C,
+	 * nxp-nci's transport, as on the 9a and the zumapro-tegu node. Pins
+	 * from the stock DT: interrupt gpa7-6, enable (the chip's RST_N)
+	 * gph1-6, power-idle gph1-3. The pin groups are stock's and set only
+	 * the power-down state (and the power-idle pull-down), no pin
+	 * function. The chip's reference clock (stock: PMU pad CLKOUT1) has no
+	 * provider on zuma yet, so there is no clocks property and the pad
+	 * stays as the bootloader left it. The eSE half of the chip (spi_12,
+	 * reset gph1-5) is not described. Disabled: nothing binds to it until
+	 * a bring-up overlay enables it.
+	 */
+	nfc: nfc@8 {
+		compatible = "st,st54l", "nxp,nxp-nci-i2c";
+		reg = <0x08>;
+		interrupts-extended = <&gpa7 6 IRQ_TYPE_LEVEL_HIGH>;
+		enable-gpios = <&gph1 6 GPIO_ACTIVE_HIGH>;
+		pinctrl-0 = <&nfc_en &nfc_pidle>;
+		pinctrl-names = "default";
+		status = "disabled";
 	};
 };
 
