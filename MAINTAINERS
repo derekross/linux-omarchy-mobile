@@ -11169,6 +11169,7 @@ F:	Documentation/devicetree/bindings/clock/google,gs201-clock.yaml
 F:	Documentation/devicetree/bindings/clock/google,zuma-clock.yaml
 F:	Documentation/devicetree/bindings/clock/google,zumapro*
 F:	Documentation/devicetree/bindings/phy/google,lga-usb-phy.yaml
+F:	Documentation/devicetree/bindings/phy/google,zuma-pcie-phy.yaml
 F:	Documentation/devicetree/bindings/soc/google/google,gs101-dtzpc.yaml
 F:	Documentation/devicetree/bindings/soc/google/google,gs101-pmu.yaml
 F:	Documentation/devicetree/bindings/soc/google/google,gs101-pmu-intr-gen.yaml
@@ -11181,6 +11182,7 @@ F:	drivers/clk/samsung/clk-zumapro.c
 F:	drivers/phy/phy-google-usb.c
 F:	drivers/soc/samsung/gs101-pmu.c
 F:	drivers/phy/samsung/phy-gs101-ufs.c
+F:	drivers/phy/samsung/phy-zuma-pcie.c
 F:	drivers/phy/samsung/phy-zumapro-ufs.c
 F:	drivers/thermal/samsung/gs101_acpm_tmu.c
 F:	drivers/usb/dwc3/dwc3-google.c

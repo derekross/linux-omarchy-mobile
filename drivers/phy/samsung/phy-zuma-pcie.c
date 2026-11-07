@@ -1,0 +1,823 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Google zuma (Tensor G3) PCIe Gen3 PHY driver
+ *
+ * The one-lane PHY of zuma's second PCIe controller (the Wi-Fi chip's), and
+ * the two-lane PHY of zumapro's first controller (the modem's). Their
+ * reference clock comes from an external PLL in the UDBG block, selected in
+ * the controller's SOC block. The register sequences are Samsung's "CAL ver
+ * 0.2" for zuma, channel 1 and channel 0, taken from the driver Google
+ * builds for zuma and zumapro (pcie-exynos-zuma-rc-cal.c and
+ * pcie-exynos-rc.c in google-modules/soc/gs/drivers/pci/controller/dwc).
+ * Most PMA registers have no public names, so the tables keep Samsung's raw
+ * offsets and values.
+ *
+ * Copyright (C) 2021 Samsung Electronics Co., Ltd.
+ */
+
+#include <linux/bits.h>
+#include <linux/delay.h>
+#include <linux/io.h>
+#include <linux/iopoll.h>
+#include <linux/module.h>
+#include <linux/of.h>
+#include <linux/phy/phy.h>
+#include <linux/platform_device.h>
+#include <linux/property.h>
+#include <linux/regmap.h>
+#include <linux/soc/samsung/exynos-pmu.h>
+
+/*
+ * Bring-up tracing, as in the gs201 PHY driver: with trace=1 every step
+ * that touches the hardware is logged before it happens, and the driver
+ * sleeps trace_delay_ms after each line so that a reader of /dev/kmsg
+ * receives it before a possible bus hang stops the CPU.
+ */
+static bool trace;
+module_param(trace, bool, 0644);
+MODULE_PARM_DESC(trace, "Log every hardware step before doing it (bring-up)");
+
+static unsigned int trace_delay_ms = 20;
+module_param(trace_delay_ms, uint, 0644);
+MODULE_PARM_DESC(trace_delay_ms, "Sleep after each trace line, in ms (default 20)");
+
+/*
+ * PMU PHY control: bit 0 clear isolates the PHY; bit 10 tells the PMU the
+ * PHY has been configured
+ */
+#define ZUMA_PMU_PHY_BYPASS		BIT(0)
+#define ZUMA_PMU_PHY_CONFIGURED		BIT(10)
+
+/* PHY reset block, in the controller's sub-control (ELBI) space at +0x1400 */
+#define ZUMA_PHY_RST_CMN		0x0
+#define ZUMA_PHY_RST_INIT		0x4
+#define ZUMA_PHY_RST_PORT		0x8
+
+/* SOC block: the PHY's input clock */
+#define ZUMA_SOC_CLK_MODE		0x4000
+#define ZUMA_SOC_CLK_MODE_VAL		0x15
+#define ZUMA_SOC_CLK_MODE_SEL		GENMASK(1, 0)
+#define ZUMA_SOC_CLK_SEL		0x4004
+#define ZUMA_SOC_CLK_SEL_TCXO		BIT(2)
+#define ZUMA_SOC_CLK_SEL_EXT_PLL	GENMASK(5, 4)
+
+/* UDBG block: the external PLL */
+#define ZUMA_UDBG_EXT_PLL		0xc700
+#define ZUMA_UDBG_EXT_PLL_EN		BIT(0)
+#define ZUMA_UDBG_EXT_PLL_RESETB_OVR	BIT(1)
+#define ZUMA_UDBG_EXT_PLL_STATUS	0xc734
+#define ZUMA_UDBG_EXT_PLL_LOCK		BIT(2)
+#define ZUMA_UDBG_LINK_CTRL		0xc800
+#define ZUMA_UDBG_LINK_CTRL_VAL		0x421
+
+/* UDBG block, two-lane PHY: its external PLL's own controls */
+#define ZUMA_X2_UDBG_EXT_PLL_STATUS	0xc704
+#define ZUMA_X2_UDBG_EXT_PLL_LOCK	BIT(3)
+#define ZUMA_X2_UDBG_EXT_PLL_CTRL	0xc710
+#define ZUMA_X2_UDBG_EXT_PLL_INIT	BIT(1)
+#define ZUMA_X2_UDBG_EXT_PLL_L2_GATE	GENMASK(9, 8)
+#define ZUMA_X2_UDBG_LINK_CTRL_CLR	GENMASK(6, 5)
+
+/* PMA registers used outside the tables */
+#define ZUMA_PMA_CMN_BIAS		0x000c
+#define ZUMA_PMA_CLK_CTRL		0x0204
+#define ZUMA_PMA_CLK_CTRL_GATE		GENMASK(3, 2)
+#define ZUMA_PMA_INPUT_CLK_GATE		0x032c
+#define ZUMA_PMA_INPUT_CLK_UNGATE	0x3
+#define ZUMA_PMA_LN_CTRL		0x1350
+#define ZUMA_PMA_PLL_STATUS		0x0a80
+#define ZUMA_PMA_PLL_LOCK		BIT(0)
+#define ZUMA_PMA_OC_STATUS		0x140c
+#define ZUMA_PMA_OC_DONE		BIT(7)
+#define ZUMA_PMA_CDR_STATUS		0x15c0
+#define ZUMA_PMA_CDR_LOCK		BIT(4)
+
+/* PMA registers of the two-lane PHY used outside the tables */
+#define ZUMA_X2_PMA_LANE_STRIDE		0x1000
+#define ZUMA_X2_PMA_LANES		2
+#define ZUMA_X2_PMA_PLL_ENGAGED		0x0260
+#define ZUMA_X2_PMA_PLL_ENGAGED_BIT	BIT(2)
+#define ZUMA_X2_PMA_PLL_LOCK_SIG	0x0600
+#define ZUMA_X2_PMA_PLL_LOCK_SIG_MASK	GENMASK(5, 4)
+#define ZUMA_X2_PMA_PLL_LOCK_SIG_OFF	BIT(5)
+
+/* PCS PLL and bias control of the two-lane PHY */
+#define ZUMA_X2_PCS_PLL_BIAS		0x150
+#define ZUMA_X2_PCS_PLL_BIAS_ON		0x000300d5
+#define ZUMA_X2_PCS_PLL_OFF_BIAS_ON	0x000300d9
+#define ZUMA_X2_PCS_PLL_OFF_BIAS_OFF	0x000300de
+
+/* Google polls the lock bits 10000 times, 10 us apart */
+#define ZUMA_PHY_LOCK_TIMEOUT_US	100000
+
+struct zuma_pcie_phy_reg {
+	u16 off;
+	u32 val;
+};
+
+/* PHY power-down (exynos_pcie_rc_phy_all_pwrdn(), channel 1), after 0x204 */
+static const struct zuma_pcie_phy_reg zuma_pma_pwrdn[] = {
+	{ 0x1044, 0x2a }, { 0x1048, 0xaa }, { 0x104c, 0xa8 }, { 0x1050, 0x80 },
+	{ 0x185c, 0x0a },
+};
+
+/* Common PMA block */
+static const struct zuma_pcie_phy_reg zuma_pma_common[] = {
+	{ 0x0000, 0x88 }, { 0x001c, 0x66 }, { 0x01f4, 0x00 }, { 0x0514, 0x59 },
+	{ 0x051c, 0x11 }, { 0x062c, 0x0e }, { 0x0644, 0x22 }, { 0x0688, 0x03 },
+	{ 0x06d4, 0x28 }, { 0x0788, 0x64 }, { 0x078c, 0x64 }, { 0x0790, 0x50 },
+	{ 0x0794, 0x50 }, { 0x0944, 0x05 }, { 0x0948, 0x05 }, { 0x094c, 0x05 },
+	{ 0x0950, 0x05 },
+	/* 38.4 MHz REFCLK to the external PLL path */
+	{ 0x0590, 0x02 }, { 0x07f8, 0xb0 }, { 0x0730, 0x08 },
+	/* 7.68 us delay in L1.2 */
+	{ 0x0344, 0xc0 },
+	/* L1.2 without CLKREQ# */
+	{ 0x0040, 0x04 }, { 0x0204, 0x03 }, { 0x02d4, 0x1f }, { 0x0358, 0x10 },
+	/* ERIO on */
+	{ 0x0018, 0x01 },
+	/* Lane */
+	{ 0x0514, 0x5b }, { 0x0608, 0x0c }, { 0x060c, 0x0f }, { 0x0610, 0x0f },
+	{ 0x0614, 0x0f }, { 0x0618, 0x0f }, { 0x0510, 0x80 }, { 0x0688, 0x03 },
+	{ 0x0644, 0x23 }, { 0x0624, 0x11 },
+	/* PLL margin for ERIO at Gen1 and Gen2 */
+	{ 0x0630, 0x0f }, { 0x06d0, 0x53 },
+};
+
+/* The lane's PMA block */
+static const struct zuma_pcie_phy_reg zuma_pma_lane[] = {
+	{ 0x1140, 0x04 }, { 0x1144, 0x04 }, { 0x1148, 0x04 }, { 0x114c, 0x02 },
+	{ 0x1150, 0x00 }, { 0x1154, 0x00 }, { 0x1158, 0x00 }, { 0x115c, 0x00 },
+	{ 0x12cc, 0x1c }, { 0x12dc, 0x6c }, { 0x130c, 0x29 }, { 0x13b4, 0x2f },
+	{ 0x1a64, 0x05 }, { 0x1a68, 0x05 }, { 0x1a84, 0x05 }, { 0x1a88, 0x05 },
+	{ 0x1a98, 0x00 }, { 0x1a9c, 0x00 }, { 0x1aa8, 0x07 }, { 0x1ab8, 0x00 },
+	{ 0x1abc, 0x00 }, { 0x1af8, 0x90 }, { 0x1b34, 0x03 }, { 0x1bb0, 0x03 },
+	{ 0x1bb4, 0x03 }, { 0x1bc0, 0x06 }, { 0x1bc4, 0x06 }, { 0x1be8, 0x01 },
+	{ 0x1bf8, 0x04 }, { 0x1c98, 0x00 }, { 0x1ca4, 0x81 },
+};
+
+/*
+ * Broadcom Wi-Fi (stock's ep-device-type 1), one-lane PHY, after the lane:
+ * the link went down on L1 substate exits without these.
+ */
+static const struct zuma_pcie_phy_reg zuma_pma_lane_bcm[] = {
+	{ 0x1b20, 0x02 }, { 0x1340, 0x23 }, { 0x002c, 0x3c },
+};
+
+/* PCS, with Google's Broadcom Wi-Fi timer values */
+static const struct zuma_pcie_phy_reg zuma_pcs[] = {
+	{ 0x190, 0x100b0604 },
+	/* L1.2 without CLKREQ# */
+	{ 0x154, 0x000700d5 },
+	{ 0x100, 0x16400000 }, { 0x104, 0x08600000 }, { 0x114, 0x18500000 },
+	{ 0x124, 0x60700000 }, { 0x174, 0x00000007 }, { 0x178, 0x00000100 },
+	{ 0x17c, 0x00000700 }, { 0x110, 0x01600202 },
+};
+
+/*
+ * The two-lane PHY's common PMA block: the one-lane table with 0x510
+ * written first, as channel 0's CAL does
+ */
+static const struct zuma_pcie_phy_reg zuma_x2_pma_common[] = {
+	{ 0x0000, 0x88 }, { 0x001c, 0x66 }, { 0x01f4, 0x00 }, { 0x0510, 0x81 },
+	{ 0x0514, 0x59 }, { 0x051c, 0x11 }, { 0x062c, 0x0e }, { 0x0644, 0x22 },
+	{ 0x0688, 0x03 }, { 0x06d4, 0x28 }, { 0x0788, 0x64 }, { 0x078c, 0x64 },
+	{ 0x0790, 0x50 }, { 0x0794, 0x50 }, { 0x0944, 0x05 }, { 0x0948, 0x05 },
+	{ 0x094c, 0x05 }, { 0x0950, 0x05 },
+	/* 38.4 MHz REFCLK to the external PLL path */
+	{ 0x0590, 0x02 }, { 0x07f8, 0xb0 }, { 0x0730, 0x08 },
+	/* 7.68 us delay in L1.2 */
+	{ 0x0344, 0xc0 },
+	/* L1.2 without CLKREQ# */
+	{ 0x0040, 0x04 }, { 0x0204, 0x03 }, { 0x02d4, 0x1f }, { 0x0358, 0x10 },
+	/* ERIO on */
+	{ 0x0018, 0x01 },
+	/* Lane */
+	{ 0x0514, 0x5b }, { 0x0608, 0x0c }, { 0x060c, 0x0f }, { 0x0610, 0x0f },
+	{ 0x0614, 0x0f }, { 0x0618, 0x0f }, { 0x0510, 0x80 }, { 0x0688, 0x03 },
+	{ 0x0644, 0x23 }, { 0x0624, 0x11 },
+	/* PLL margin for ERIO at Gen1 and Gen2 */
+	{ 0x0630, 0x0f }, { 0x06d0, 0x53 },
+};
+
+/* The two-lane PHY's PCS: the generic timer values, no Wi-Fi quirks */
+static const struct zuma_pcie_phy_reg zuma_x2_pcs[] = {
+	{ 0x190, 0x100b0604 },
+	/* L1.2 without CLKREQ# */
+	{ 0x154, 0x000700d5 },
+	{ 0x100, 0x16400000 }, { 0x104, 0x08600000 }, { 0x114, 0x18500000 },
+	{ 0x124, 0x60700000 }, { 0x174, 0x00000007 }, { 0x178, 0x00000100 },
+	{ 0x17c, 0x00000010 },
+};
+
+struct zuma_pcie_phy {
+	struct device *dev;
+	void __iomem *pma;
+	void __iomem *pcs;
+	void __iomem *rst;
+	void __iomem *udbg;
+	void __iomem *soc;
+	struct regmap *pmu;
+	u32 pmu_offset;
+	bool stock_link_steps;
+};
+
+/**
+ * struct zuma_pcie_phy_data - per-PHY steps
+ * @ops: the PHY's sequences: the one-lane PHY's (channel 1 in Google's
+ *	CAL) or the two-lane PHY's (channel 0)
+ * @stock_link_steps: one-lane PHY: mark the PHY configured in the PMU at
+ *	the end of power_on and return its input clock to the oscillator at
+ *	power_off, as Google's exynos_pcie_rc_establish_link() and
+ *	exynos_pcie_rc_poweroff() do. Only zumapro so far: zuma does them in
+ *	Google's driver too, but they haven't run on a zuma board here.
+ */
+struct zuma_pcie_phy_data {
+	const struct phy_ops *ops;
+	bool stock_link_steps;
+};
+
+static __printf(2, 3) void zuma_phy_trace(struct zuma_pcie_phy *zp,
+					  const char *fmt, ...)
+{
+	struct va_format vaf;
+	va_list args;
+
+	if (!trace)
+		return;
+
+	va_start(args, fmt);
+	vaf.fmt = fmt;
+	vaf.va = &args;
+	dev_info(zp->dev, "trace: %pV\n", &vaf);
+	va_end(args);
+
+	if (trace_delay_ms)
+		msleep(trace_delay_ms);
+}
+
+static void zuma_pcie_phy_write_table(void __iomem *base,
+				      const struct zuma_pcie_phy_reg *tbl,
+				      size_t n)
+{
+	size_t i;
+
+	for (i = 0; i < n; i++)
+		writel(tbl[i].val, base + tbl[i].off);
+}
+
+static void zuma_pcie_phy_rmw(void __iomem *reg, u32 clr, u32 set)
+{
+	writel((readl(reg) & ~clr) | set, reg);
+}
+
+static bool zuma_pcie_phy_wait(struct zuma_pcie_phy *zp, const char *what,
+			       void __iomem *base, u32 off, u32 bit)
+{
+	u32 val;
+
+	zuma_phy_trace(zp, "about to poll %#x for %s (up to %u us)", off, what,
+		       ZUMA_PHY_LOCK_TIMEOUT_US);
+
+	return !readl_poll_timeout_atomic(base + off, val, val & bit, 10,
+					  ZUMA_PHY_LOCK_TIMEOUT_US);
+}
+
+/* exynos_pcie_rc_phy_all_pwrdn(), channel 1 */
+static void zuma_pcie_phy_pwrdn(struct zuma_pcie_phy *zp)
+{
+	zuma_phy_trace(zp, "about to read PMA 0x204 (first PMA access) and power the PHY down");
+	zuma_pcie_phy_rmw(zp->pma + ZUMA_PMA_CLK_CTRL, ZUMA_PMA_CLK_CTRL_GATE, 0);
+	zuma_pcie_phy_write_table(zp->pma, zuma_pma_pwrdn,
+				  ARRAY_SIZE(zuma_pma_pwrdn));
+	udelay(1);
+	writel(0xff, zp->pma + 0x0208);
+	udelay(1);
+	writel(0x0a, zp->pma + 0x0580);
+	writel(0xaa, zp->pma + 0x0928);
+	/* Common bias and PLL off */
+	writel(0x0a, zp->pma + ZUMA_PMA_CMN_BIAS);
+	fsleep(50);
+
+	zuma_phy_trace(zp, "about to read UDBG 0xc700 (first UDBG access): gate the external PLL");
+	zuma_pcie_phy_rmw(zp->udbg + ZUMA_UDBG_EXT_PLL, ZUMA_UDBG_EXT_PLL_EN, 0);
+	fsleep(10);
+}
+
+/* exynos_pcie_rc_phy_all_pwrdn_clear(), channel 1 */
+static void zuma_pcie_phy_pwrdn_clear(struct zuma_pcie_phy *zp)
+{
+	size_t i;
+
+	zuma_phy_trace(zp, "about to ungate the external PLL (UDBG 0xc700) and clear the power-downs");
+	zuma_pcie_phy_rmw(zp->udbg + ZUMA_UDBG_EXT_PLL, 0, ZUMA_UDBG_EXT_PLL_EN);
+	fsleep(100);
+	writel(0x00, zp->pma + ZUMA_PMA_CMN_BIAS);
+	writel(0x55, zp->pma + 0x0928);
+	writel(0x02, zp->pma + 0x0580);
+	writel(0x00, zp->pma + 0x0208);
+	for (i = 0; i < ARRAY_SIZE(zuma_pma_pwrdn); i++)
+		writel(0, zp->pma + zuma_pma_pwrdn[i].off);
+	fsleep(10);
+}
+
+/* Select the external PLL as the PHY's input clock */
+static void zuma_pcie_phy_sel_ext_pll(struct zuma_pcie_phy *zp)
+{
+	zuma_phy_trace(zp, "about to select the external PLL as the PHY input clock (SOC 0x4004)");
+	zuma_pcie_phy_rmw(zp->soc + ZUMA_SOC_CLK_SEL, ZUMA_SOC_CLK_SEL_TCXO, 0);
+	zuma_pcie_phy_rmw(zp->soc + ZUMA_SOC_CLK_SEL, 0,
+			  ZUMA_SOC_CLK_SEL_EXT_PLL);
+}
+
+/* Pulse the PMA resets: asserted while 1 is written, then let go */
+static void zuma_pcie_phy_pma_reset(struct zuma_pcie_phy *zp)
+{
+	zuma_phy_trace(zp, "about to assert the PMA resets (ELBI 0x1400-0x1408)");
+	writel(1, zp->rst + ZUMA_PHY_RST_INIT);
+	writel(1, zp->rst + ZUMA_PHY_RST_PORT);
+	writel(1, zp->rst + ZUMA_PHY_RST_CMN);
+	writel(0, zp->rst + ZUMA_PHY_RST_INIT);
+	writel(0, zp->rst + ZUMA_PHY_RST_PORT);
+	writel(0, zp->rst + ZUMA_PHY_RST_CMN);
+}
+
+static void zuma_pcie_phy_pma_release(struct zuma_pcie_phy *zp)
+{
+	zuma_phy_trace(zp, "about to release the PMA resets");
+	writel(1, zp->rst + ZUMA_PHY_RST_INIT);
+	fsleep(10);
+	writel(1, zp->rst + ZUMA_PHY_RST_PORT);
+	writel(1, zp->rst + ZUMA_PHY_RST_CMN);
+}
+
+/*
+ * The PLL, CDR and offset calibration checks. As in Google's CAL, a check
+ * that times out is reported and the sequence goes on.
+ */
+static void zuma_pcie_phy_lock_checks(struct zuma_pcie_phy *zp,
+				      void __iomem *pma, bool ext)
+{
+	bool pll, cdr, oc;
+
+	pll = zuma_pcie_phy_wait(zp, "PLL lock", pma, ZUMA_PMA_PLL_STATUS,
+				 ZUMA_PMA_PLL_LOCK);
+	cdr = zuma_pcie_phy_wait(zp, "CDR lock", pma, ZUMA_PMA_CDR_STATUS,
+				 ZUMA_PMA_CDR_LOCK);
+	oc = zuma_pcie_phy_wait(zp, "offset calibration", pma,
+				ZUMA_PMA_OC_STATUS, ZUMA_PMA_OC_DONE);
+
+	dev_info(zp->dev,
+		 "external PLL lock %d, PLL lock %d, CDR lock %d, OC done %d\n",
+		 ext, pll, cdr, oc);
+}
+
+/* exynos_pcie_rc_pcie_phy_config(), channel 1, less its ELBI writes */
+static void zuma_pcie_phy_config(struct zuma_pcie_phy *zp)
+{
+	bool ext;
+
+	zuma_phy_trace(zp, "about to ungate the PHY input clock (PMA 0x32c) and start the external PLL");
+	writel(ZUMA_PMA_INPUT_CLK_UNGATE, zp->pma + ZUMA_PMA_INPUT_CLK_GATE);
+	zuma_pcie_phy_rmw(zp->udbg + ZUMA_UDBG_EXT_PLL, 0, ZUMA_UDBG_EXT_PLL_EN);
+	zuma_pcie_phy_rmw(zp->udbg + ZUMA_UDBG_EXT_PLL,
+			  ZUMA_UDBG_EXT_PLL_RESETB_OVR, 0);
+
+	ext = zuma_pcie_phy_wait(zp, "the external PLL lock", zp->udbg,
+				 ZUMA_UDBG_EXT_PLL_STATUS,
+				 ZUMA_UDBG_EXT_PLL_LOCK);
+
+	zuma_pcie_phy_sel_ext_pll(zp);
+	zuma_pcie_phy_pma_reset(zp);
+
+	zuma_phy_trace(zp, "about to write the PMA tables (common, lane)");
+	zuma_pcie_phy_write_table(zp->pma, zuma_pma_common,
+				  ARRAY_SIZE(zuma_pma_common));
+	zuma_pcie_phy_write_table(zp->pma, zuma_pma_lane,
+				  ARRAY_SIZE(zuma_pma_lane));
+	zuma_pcie_phy_write_table(zp->pma, zuma_pma_lane_bcm,
+				  ARRAY_SIZE(zuma_pma_lane_bcm));
+	zuma_pcie_phy_rmw(zp->pma + ZUMA_PMA_LN_CTRL, 0, BIT(0));
+
+	zuma_phy_trace(zp, "about to write the PCS table");
+	zuma_pcie_phy_write_table(zp->pcs, zuma_pcs, ARRAY_SIZE(zuma_pcs));
+
+	zuma_pcie_phy_pma_release(zp);
+	zuma_pcie_phy_lock_checks(zp, zp->pma, ext);
+
+	writel(0, zp->pma + ZUMA_PMA_INPUT_CLK_GATE);
+}
+
+/* PMU: take the PHY out of isolation. Nothing puts it back. */
+static int zuma_pcie_phy_bypass(struct zuma_pcie_phy *zp)
+{
+	unsigned int val;
+	int ret;
+
+	ret = regmap_read(zp->pmu, zp->pmu_offset, &val);
+	if (ret) {
+		dev_err(zp->dev, "PMU read failed: %d\n", ret);
+		return ret;
+	}
+	dev_info(zp->dev, "PMU PHY control %#x\n", val);
+
+	zuma_phy_trace(zp, "about to set PMU %#x bit 0 (PHY isolation off, SMC)",
+		       zp->pmu_offset);
+	ret = regmap_update_bits(zp->pmu, zp->pmu_offset, ZUMA_PMU_PHY_BYPASS,
+				 ZUMA_PMU_PHY_BYPASS);
+	if (ret)
+		dev_err(zp->dev, "PMU write failed: %d\n", ret);
+
+	return ret;
+}
+
+/* exynos_pcie_rc_establish_link(): mark the PHY configured */
+static int zuma_pcie_phy_mark_configured(struct zuma_pcie_phy *zp)
+{
+	int ret;
+
+	zuma_phy_trace(zp, "about to set PMU %#x bit 10 (PHY configured, SMC)",
+		       zp->pmu_offset);
+	ret = regmap_update_bits(zp->pmu, zp->pmu_offset,
+				 ZUMA_PMU_PHY_CONFIGURED,
+				 ZUMA_PMU_PHY_CONFIGURED);
+	if (ret) {
+		dev_err(zp->dev, "PMU write failed: %d\n", ret);
+		return ret;
+	}
+	zuma_phy_trace(zp, "PHY configured");
+
+	return 0;
+}
+
+static int zuma_pcie_phy_init(struct phy *phy)
+{
+	struct zuma_pcie_phy *zp = phy_get_drvdata(phy);
+	int ret;
+
+	ret = zuma_pcie_phy_bypass(zp);
+	if (ret)
+		return ret;
+
+	zuma_pcie_phy_pwrdn(zp);
+	zuma_phy_trace(zp, "PHY out of isolation and powered down");
+
+	return 0;
+}
+
+static int zuma_pcie_phy_power_on(struct phy *phy)
+{
+	struct zuma_pcie_phy *zp = phy_get_drvdata(phy);
+
+	zuma_phy_trace(zp, "about to write SOC 0x4000 (first SOC access)");
+	writel(ZUMA_SOC_CLK_MODE_VAL, zp->soc + ZUMA_SOC_CLK_MODE);
+
+	zuma_pcie_phy_pwrdn_clear(zp);
+	zuma_pcie_phy_config(zp);
+
+	/* exynos_pcie_rc_establish_link(), channel 1, before PERST# */
+	zuma_phy_trace(zp, "about to write UDBG 0xc800");
+	writel(ZUMA_UDBG_LINK_CTRL_VAL, zp->udbg + ZUMA_UDBG_LINK_CTRL);
+
+	if (!zp->stock_link_steps)
+		return 0;
+
+	return zuma_pcie_phy_mark_configured(zp);
+}
+
+static int zuma_pcie_phy_power_off(struct phy *phy)
+{
+	struct zuma_pcie_phy *zp = phy_get_drvdata(phy);
+
+	/*
+	 * exynos_pcie_rc_poweroff(): put the PHY's input clock back on the
+	 * oscillator before the power-down
+	 */
+	if (zp->stock_link_steps) {
+		zuma_phy_trace(zp, "about to return the PHY clock to the oscillator (SOC 0x4000)");
+		zuma_pcie_phy_rmw(zp->soc + ZUMA_SOC_CLK_MODE,
+				  ZUMA_SOC_CLK_MODE_SEL, 0);
+	}
+
+	zuma_pcie_phy_pwrdn(zp);
+
+	return 0;
+}
+
+static const struct phy_ops zuma_pcie_phy_ops = {
+	.init		= zuma_pcie_phy_init,
+	.power_on	= zuma_pcie_phy_power_on,
+	.power_off	= zuma_pcie_phy_power_off,
+	.owner		= THIS_MODULE,
+};
+
+/*
+ * The two-lane PHY (zumapro's channel 0, the modem's link). Its CAL adds
+ * i * 0x1000 to its PMA base for lane i in its lane loop and never takes
+ * it back, so after the loop, with two lanes, the lock checks and the
+ * input clock gate land 0x1000 above the same accesses on the one-lane
+ * PHY (0x1a80, 0x25c0, 0x240c and 0x132c). That is what stock runs, and
+ * what brought the modem's link up here, so it is kept.
+ */
+
+/* exynos_pcie_rc_phy_all_pwrdn(), channel 0 */
+static void zuma_pcie_phy_x2_pwrdn(struct zuma_pcie_phy *zp)
+{
+	unsigned int lane;
+	u32 pcs, val;
+
+	zuma_phy_trace(zp, "about to read PMA 0x204 (first PMA access) and power the PHY down");
+	zuma_pcie_phy_rmw(zp->pma + ZUMA_PMA_CLK_CTRL, ZUMA_PMA_CLK_CTRL_GATE, 0);
+
+	writel(ZUMA_X2_PCS_PLL_OFF_BIAS_ON, zp->pcs + ZUMA_X2_PCS_PLL_BIAS);
+	udelay(5);
+	pcs = readl(zp->pcs + ZUMA_X2_PCS_PLL_BIAS);
+
+	for (lane = 0; lane < ZUMA_X2_PMA_LANES; lane++) {
+		zuma_pcie_phy_write_table(zp->pma + lane * ZUMA_X2_PMA_LANE_STRIDE,
+					  zuma_pma_pwrdn,
+					  ARRAY_SIZE(zuma_pma_pwrdn));
+		udelay(1);
+	}
+	writel(0xff, zp->pma + 0x0208);
+	writel(0xff, zp->pma + 0x0228);
+	udelay(1);
+	writel(0x0a, zp->pma + 0x0580);
+	writel(0xaa, zp->pma + 0x0928);
+	/* Common bias and PLL off */
+	writel(0x0a, zp->pma + ZUMA_PMA_CMN_BIAS);
+
+	/*
+	 * Force the PLL lock signal off. The CAL clears bits 5:4 into a value
+	 * it then replaces with the register ORed with 0x20, so only bit 5 is
+	 * set: that is what runs, so it is what this does.
+	 */
+	zuma_pcie_phy_rmw(zp->pma + ZUMA_X2_PMA_PLL_LOCK_SIG, 0,
+			  ZUMA_X2_PMA_PLL_LOCK_SIG_OFF);
+
+	writel(ZUMA_X2_PCS_PLL_OFF_BIAS_OFF, zp->pcs + ZUMA_X2_PCS_PLL_BIAS);
+	udelay(5);
+	val = readl(zp->pcs + ZUMA_X2_PCS_PLL_BIAS);
+	dev_dbg(zp->dev, "power-down: PCS 0x150 %#x then %#x\n", pcs, val);
+
+	/* The external PLL goes off only once the PMA PLL has let go of it */
+	if (readl_poll_timeout_atomic(zp->pma + ZUMA_X2_PMA_PLL_ENGAGED, val,
+				      !(val & ZUMA_X2_PMA_PLL_ENGAGED_BIT),
+				      1, 100)) {
+		dev_err(zp->dev, "power-down: the PMA PLL did not turn off, external PLL left on\n");
+		return;
+	}
+
+	zuma_phy_trace(zp, "about to turn the external PLL off (UDBG 0xc700)");
+	zuma_pcie_phy_rmw(zp->udbg + ZUMA_UDBG_EXT_PLL, 0,
+			  ZUMA_UDBG_EXT_PLL_RESETB_OVR);
+	fsleep(10);
+}
+
+/* exynos_pcie_rc_phy_all_pwrdn_clear(), channel 0 */
+static void zuma_pcie_phy_x2_pwrdn_clear(struct zuma_pcie_phy *zp)
+{
+	unsigned int lane;
+	size_t i;
+
+	zuma_phy_trace(zp, "about to start the external PLL (UDBG 0xc700), clear the power-downs");
+	zuma_pcie_phy_rmw(zp->udbg + ZUMA_UDBG_EXT_PLL,
+			  ZUMA_UDBG_EXT_PLL_RESETB_OVR, 0);
+	fsleep(100);
+	/* Let the PLL lock signal through again */
+	zuma_pcie_phy_rmw(zp->pma + ZUMA_X2_PMA_PLL_LOCK_SIG,
+			  ZUMA_X2_PMA_PLL_LOCK_SIG_MASK, 0);
+	writel(0x00, zp->pma + ZUMA_PMA_CMN_BIAS);
+	writel(0x55, zp->pma + 0x0928);
+	writel(0x02, zp->pma + 0x0580);
+	writel(0x00, zp->pma + 0x0208);
+	writel(0x00, zp->pma + 0x0228);
+	for (lane = 0; lane < ZUMA_X2_PMA_LANES; lane++)
+		for (i = 0; i < ARRAY_SIZE(zuma_pma_pwrdn); i++)
+			writel(0, zp->pma + lane * ZUMA_X2_PMA_LANE_STRIDE +
+			       zuma_pma_pwrdn[i].off);
+	fsleep(10);
+}
+
+/* exynos_pcie_rc_pcie_phy_config(), channel 0, two lanes, less its ELBI writes */
+static void zuma_pcie_phy_x2_config(struct zuma_pcie_phy *zp)
+{
+	void __iomem *pma_after_loop = zp->pma + ZUMA_X2_PMA_LANE_STRIDE;
+	unsigned int lane;
+	bool ext;
+
+	zuma_phy_trace(zp, "about to ungate the PHY clock, start the external PLL (UDBG 0xc710)");
+	writel(ZUMA_PMA_INPUT_CLK_UNGATE, zp->pma + ZUMA_PMA_INPUT_CLK_GATE);
+	zuma_pcie_phy_rmw(zp->udbg + ZUMA_X2_UDBG_EXT_PLL_CTRL,
+			  ZUMA_X2_UDBG_EXT_PLL_INIT, 0);
+	zuma_pcie_phy_rmw(zp->udbg + ZUMA_UDBG_EXT_PLL,
+			  ZUMA_UDBG_EXT_PLL_RESETB_OVR, 0);
+
+	ext = zuma_pcie_phy_wait(zp, "the external PLL lock", zp->udbg,
+				 ZUMA_X2_UDBG_EXT_PLL_STATUS,
+				 ZUMA_X2_UDBG_EXT_PLL_LOCK);
+
+	zuma_pcie_phy_sel_ext_pll(zp);
+	zuma_pcie_phy_pma_reset(zp);
+
+	zuma_phy_trace(zp, "about to write the PMA tables (common, two lanes)");
+	zuma_pcie_phy_write_table(zp->pma, zuma_x2_pma_common,
+				  ARRAY_SIZE(zuma_x2_pma_common));
+	for (lane = 0; lane < ZUMA_X2_PMA_LANES; lane++)
+		zuma_pcie_phy_write_table(zp->pma + lane * ZUMA_X2_PMA_LANE_STRIDE,
+					  zuma_pma_lane,
+					  ARRAY_SIZE(zuma_pma_lane));
+
+	zuma_phy_trace(zp, "about to write the PCS table");
+	zuma_pcie_phy_write_table(zp->pcs, zuma_x2_pcs, ARRAY_SIZE(zuma_x2_pcs));
+
+	zuma_pcie_phy_pma_release(zp);
+	zuma_pcie_phy_lock_checks(zp, pma_after_loop, ext);
+
+	zuma_phy_trace(zp, "about to gate the external PLL clock in L2 (UDBG 0xc710)");
+	zuma_pcie_phy_rmw(zp->udbg + ZUMA_X2_UDBG_EXT_PLL_CTRL,
+			  ZUMA_X2_UDBG_EXT_PLL_L2_GATE,
+			  ZUMA_X2_UDBG_EXT_PLL_L2_GATE);
+	writel(0, pma_after_loop + ZUMA_PMA_INPUT_CLK_GATE);
+}
+
+static int zuma_pcie_phy_x2_init(struct phy *phy)
+{
+	struct zuma_pcie_phy *zp = phy_get_drvdata(phy);
+	int ret;
+
+	ret = zuma_pcie_phy_bypass(zp);
+	if (ret)
+		return ret;
+
+	zuma_pcie_phy_x2_pwrdn(zp);
+	zuma_phy_trace(zp, "PHY out of isolation and powered down");
+
+	return 0;
+}
+
+static int zuma_pcie_phy_x2_power_on(struct phy *phy)
+{
+	struct zuma_pcie_phy *zp = phy_get_drvdata(phy);
+	int ret;
+
+	zuma_phy_trace(zp, "about to write SOC 0x4000 (first SOC access)");
+	writel(ZUMA_SOC_CLK_MODE_VAL, zp->soc + ZUMA_SOC_CLK_MODE);
+
+	zuma_pcie_phy_x2_pwrdn_clear(zp);
+	zuma_pcie_phy_x2_config(zp);
+
+	/* exynos_pcie_rc_establish_link(), channel 0, before PERST# */
+	ret = zuma_pcie_phy_mark_configured(zp);
+	if (ret)
+		return ret;
+
+	zuma_phy_trace(zp, "about to clear UDBG 0xc800 bits 6:5, gate the PHY clock (PMA 0x32c)");
+	zuma_pcie_phy_rmw(zp->udbg + ZUMA_UDBG_LINK_CTRL,
+			  ZUMA_X2_UDBG_LINK_CTRL_CLR, 0);
+	writel(0, zp->pma + ZUMA_PMA_INPUT_CLK_GATE);
+
+	return 0;
+}
+
+/*
+ * exynos_pcie_rc_poweron(), channel 0, once the link is up: keep the PLL
+ * and bias on, so that the power-down turns them off in a known order.
+ * The host calls phy_calibrate() after the link has trained.
+ */
+static int zuma_pcie_phy_x2_calibrate(struct phy *phy)
+{
+	struct zuma_pcie_phy *zp = phy_get_drvdata(phy);
+
+	zuma_phy_trace(zp, "about to write PCS 0x150 (PLL and bias on)");
+	writel(ZUMA_X2_PCS_PLL_BIAS_ON, zp->pcs + ZUMA_X2_PCS_PLL_BIAS);
+
+	return 0;
+}
+
+/*
+ * exynos_pcie_rc_poweroff(), both channels: put the clock selected in SOC
+ * 0x4000 back on the oscillator before the power-down, as the one-lane
+ * PHY does on zumapro. power_on selects the PHY's clock there, and the
+ * power-down then stops the external PLL behind it. The host writes ELBI
+ * before the next phy_power_on(); with the PHY's clock still selected, a
+ * second power cycle hung the SoC there, after a first one that started
+ * from the boot setting had passed. power_on writes SOC 0x4000 again
+ * first.
+ */
+static int zuma_pcie_phy_x2_power_off(struct phy *phy)
+{
+	struct zuma_pcie_phy *zp = phy_get_drvdata(phy);
+
+	zuma_phy_trace(zp, "about to return the PHY clock to the oscillator (SOC 0x4000)");
+	zuma_pcie_phy_rmw(zp->soc + ZUMA_SOC_CLK_MODE, ZUMA_SOC_CLK_MODE_SEL, 0);
+	zuma_pcie_phy_x2_pwrdn(zp);
+
+	return 0;
+}
+
+static const struct phy_ops zuma_pcie_phy_x2_ops = {
+	.init		= zuma_pcie_phy_x2_init,
+	.power_on	= zuma_pcie_phy_x2_power_on,
+	.power_off	= zuma_pcie_phy_x2_power_off,
+	.calibrate	= zuma_pcie_phy_x2_calibrate,
+	.owner		= THIS_MODULE,
+};
+
+static int zuma_pcie_phy_probe(struct platform_device *pdev)
+{
+	struct device *dev = &pdev->dev;
+	const struct zuma_pcie_phy_data *data;
+	struct phy_provider *provider;
+	struct zuma_pcie_phy *zp;
+	struct phy *phy;
+	int ret;
+
+	data = device_get_match_data(dev);
+	if (!data)
+		return -ENODEV;
+
+	zp = devm_kzalloc(dev, sizeof(*zp), GFP_KERNEL);
+	if (!zp)
+		return -ENOMEM;
+
+	zp->dev = dev;
+	zp->stock_link_steps = data->stock_link_steps;
+
+	/* Only mappings here: the PHY is not touched until phy_init() */
+	zp->pma = devm_platform_ioremap_resource_byname(pdev, "pma");
+	if (IS_ERR(zp->pma))
+		return PTR_ERR(zp->pma);
+
+	zp->pcs = devm_platform_ioremap_resource_byname(pdev, "pcs");
+	if (IS_ERR(zp->pcs))
+		return PTR_ERR(zp->pcs);
+
+	zp->rst = devm_platform_ioremap_resource_byname(pdev, "rst");
+	if (IS_ERR(zp->rst))
+		return PTR_ERR(zp->rst);
+
+	zp->udbg = devm_platform_ioremap_resource_byname(pdev, "udbg");
+	if (IS_ERR(zp->udbg))
+		return PTR_ERR(zp->udbg);
+
+	zp->soc = devm_platform_ioremap_resource_byname(pdev, "soc");
+	if (IS_ERR(zp->soc))
+		return PTR_ERR(zp->soc);
+
+	zp->pmu = exynos_get_pmu_regmap_by_phandle(dev->of_node,
+						   "samsung,pmu-syscon");
+	if (IS_ERR(zp->pmu))
+		return dev_err_probe(dev, PTR_ERR(zp->pmu),
+				     "failed to get the PMU regmap\n");
+
+	ret = of_property_read_u32_index(dev->of_node, "samsung,pmu-syscon", 1,
+					 &zp->pmu_offset);
+	if (ret)
+		return dev_err_probe(dev, ret,
+				     "missing PMU PHY control offset\n");
+
+	phy = devm_phy_create(dev, NULL, data->ops);
+	if (IS_ERR(phy))
+		return dev_err_probe(dev, PTR_ERR(phy), "failed to create PHY\n");
+
+	phy_set_drvdata(phy, zp);
+
+	provider = devm_of_phy_provider_register(dev, of_phy_simple_xlate);
+
+	return PTR_ERR_OR_ZERO(provider);
+}
+
+static const struct zuma_pcie_phy_data zuma_pcie_phy_data = {
+	.ops = &zuma_pcie_phy_ops,
+};
+
+static const struct zuma_pcie_phy_data zumapro_pcie_phy_data = {
+	.ops = &zuma_pcie_phy_ops,
+	.stock_link_steps = true,
+};
+
+static const struct zuma_pcie_phy_data zumapro_pcie_gen3x2_phy_data = {
+	.ops = &zuma_pcie_phy_x2_ops,
+};
+
+static const struct of_device_id zuma_pcie_phy_of_match[] = {
+	{ .compatible = "google,zumapro-pcie-gen3x2-phy", .data = &zumapro_pcie_gen3x2_phy_data },
+	{ .compatible = "google,zumapro-pcie-phy", .data = &zumapro_pcie_phy_data },
+	{ .compatible = "google,zuma-pcie-phy", .data = &zuma_pcie_phy_data },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, zuma_pcie_phy_of_match);
+
+static struct platform_driver zuma_pcie_phy_driver = {
+	.probe	= zuma_pcie_phy_probe,
+	.driver = {
+		.name		= "zuma-pcie-phy",
+		.of_match_table	= zuma_pcie_phy_of_match,
+		.suppress_bind_attrs = true,
+	},
+};
+module_platform_driver(zuma_pcie_phy_driver);
+
+MODULE_DESCRIPTION("Google zuma PCIe Gen3 PHY driver");
+MODULE_LICENSE("GPL");

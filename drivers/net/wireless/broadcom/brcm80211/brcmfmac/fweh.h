@@ -336,6 +336,8 @@ struct brcmf_fweh_event_map {
 struct brcmf_fweh_info {
 	struct brcmf_pub *drvr;
 	bool p2pdev_setup_ongoing;
+	/* the firmware takes "event_msgs_ext" rather than "event_msgs" */
+	bool event_msgs_ext;
 	struct work_struct event_work;
 	spinlock_t evt_q_lock;
 	struct list_head event_q;
@@ -357,6 +359,8 @@ int brcmf_fweh_register(struct brcmf_pub *drvr, enum brcmf_fweh_event_code code,
 void brcmf_fweh_unregister(struct brcmf_pub *drvr,
 			   enum brcmf_fweh_event_code code);
 int brcmf_fweh_activate_events(struct brcmf_if *ifp);
+int brcmf_fweh_get_event_mask(struct brcmf_if *ifp);
+int brcmf_fweh_set_event_mask(struct brcmf_if *ifp);
 void brcmf_fweh_process_event(struct brcmf_pub *drvr,
 			      struct brcmf_event *event_packet,
 			      u32 packet_len, gfp_t gfp);

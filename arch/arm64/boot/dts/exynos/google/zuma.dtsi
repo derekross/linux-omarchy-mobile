@@ -12,6 +12,7 @@
  */
 
 #include <dt-bindings/clock/google,zuma.h>
+#include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/soc/samsung,exynos-usi.h>
@@ -26,6 +27,8 @@
 	aliases {
 		pinctrl0 = &pinctrl_gpio_alive;
 		pinctrl1 = &pinctrl_custom_alive;
+		pinctrl2 = &pinctrl_far_alive;
+		pinctrl9 = &pinctrl_hsi2;
 		pinctrl10 = &pinctrl_hsi2ufs;
 		pinctrl11 = &pinctrl_peric0;
 		pinctrl12 = &pinctrl_peric1;
@@ -302,7 +305,8 @@
 		compatible = "simple-bus";
 		#address-cells = <1>;
 		#size-cells = <1>;
-		ranges = <0x0 0x0 0x0 0x40000000>;
+		/* Registers below 1 GiB, PCIe windows at 0x40000000-0x7fffffff */
+		ranges = <0x0 0x0 0x0 0x80000000>;
 
 		/*
 		 * ABL hands over with both cluster watchdogs counting (30 s);
@@ -531,12 +535,72 @@
 			reg = <0x13020000 0x1000>;
 		};
 
+		pinctrl_hsi2: pinctrl@13040000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x13040000 0x1000>;
+			clocks = <&clk_gpio_stub>;
+			clock-names = "pclk";
+			interrupts = <GIC_SPI 432 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
 		pinctrl_hsi2ufs: pinctrl@13060000 {
 			compatible = "google,zuma-pinctrl";
 			reg = <0x13060000 0x1000>;
 			clocks = <&clk_gpio_stub>;
 			clock-names = "pclk";
 			interrupts = <GIC_SPI 433 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		/*
+		 * The Wi-Fi chip's controller (stock's pcie_1, ch-num 1): one
+		 * Gen3 lane, at the addresses of stock's pcie@13120000. Its
+		 * interrupts are its legacy INTx; stock's MSI lines are unused.
+		 */
+		pcie_1: pcie@13120000 {
+			compatible = "google,zuma-pcie";
+			reg = <0x13120000 0x1400>,
+			      <0x13400000 0x381000>,
+			      <0x60ffe000 0x2000>;
+			reg-names = "elbi", "dbi", "config";
+			#address-cells = <3>;
+			#size-cells = <2>;
+			device_type = "pci";
+			ranges = <0x82000000 0x0 0x60000000 0x60000000 0x0 0xff0000>;
+			bus-range = <0x00 0xff>;
+			interrupts = <GIC_SPI 439 IRQ_TYPE_LEVEL_HIGH>;
+			#interrupt-cells = <1>;
+			interrupt-map-mask = <0 0 0 7>;
+			interrupt-map = <0 0 0 1 &pcie_1_intc 1>,
+					<0 0 0 2 &pcie_1_intc 2>,
+					<0 0 0 3 &pcie_1_intc 3>,
+					<0 0 0 4 &pcie_1_intc 4>;
+			phys = <&pcie_1_phy>;
+			phy-names = "pcie";
+			pinctrl-0 = <&pcie1_clkreq>, <&pcie1_perst>;
+			pinctrl-names = "default";
+			reset-gpios = <&gph3 0 GPIO_ACTIVE_LOW>;
+			num-lanes = <1>;
+			max-link-speed = <3>;
+			status = "disabled";
+
+			pcie_1_intc: legacy-interrupt-controller {
+				#address-cells = <0>;
+				interrupt-controller;
+				#interrupt-cells = <1>;
+			};
+		};
+
+		pcie_1_phy: phy@13160000 {
+			compatible = "google,zuma-pcie-phy";
+			reg = <0x13160000 0x3000>,
+			      <0x13140000 0x5000>,
+			      <0x13121400 0x10>,
+			      <0x13150000 0xd000>,
+			      <0x13130000 0x5000>;
+			reg-names = "pma", "pcs", "rst", "udbg", "soc";
+			samsung,pmu-syscon = <&pmu_system_controller 0x3ec8>;
+			#phy-cells = <0>;
+			status = "disabled";
 		};
 
 		ufs_0: ufs@13200000 {
@@ -625,6 +689,18 @@
 			compatible = "google,zuma-pinctrl";
 			reg = <0x154d0000 0x1000>;
 			clocks = <&clk_gpio_stub>;
+			clock-names = "pclk";
+
+			wakeup-interrupt-controller {
+				compatible = "google,zuma-wakeup-eint",
+					     "google,zumapro-wakeup-eint";
+			};
+		};
+
+		pinctrl_far_alive: pinctrl@154e0000 {
+			compatible = "google,zuma-pinctrl";
+			reg = <0x154e0000 0x1000>;
+			clocks = <&cmu_apm CLK_GOUT_APM_GPIO_FAR_ALIVE>;
 			clock-names = "pclk";
 
 			wakeup-interrupt-controller {
