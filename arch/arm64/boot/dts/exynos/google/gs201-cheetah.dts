@@ -121,6 +121,22 @@
 	};
 
 	/*
+	 * Second reboot-reason writer, the nvmem path stock ships besides
+	 * the syscon-reboot-mode node in gs201.dtsi: Google's
+	 * pixel-gs201-reboot.c writes SYSIP_DAT0 and then the RSBM record
+	 * (BMS_RSBM_VALID | reason) into the MAX77759's MAXQ user memory.
+	 * Same shape as gs101-pixel-common.dtsi; only bootloader is mapped
+	 * until the other modes are proven on slot B. Whether ABL needs the
+	 * RSBM write is still being tested.
+	 */
+	reboot-mode {
+		compatible = "nvmem-reboot-mode";
+		nvmem-cells = <&nvmem_reboot_mode>;
+		nvmem-cell-names = "reboot-mode";
+		mode-bootloader = <0x800000fc>;
+	};
+
+	/*
 	 * UFS VCC. Google drives it from GPIO gpp0-1 (boot-on); there is no
 	 * gs201 GPIO driver yet, so describe it as always on, as the
 	 * bootloader leaves it.
@@ -676,6 +692,32 @@
 			#gpio-cells = <2>;
 			interrupt-controller;
 			#interrupt-cells = <2>;
+		};
+
+		nvmem-0 {
+			compatible = "maxim,max77759-nvmem";
+
+			nvmem-layout {
+				compatible = "fixed-layout";
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				nvmem_reboot_mode: reboot-mode@0 {
+					reg = <0x0 0x4>;
+				};
+
+				boot-reason@4 {
+					reg = <0x4 0x4>;
+				};
+
+				shutdown-user-flag@8 {
+					reg = <0x8 0x1>;
+				};
+
+				rsoc@a {
+					reg = <0xa 0x2>;
+				};
+			};
 		};
 	};
 };
