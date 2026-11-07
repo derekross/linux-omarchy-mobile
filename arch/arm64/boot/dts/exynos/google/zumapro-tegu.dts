@@ -147,6 +147,19 @@
 		regulator-boot-on;
 		regulator-always-on;
 	};
+
+	/*
+	 * WL_REG_ON (gph3-4), the Wi-Fi chip's power enable (stock's
+	 * pcie,wlan-gpio), raised 150 ms before the PCIe PHY is configured.
+	 * It is the root port's supply, so the PCI pwrctrl core switches it.
+	 */
+	wlan_reg_on: regulator-wlan-reg-on {
+		compatible = "regulator-fixed";
+		regulator-name = "wlan-reg-on";
+		gpio = <&gph3 4 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <150000>;
+	};
 };
 
 &{/reserved-memory} {
@@ -168,6 +181,19 @@
 		size = <0x04000000>;
 		alignment = <0x0 0x00200000>;
 		alloc-ranges = <0x0 0x98000000 0x06000000>;
+	};
+
+	/*
+	 * All of the Wi-Fi chip's DMA buffers come from this pool. It keeps
+	 * driver bugs away from the rest of RAM; it does not confine the
+	 * chip's own firmware, as the HSI2 System MMU and S2MPU see PCIe and
+	 * UFS on the same VID and cannot enforce on it.
+	 */
+	wifi_dma_pool: wifi-dma-pool {
+		compatible = "restricted-dma-pool";
+		size = <0x01000000>;
+		alignment = <0x0 0x00200000>;
+		alloc-ranges = <0x0 0x80000000 0x80000000>;
 	};
 };
 
@@ -464,6 +490,43 @@
 		interrupts = <5 IRQ_TYPE_LEVEL_HIGH>;
 		enable-gpios = <&gph1 6 GPIO_ACTIVE_HIGH>;
 	};
+};
+
+/*
+ * Wi-Fi: the BCM4383 on pcie_1, one lane at Gen2, the chip's own limit
+ * (its LnkCap reads 5 GT/s). Its DMA buffers come from wifi_dma_pool.
+ */
+&pcie_1 {
+	max-link-speed = <2>;
+	status = "okay";
+
+	pcie@0,0 {
+		compatible = "pciclass,0604";
+		device_type = "pci";
+		reg = <0x0 0x0 0x0 0x0 0x0>;
+		bus-range = <0x01 0xff>;
+		#address-cells = <3>;
+		#size-cells = <2>;
+		ranges;
+		vpcie3v3-supply = <&wlan_reg_on>;
+		/*
+		 * No I/A sequencer re-locks the PHY after L1: with ASPM on, the
+		 * link entered L1 and config reads of the chip returned all ones.
+		 */
+		aspm-no-l0s;
+		aspm-no-l1;
+
+		wifi@0,0 {
+			compatible = "pci14e4,4449";
+			reg = <0x10000 0x0 0x0 0x0 0x0>;
+			brcm,board-type = "google,zumapro-tegu";
+			memory-region = <&wifi_dma_pool>;
+		};
+	};
+};
+
+&pcie_1_phy {
+	status = "okay";
 };
 
 &pinctrl_alive {

@@ -430,6 +430,81 @@ void brcmf_fweh_unregister(struct brcmf_pub *drvr,
 	drvr->fweh->evt_handler[evt_handler_idx] = NULL;
 }
 
+/*
+ * Newer firmware (the BCM4398's 24.100) has dropped the "event_msgs" iovar
+ * for "event_msgs_ext", whose mask is preceded by a small header, as
+ * Broadcom's driver and the Cypress vendor code use it.
+ */
+struct brcmf_fweh_eventmsgs_ext {
+	u8 ver;
+	u8 command;
+	u8 len;
+	u8 maxgetsize;
+	u8 mask[];
+};
+
+#define BRCMF_EVENTMSGS_EXT_VER		1
+#define BRCMF_EVENTMSGS_EXT_SET_MASK	3
+
+int brcmf_fweh_get_event_mask(struct brcmf_if *ifp)
+{
+	struct brcmf_fweh_info *fweh = ifp->drvr->fweh;
+	struct brcmf_fweh_eventmsgs_ext *msg;
+	u32 msglen;
+	int err;
+
+	err = brcmf_fil_iovar_data_get(ifp, "event_msgs", fweh->event_mask,
+				       fweh->event_mask_len);
+	if (err != -EBADE)
+		return err;
+
+	msglen = sizeof(*msg) + fweh->event_mask_len;
+	msg = kzalloc(msglen, GFP_KERNEL);
+	if (!msg)
+		return -ENOMEM;
+	msg->ver = BRCMF_EVENTMSGS_EXT_VER;
+	msg->len = fweh->event_mask_len;
+	msg->maxgetsize = fweh->event_mask_len;
+
+	err = brcmf_fil_iovar_data_get(ifp, "event_msgs_ext", msg, msglen);
+	if (!err) {
+		memcpy(fweh->event_mask, msg->mask,
+		       min_t(uint, msg->len, fweh->event_mask_len));
+		fweh->event_msgs_ext = true;
+		brcmf_dbg(EVENT, "using event_msgs_ext (%u bytes)\n", msg->len);
+	}
+	kfree(msg);
+
+	return err;
+}
+
+int brcmf_fweh_set_event_mask(struct brcmf_if *ifp)
+{
+	struct brcmf_fweh_info *fweh = ifp->drvr->fweh;
+	struct brcmf_fweh_eventmsgs_ext *msg;
+	u32 msglen;
+	int err;
+
+	if (!fweh->event_msgs_ext)
+		return brcmf_fil_iovar_data_set(ifp, "event_msgs",
+						fweh->event_mask,
+						fweh->event_mask_len);
+
+	msglen = sizeof(*msg) + fweh->event_mask_len;
+	msg = kzalloc(msglen, GFP_KERNEL);
+	if (!msg)
+		return -ENOMEM;
+	msg->ver = BRCMF_EVENTMSGS_EXT_VER;
+	msg->command = BRCMF_EVENTMSGS_EXT_SET_MASK;
+	msg->len = fweh->event_mask_len;
+	memcpy(msg->mask, fweh->event_mask, fweh->event_mask_len);
+
+	err = brcmf_fil_iovar_data_set(ifp, "event_msgs_ext", msg, msglen);
+	kfree(msg);
+
+	return err;
+}
+
 /**
  * brcmf_fweh_activate_events() - enables firmware events registered.
  *
@@ -459,8 +534,7 @@ int brcmf_fweh_activate_events(struct brcmf_if *ifp)
 	if (!brcmf_fwvid_activate_events(ifp))
 		return 0;
 
-	err = brcmf_fil_iovar_data_set(ifp, "event_msgs", fweh->event_mask,
-				       fweh->event_mask_len);
+	err = brcmf_fweh_set_event_mask(ifp);
 	if (err)
 		bphy_err(fweh->drvr, "Set event_msgs error (%d)\n", err);
 	return err;
