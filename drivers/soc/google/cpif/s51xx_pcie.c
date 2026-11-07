@@ -114,9 +114,21 @@ inline int s51xx_pcie_send_doorbell_int(struct pci_dev *pdev, int int_num)
 	}
 
 send_doorbell_again:
-	iowrite32(int_num, s51xx_pcie->doorbell_addr);
-
-	reg = ioread32(s51xx_pcie->doorbell_addr);
+	/*
+	 * The write and its read-back go through the link driver, under the
+	 * lock its link-down takes, so that a power-off the modem asked for
+	 * can't take the link down between the check above and the access:
+	 * an access to the modem's window with the link down can hang the
+	 * SoC. When the link went down meanwhile, the doorbell is kept for
+	 * the next link up, as pcie_send_ap2cp_irq() does when the link is
+	 * already down.
+	 */
+	if (exynos_pcie_rc_doorbell(s51xx_pcie->pcie_channel_num,
+				    s51xx_pcie->doorbell_addr, int_num, &reg)) {
+		mif_info_limited("Reserve doorbell interrupt: link went down\n");
+		mc->reserve_doorbell_int = true;
+		return 0;
+	}
 
 	/* debugging:
 	 * mif_info("s51xx_pcie.doorbell_addr = 0x%p -

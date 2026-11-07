@@ -48,6 +48,7 @@ struct s51xx_pcie {
 //extern struct s51xx_pcie s5100pcie;
 
 extern int exynos_pcie_rc_chk_link_status(int ch_num);
+extern int exynos_pcie_rc_doorbell(int ch_num, void __iomem *addr, u32 val, u32 *readback);
 extern int exynos_pcie_rc_l1ss_ctrl(int enable, int id, int ch_num);
 
 extern int exynos_pcie_poweron(int ch_num, int spd, int width);
