@@ -436,7 +436,7 @@
 &ipa {
 	firmware-name = "qcom/sdm845/Xiaomi/dipper/ipa_fws.mbn";
 
-	status = "okay";
+	status = "disabled";
 };
 
 &lab {
@@ -455,7 +455,7 @@
 	firmware-name = "qcom/sdm845/Xiaomi/dipper/mba.mbn",
 			"qcom/sdm845/Xiaomi/dipper/modem.mbn";
 
-	status = "okay";
+	status = "disabled";
 };
 
 &pmi8998_charger {
