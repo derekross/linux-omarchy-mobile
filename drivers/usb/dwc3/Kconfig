@@ -234,4 +234,14 @@ config USB_DWC3_GOOGLE
 	  To compile this driver as a module, choose M here: the
 	  module will be called dwc3-google.ko.
 
+config USB_DWC3_ZUMAPRO
+	tristate "DesignWare USB3 support on Tensor G4"
+	depends on ARCH_EXYNOS || COMPILE_TEST
+	depends on USB_DWC3_GADGET || USB_DWC3_DUAL_ROLE
+	help
+	  Peripheral-only glue for Tensor G4. Initialize the USB2 PHY before
+	  the DWC3 core reads registers, and retain its reference until removal.
+	  Host and dual-role modes are not supported by this wrapper.
+	  Select M to build dwc3-zumapro as a module.
+
 endif

@@ -11197,6 +11197,7 @@ F:	drivers/phy/samsung/phy-zuma-pcie.c
 F:	drivers/phy/samsung/phy-zumapro-ufs.c
 F:	drivers/thermal/samsung/gs101_acpm_tmu.c
 F:	drivers/usb/dwc3/dwc3-google.c
+F:	drivers/usb/dwc3/dwc3-zumapro.c
 F:	include/dt-bindings/clock/google,gs101*
 F:	include/dt-bindings/clock/google,gs201*
 F:	include/dt-bindings/clock/google,zuma-acpm.h
