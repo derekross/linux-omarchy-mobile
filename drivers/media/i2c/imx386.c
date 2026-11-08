@@ -72,7 +72,7 @@
 /*
  * Analogue gain = 512 / (512 - code), 1x to 16x at 0-480: measured on the
  * phone (CAMERA-PLAN.md CAM4.3c). The register holds 9 bits; codes from
- * 512 wrap around.
+ * 512 wrap around. Variants with another curve set their own maximum.
  */
 #define IMX386_AGAIN_MAX		480
 /* Default frame rate: a longer frame leaves room for indoor exposures */
@@ -146,6 +146,7 @@ struct imx386_variant {
 	bool shared_reset;
 	bool identify_only;		/* without a data file, check the ID */
 	const char *model;		/* subdev name, if not "imx386" */
+	u16 again_max;			/* 16x gain code, if not IMX386_AGAIN_MAX */
 };
 
 static const char * const imx386_supply_names[] = {
@@ -184,6 +185,11 @@ static const struct imx386_variant imx787_variant = {
 	.shared_reset = true,
 	.identify_only = true,
 	.model = "imx787",
+	/*
+	 * Analogue gain = 1024 / (1024 - code): 10 bits, 16x at 960. At 480
+	 * (the IMX386's 16x) the IMX787 gives 1.88x, measured on raw frames.
+	 */
+	.again_max = 960,
 };
 
 static const u32 imx386_mbus_codes[] = {
@@ -694,7 +700,8 @@ static int imx386_init_controls(struct imx386 *s)
 					m->frame_length / 2);
 	v4l2_ctrl_new_std(hdl, &imx386_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
 			  le16_to_cpu(h->again_min),
-			  min_t(u16, le16_to_cpu(h->again_max), IMX386_AGAIN_MAX),
+			  min_t(u16, le16_to_cpu(h->again_max),
+				s->var->again_max ?: IMX386_AGAIN_MAX),
 			  1, le16_to_cpu(h->again_min));
 	v4l2_ctrl_new_std(hdl, &imx386_ctrl_ops, V4L2_CID_DIGITAL_GAIN,
 			  IMX386_DGTL_GAIN_MIN, IMX386_DGTL_GAIN_MAX, 1,
