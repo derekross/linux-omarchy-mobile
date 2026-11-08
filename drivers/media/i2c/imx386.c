@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Sony IMX386 image sensor driver
+ * Sony IMX386 and IMX787 image sensor driver
  *
  * The IMX386 is a 12 MP Sony Bayer sensor with an SMIA++/CCS-style register
  * map (16-bit addresses, 8-bit values). The standard registers - mode
@@ -22,8 +22,11 @@
 #include <linux/i2c.h>
 #include <linux/math64.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/pm_runtime.h>
+#include <linux/property.h>
 #include <linux/regulator/consumer.h>
+#include <linux/reset.h>
 #include <linux/unaligned.h>
 
 #include <media/v4l2-cci.h>
@@ -40,6 +43,7 @@
 #define IMX386_REG_FRAME_COUNT		CCI_REG8(0x0005)
 #define IMX386_REG_CHIP_ID		CCI_REG16(0x0016)
 #define IMX386_CHIP_ID			0x0386
+#define IMX787_CHIP_ID			0x0787
 #define IMX386_REG_EXPOSURE		CCI_REG16(0x0202)
 #define IMX386_REG_ANALOG_GAIN		CCI_REG16(0x0204)
 /* per colour channel: Gr, R, B, Gb (CCS) */
@@ -126,13 +130,61 @@ struct imx386_mode {
 	unsigned int num_regs;
 };
 
+#define IMX386_MAX_SUPPLIES	8
+
+/*
+ * A part: its chip ID, its supplies in power-up order (the board supplies
+ * vbb and vbuck first, then the module's), which of them are optional, and
+ * whether its reset line is shared with another device of the module.
+ */
+struct imx386_variant {
+	enum v4l2_mbus_type bus_type;
+	u16 chip_id;
+	const char * const *supplies;
+	unsigned int num_supplies;
+	u32 optional;			/* bit per supply */
+	bool shared_reset;
+	bool identify_only;		/* without a data file, check the ID */
+	const char *model;		/* subdev name, if not "imx386" */
+};
+
 static const char * const imx386_supply_names[] = {
 	/* board supplies feeding the module's regulators, first (optional) */
 	"vbb", "vbuck",
 	"vif", "vdig", "vana",
 };
 
-#define IMX386_NUM_SUPPLIES	ARRAY_SIZE(imx386_supply_names)
+static const struct imx386_variant imx386_variant = {
+	.bus_type = V4L2_MBUS_CSI2_DPHY,
+	.chip_id = IMX386_CHIP_ID,
+	.supplies = imx386_supply_names,
+	.num_supplies = ARRAY_SIZE(imx386_supply_names),
+	.optional = BIT(0) | BIT(1),
+};
+
+/*
+ * IMX787, the Pixel 9 Pro Fold's main camera, in stock's module order
+ * (rear_main_camera_power_seq in Google's GPL zuma-comet-camera.dtsi): the
+ * I/O supply, the AF/OIS controller's analog and actuator supplies, the
+ * two analog supplies, the digital supply, then the clock and reset. The
+ * module's AF/OIS controller shares the sensor's reset line (stock gives
+ * both the same reset-gpios), so the line is a shared reset. The AF/OIS
+ * supplies are optional for boards without that controller.
+ */
+static const char * const imx787_supply_names[] = {
+	"vbb", "vbuck", "vif", "vaux", "vaux2", "vana", "vana2", "vdig",
+};
+
+static const struct imx386_variant imx787_variant = {
+	.bus_type = V4L2_MBUS_CSI2_CPHY,
+	.chip_id = IMX787_CHIP_ID,
+	.supplies = imx787_supply_names,
+	.num_supplies = ARRAY_SIZE(imx787_supply_names),
+	.optional = BIT(0) | BIT(1) | BIT(3) | BIT(4) | BIT(6),
+	.shared_reset = true,
+	.identify_only = true,
+	.model = "imx787",
+};
 
 static const u32 imx386_mbus_codes[] = {
 	MEDIA_BUS_FMT_SRGGB10_1X10, MEDIA_BUS_FMT_SGRBG10_1X10,
@@ -152,7 +204,10 @@ struct imx386 {
 
 	struct clk *mclk;
 	struct gpio_desc *reset;
-	struct regulator *supplies[IMX386_NUM_SUPPLIES];
+	struct reset_control *rstc;	/* instead of reset, when shared */
+	const struct imx386_variant *var;
+	u16 chip_id;	/* from the compatible */
+	struct regulator *supplies[IMX386_MAX_SUPPLIES];
 	u32 delays_us[3];	/* after the last supply, after MCLK, after reset */
 	u32 max_line_mbps;	/* receiver's line throughput, MB/s; 0: none */
 
@@ -297,7 +352,7 @@ static int imx386_load_data(struct imx386 *s)
 	h = (const void *)s->fw->data;
 	if (le32_to_cpu(h->magic) != IMX386_FW_MAGIC ||
 	    le16_to_cpu(h->version) != IMX386_FW_VERSION ||
-	    le16_to_cpu(h->chip_id) != IMX386_CHIP_ID)
+	    le16_to_cpu(h->chip_id) != s->chip_id)
 		goto bad;
 
 	s->num_modes = le16_to_cpu(h->num_modes);
@@ -361,7 +416,7 @@ bad:
 static int imx386_check_link_freqs(struct imx386 *s)
 {
 	struct fwnode_handle *ep;
-	struct v4l2_fwnode_endpoint bus = { .bus_type = V4L2_MBUS_CSI2_DPHY };
+	struct v4l2_fwnode_endpoint bus = { .bus_type = s->var->bus_type };
 	unsigned int i, j;
 	int ret;
 
@@ -373,7 +428,6 @@ static int imx386_check_link_freqs(struct imx386 *s)
 	fwnode_handle_put(ep);
 	if (ret)
 		return ret;
-
 	/* Only modes whose link frequency the board allows are offered. */
 	for (i = 0; i < s->num_modes; i++) {
 		for (j = 0; j < bus.nr_of_link_frequencies; j++)
@@ -447,7 +501,7 @@ static int imx386_power_on(struct device *dev)
 
 	gpiod_set_value_cansleep(s->reset, 1);
 
-	for (i = 0; i < IMX386_NUM_SUPPLIES; i++) {
+	for (i = 0; i < s->var->num_supplies; i++) {
 		if (!s->supplies[i])
 			continue;
 		ret = regulator_enable(s->supplies[i]);
@@ -461,6 +515,13 @@ static int imx386_power_on(struct device *dev)
 		goto err_supplies;
 	fsleep(s->delays_us[1]);
 
+	if (s->rstc) {
+		ret = reset_control_deassert(s->rstc);
+		if (ret) {
+			clk_disable_unprepare(s->mclk);
+			goto err_supplies;
+		}
+	}
 	gpiod_set_value_cansleep(s->reset, 0);
 	fsleep(s->delays_us[2]);
 
@@ -480,11 +541,13 @@ static int imx386_power_off(struct device *dev)
 	int i;
 
 	gpiod_set_value_cansleep(s->reset, 1);
+	if (s->rstc)
+		reset_control_assert(s->rstc);
 	fsleep(1000);
 	clk_disable_unprepare(s->mclk);
 	fsleep(1000);
 
-	for (i = IMX386_NUM_SUPPLIES - 1; i >= 0; i--)
+	for (i = s->var->num_supplies - 1; i >= 0; i--)
 		if (s->supplies[i])
 			regulator_disable(s->supplies[i]);
 
@@ -897,14 +960,37 @@ static int imx386_identify(struct imx386 *s)
 	if (ret)
 		return dev_err_probe(s->dev, ret, "chip ID read failed\n");
 
-	if (id != IMX386_CHIP_ID)
+	if (id != s->chip_id)
 		return dev_err_probe(s->dev, -ENODEV,
 				     "chip ID 0x%04llx, expected 0x%04x\n",
-				     id, IMX386_CHIP_ID);
+				     id, s->chip_id);
 
 	dev_info(s->dev, "model 0x%04llx\n", id);
 
 	return 0;
+}
+
+/*
+ * Without its data file a part that allows it is only identified: powered
+ * up, its model ID read once and powered down again. Nothing is written to
+ * the sensor, and the probe fails with the result logged, so a first
+ * bring-up boot can check the wiring before any data file exists.
+ */
+static int imx386_identify_only(struct imx386 *s)
+{
+	int ret;
+
+	ret = imx386_power_on(s->dev);
+	if (ret)
+		return dev_err_probe(s->dev, ret, "power up\n");
+
+	ret = imx386_identify(s);
+	imx386_power_off(s->dev);
+	if (ret)
+		return ret;
+
+	dev_info(s->dev, "identified, but no data file: not registered\n");
+	return -ENODEV;
 }
 
 static int imx386_probe(struct i2c_client *client)
@@ -919,29 +1005,33 @@ static int imx386_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	s->dev = dev;
+	s->var = device_get_match_data(dev) ?: &imx386_variant;
+	s->chip_id = s->var->chip_id;
 	v4l2_i2c_subdev_init(&s->sd, client, &imx386_subdev_ops);
+	if (s->var->model)
+		v4l2_i2c_subdev_set_name(&s->sd, client, s->var->model, NULL);
 	s->sd.internal_ops = &imx386_internal_ops;
 
 	s->regmap = devm_cci_regmap_init_i2c(client, 16);
 	if (IS_ERR(s->regmap))
 		return PTR_ERR(s->regmap);
 
-	for (i = 0; i < IMX386_NUM_SUPPLIES; i++) {
-		const char *name = imx386_supply_names[i];
+	for (i = 0; i < s->var->num_supplies; i++) {
+		const char *name = s->var->supplies[i];
+		bool optional = s->var->optional & BIT(i);
 
-		/* vbb and vbuck are optional; the module's own are not */
-		if (i < 2)
+		/* the board supplies are optional, and some of the module's */
+		if (optional)
 			s->supplies[i] = devm_regulator_get_optional(dev, name);
 		else
 			s->supplies[i] = devm_regulator_get(dev, name);
 		if (IS_ERR(s->supplies[i])) {
 			ret = PTR_ERR(s->supplies[i]);
-			if (i < 2 && ret == -ENODEV) {
+			if (optional && ret == -ENODEV) {
 				s->supplies[i] = NULL;
 				continue;
 			}
-			return dev_err_probe(dev, ret, "%s supply\n",
-					     imx386_supply_names[i]);
+			return dev_err_probe(dev, ret, "%s supply\n", name);
 		}
 	}
 
@@ -957,11 +1047,24 @@ static int imx386_probe(struct i2c_client *client)
 	if (IS_ERR(s->mclk))
 		return dev_err_probe(dev, PTR_ERR(s->mclk), "mclk\n");
 
-	s->reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
-	if (IS_ERR(s->reset))
-		return dev_err_probe(dev, PTR_ERR(s->reset), "reset\n");
+	/*
+	 * A shared reset goes through the reset framework, which makes a
+	 * reset-gpio device for reset-gpios and holds the line asserted until
+	 * the first consumer releases it.
+	 */
+	if (s->var->shared_reset) {
+		s->rstc = devm_reset_control_get_shared(dev, NULL);
+		if (IS_ERR(s->rstc))
+			return dev_err_probe(dev, PTR_ERR(s->rstc), "reset\n");
+	} else {
+		s->reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
+		if (IS_ERR(s->reset))
+			return dev_err_probe(dev, PTR_ERR(s->reset), "reset\n");
+	}
 
 	ret = imx386_load_data(s);
+	if (ret == -ENOENT && s->var->identify_only)
+		return imx386_identify_only(s);
 	if (ret)
 		return ret;
 
@@ -1042,7 +1145,9 @@ static DEFINE_RUNTIME_DEV_PM_OPS(imx386_pm_ops, imx386_power_off,
 				 imx386_power_on, NULL);
 
 static const struct of_device_id imx386_of_match[] = {
-	{ .compatible = "sony,imx386" },
+	{ .compatible = "sony,imx386", .data = &imx386_variant },
+	/* Pixel 9 Pro Fold main camera: the same, on C-PHY */
+	{ .compatible = "sony,imx787", .data = &imx787_variant },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, imx386_of_match);
@@ -1058,5 +1163,5 @@ static struct i2c_driver imx386_driver = {
 };
 module_i2c_driver(imx386_driver);
 
-MODULE_DESCRIPTION("Sony IMX386 sensor driver");
+MODULE_DESCRIPTION("Sony IMX386 and IMX787 sensor driver");
 MODULE_LICENSE("GPL");
