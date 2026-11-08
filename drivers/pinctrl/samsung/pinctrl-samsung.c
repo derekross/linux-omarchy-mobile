@@ -1064,6 +1064,42 @@ static int samsung_gpio_set_config(struct gpio_chip *gc, unsigned int offset,
 	return ret;
 }
 
+/* gpiolib gpio_get_direction callback function. */
+static int samsung_gpio_get_direction(struct gpio_chip *gc, unsigned int offset)
+{
+	struct samsung_pin_bank *bank = gpiochip_get_data(gc);
+	const struct samsung_pin_bank_type *type = bank->type;
+	struct samsung_pinctrl_drv_data *drvdata = bank->drvdata;
+	void __iomem *reg;
+	u32 data, mask, shift;
+	int ret;
+
+	reg = bank->pctl_base + bank->pctl_offset
+			+ type->reg_offset[PINCFG_TYPE_FUNC];
+	mask = (1 << type->fld_width[PINCFG_TYPE_FUNC]) - 1;
+	shift = offset * type->fld_width[PINCFG_TYPE_FUNC];
+	if (shift >= 32) {
+		/* Some banks have two config registers */
+		shift -= 32;
+		reg += 4;
+	}
+
+	ret = clk_enable(drvdata->pclk);
+	if (ret) {
+		dev_err(drvdata->dev, "failed to enable clock\n");
+		return ret;
+	}
+
+	data = (readl(reg) >> shift) & mask;
+
+	clk_disable(drvdata->pclk);
+
+	if (data == PIN_CON_FUNC_OUTPUT)
+		return GPIO_LINE_DIRECTION_OUT;
+
+	return GPIO_LINE_DIRECTION_IN;
+}
+
 static const struct gpio_chip samsung_gpiolib_chip = {
 	.request = gpiochip_generic_request,
 	.free = gpiochip_generic_free,
@@ -1079,7 +1115,8 @@ static const struct gpio_chip samsung_gpiolib_chip = {
 
 /* register the gpiolib interface with the gpiolib subsystem */
 static int samsung_gpiolib_register(struct platform_device *pdev,
-				    struct samsung_pinctrl_drv_data *drvdata)
+				    struct samsung_pinctrl_drv_data *drvdata,
+				    const struct samsung_pin_ctrl *ctrl)
 {
 	struct samsung_pin_bank *bank = drvdata->pin_banks;
 	struct gpio_chip *gc;
@@ -1095,6 +1132,8 @@ static int samsung_gpiolib_register(struct platform_device *pdev,
 		gc->parent = &pdev->dev;
 		gc->fwnode = bank->fwnode;
 		gc->label = bank->name;
+		if (ctrl->has_get_direction)
+			gc->get_direction = samsung_gpio_get_direction;
 
 		ret = devm_gpiochip_add_data(&pdev->dev, gc, bank);
 		if (ret) {
@@ -1311,7 +1350,7 @@ static int samsung_pinctrl_probe(struct platform_device *pdev)
 	else
 		samsung_pud_value_init(drvdata);
 
-	ret = samsung_gpiolib_register(pdev, drvdata);
+	ret = samsung_gpiolib_register(pdev, drvdata, ctrl);
 	if (ret)
 		goto err_unregister;
 

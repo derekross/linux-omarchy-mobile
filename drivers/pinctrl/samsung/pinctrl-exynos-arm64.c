@@ -2566,17 +2566,20 @@ static const struct samsung_pin_ctrl zumapro_pin_ctrl[] __initconst = {
 		/* Controller 0: ALIVE */
 		.pin_banks	= zumapro_pin_alive,
 		.nr_banks	= ARRAY_SIZE(zumapro_pin_alive),
+		.has_get_direction = true,
 		.eint_gpio_init	= exynos_eint_gpio_init,
 		.eint_wkup_init	= exynos_eint_wkup_init,
 	}, {
 		/* Controller 1: CUSTOM */
 		.pin_banks	= zumapro_pin_custom,
 		.nr_banks	= ARRAY_SIZE(zumapro_pin_custom),
+		.has_get_direction = true,
 		.eint_wkup_init	= exynos_eint_wkup_init,
 	}, {
 		/* Controller 2: FAR */
 		.pin_banks	= zumapro_pin_far,
 		.nr_banks	= ARRAY_SIZE(zumapro_pin_far),
+		.has_get_direction = true,
 		.eint_wkup_init	= exynos_eint_wkup_init,
 	}, {
 		/* Controller 3: GSACORE0 */
@@ -2607,26 +2610,31 @@ static const struct samsung_pin_ctrl zumapro_pin_ctrl[] __initconst = {
 		/* Controller 8: HSI1 */
 		.pin_banks	= zumapro_pin_hsi1,
 		.nr_banks	= ARRAY_SIZE(zumapro_pin_hsi1),
+		.has_get_direction = true,
 		.eint_gpio_init	= exynos_eint_gpio_init,
 	}, {
 		/* Controller 9: HSI2 */
 		.pin_banks	= zumapro_pin_hsi2,
 		.nr_banks	= ARRAY_SIZE(zumapro_pin_hsi2),
+		.has_get_direction = true,
 		.eint_gpio_init	= exynos_eint_gpio_init,
 	}, {
 		/* Controller 10: HSI2UFS */
 		.pin_banks	= zumapro_pin_hsi2ufs,
 		.nr_banks	= ARRAY_SIZE(zumapro_pin_hsi2ufs),
+		.has_get_direction = true,
 		.eint_gpio_init	= exynos_eint_gpio_init,
 	}, {
 		/* Controller 11: PERIC0 */
 		.pin_banks	= zumapro_pin_peric0,
 		.nr_banks	= ARRAY_SIZE(zumapro_pin_peric0),
+		.has_get_direction = true,
 		.eint_gpio_init	= exynos_eint_gpio_init,
 	}, {
 		/* Controller 12: PERIC1 */
 		.pin_banks	= zumapro_pin_peric1,
 		.nr_banks	= ARRAY_SIZE(zumapro_pin_peric1),
+		.has_get_direction = true,
 		.eint_gpio_init	= exynos_eint_gpio_init,
 	},
 };
