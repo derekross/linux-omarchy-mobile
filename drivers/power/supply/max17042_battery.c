@@ -1454,12 +1454,25 @@ static int max77759_fg_load_params(struct max17042_chip *chip)
 				       !(val & MAX77759_FG_CONFIG2_LDMDL),
 				       MAX77759_FG_LDMDL_POLL_US,
 				       MAX77759_FG_LDMDL_TIMEOUT_US);
-	if (!ret)
-		ret = regmap_read_poll_timeout(map, MAX17042_RepCap, val, val,
-					       MAX77759_FG_LDMDL_POLL_US,
-					       MAX77759_FG_LDMDL_TIMEOUT_US);
-	if (ret)
+	if (ret) {
 		dev_err(chip->dev, "model load did not complete: %d\n", ret);
+		return ret;
+	}
+
+	/*
+	 * RepCap was zeroed above and comes back once the gauge has run the
+	 * new model. A cell below VEmpty is empty by the model, so its RepCap
+	 * can stay 0 even after a good load.
+	 */
+	ret = regmap_read_poll_timeout(map, MAX17042_RepCap, val, val,
+				       MAX77759_FG_LDMDL_POLL_US,
+				       MAX77759_FG_LDMDL_TIMEOUT_US);
+	if (ret) {
+		if (regmap_read(map, MAX17042_VCELL, &val))
+			val = 0;
+		dev_err(chip->dev, "RepCap still 0 after the model load: %d (VCell %u mV)\n",
+			ret, val * MAX17042_VOLTAGE_LSB / 1000);
+	}
 
 	return ret;
 }
