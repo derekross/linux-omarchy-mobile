@@ -1290,17 +1290,24 @@ static int max77759_fg_lock_model(struct regmap *map, bool lock)
 	return regmap_write(map, MAX17042_MLOCKReg2, lock ? MODEL_LOCK2 : MODEL_UNLOCK2);
 }
 
-static int max77759_fg_check_table(struct regmap *map, const u16 *expected)
+static int max77759_fg_check_table(struct max17042_chip *chip, const u16 *expected)
 {
+	const char *check = expected ? "readback" : "lock check";
 	unsigned int val;
 	int i, ret;
 
 	for (i = 0; i < MAX17042_CHARACTERIZATION_DATA_SIZE; i++) {
-		ret = regmap_read(map, MAX17042_MODELChrTbl + i, &val);
-		if (ret)
+		ret = regmap_read(chip->regmap, MAX17042_MODELChrTbl + i, &val);
+		if (ret) {
+			dev_err(chip->dev, "model table %s read failed at %#x: %d\n",
+				check, MAX17042_MODELChrTbl + i, ret);
 			return ret;
-		if (val != (expected ? expected[i] : MAX77759_FG_MODEL_LOCKED))
+		}
+		if (val != (expected ? expected[i] : MAX77759_FG_MODEL_LOCKED)) {
+			dev_err(chip->dev, "model table %s mismatch at %#x\n",
+				check, MAX17042_MODELChrTbl + i);
 			return -EIO;
+		}
 	}
 
 	return 0;
@@ -1319,7 +1326,7 @@ static int max77759_fg_load_table(struct max17042_chip *chip)
 		for (i = 0; !ret && i < MAX17042_CHARACTERIZATION_DATA_SIZE; i++)
 			ret = regmap_write(map, MAX17042_MODELChrTbl + i, table[i]);
 		if (!ret)
-			ret = max77759_fg_check_table(map, table);
+			ret = max77759_fg_check_table(chip, table);
 	} while (ret && --retries);
 
 	/* A locked table reads back as all ones. */
@@ -1327,7 +1334,7 @@ static int max77759_fg_load_table(struct max17042_chip *chip)
 	do {
 		lock_ret = max77759_fg_lock_model(map, true);
 		if (!lock_ret)
-			lock_ret = max77759_fg_check_table(map, NULL);
+			lock_ret = max77759_fg_check_table(chip, NULL);
 	} while (lock_ret && --retries);
 
 	if (ret)
