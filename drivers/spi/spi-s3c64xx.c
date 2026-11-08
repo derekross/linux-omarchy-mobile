@@ -967,6 +967,7 @@ static int s3c64xx_spi_transfer_one(struct spi_controller *host,
 					dev_err(&spi->dev, "RX residue: %d\n", s.residue);
 				}
 			}
+			break;
 		} else {
 			s3c64xx_flush_fifo(sdd);
 		}
