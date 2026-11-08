@@ -8458,6 +8458,11 @@ T:	git https://gitlab.freedesktop.org/drm/misc/kernel.git
 F:	Documentation/devicetree/bindings/display/panel/samsung,lms397kf04.yaml
 F:	drivers/gpu/drm/panel/panel-samsung-db7430.c
 
+DRM DRIVER FOR SAMSUNG EA8074 PANELS
+M:	quatrixone <quatrix1@gmail.com>
+S:	Maintained
+F:	Documentation/devicetree/bindings/display/panel/samsung,ea8074.yaml
+
 DRM DRIVER FOR SAMSUNG MIPI DSIM BRIDGE
 M:	Inki Dae <inki.dae@samsung.com>
 M:	Jagan Teki <jagan@amarulasolutions.com>
