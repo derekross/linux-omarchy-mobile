@@ -80,6 +80,13 @@
 #define MAX77759_FG_LDMDL_POLL_US	50000
 #define MAX77759_FG_LDMDL_TIMEOUT_US	1000000
 #define MAX77759_FG_LOAD_RETRIES	3
+/* A failed model load is tried again later, a few times, with backoff */
+#define MAX77759_FG_LOAD_ATTEMPTS	8
+#define MAX77759_FG_RETRY_MIN_MS	30000
+#define MAX77759_FG_RETRY_MAX_MS	300000
+/* ... once the cell is this far above the model's empty voltage */
+#define MAX77759_FG_RETRY_MARGIN_UV	100000
+#define MAX77759_FG_VCELL_POLL_MS	60000
 
 /*
  * Register values that come with a MAX77759 ("M5") battery model, in the
@@ -139,6 +146,8 @@ struct max17042_chip {
 	bool   enable_vchg_override;
 	bool   init_complete;
 	bool   hib_restore_pending;
+	unsigned int m5_attempts;	/* model loads tried */
+	bool   m5_wait_vcell;		/* retry waits for the cell voltage */
 	u16    hib_cfg;
 	unsigned int r_sns;
 	int    vmin;	/* in millivolts */
@@ -1550,6 +1559,79 @@ static int max77759_fg_init_chip(struct max17042_chip *chip)
 	return 0;
 }
 
+/*
+ * Whether the cell is too close to the model's empty voltage (VEmpty.VE,
+ * 10 mV units) for a model load to finish: the load waits for a non-zero
+ * RepCap, and an empty cell has none.
+ */
+static bool max77759_fg_cell_low(struct max17042_chip *chip, int *uv)
+{
+	int ve_uv = (chip->m5_model->params.v_empty >> 7) * 10000;
+	unsigned int val;
+
+	if (regmap_read(chip->regmap, MAX17042_VCELL, &val))
+		return false;	/* let the load try, and report its error */
+
+	*uv = val * MAX17042_VOLTAGE_LSB;
+	return *uv < ve_uv + MAX77759_FG_RETRY_MARGIN_UV;
+}
+
+/*
+ * Load the battery model; if that fails, try again later instead of only
+ * at the next probe. A load can fail on a flat cell and succeed once it has
+ * charged a little, so a retry first waits for the cell voltage to clear
+ * VEmpty, then backs off from MAX77759_FG_RETRY_MIN_MS to
+ * MAX77759_FG_RETRY_MAX_MS between attempts. Meanwhile the battery reports
+ * from the gauge's default model, so that voltage, current and temperature
+ * stay readable. POR stays set until a load succeeds, so the next probe
+ * retries too.
+ */
+static void max77759_fg_init_worker(struct max17042_chip *chip)
+{
+	bool first = !READ_ONCE(chip->init_complete);
+	unsigned int delay_ms;
+	int ret, uv;
+
+	if (chip->m5_attempts && max77759_fg_cell_low(chip, &uv)) {
+		if (!chip->m5_wait_vcell)
+			dev_info(chip->dev,
+				 "cell at %d mV: model load waits for %d mV\n",
+				 uv / 1000,
+				 (chip->m5_model->params.v_empty >> 7) * 10 +
+				 MAX77759_FG_RETRY_MARGIN_UV / 1000);
+		chip->m5_wait_vcell = true;
+		queue_delayed_work(system_freezable_wq, &chip->work,
+				   msecs_to_jiffies(MAX77759_FG_VCELL_POLL_MS));
+		return;
+	}
+	chip->m5_wait_vcell = false;
+
+	ret = max77759_fg_init_chip(chip);
+	chip->m5_attempts++;
+	if (!ret) {
+		if (chip->m5_attempts > 1)
+			dev_info(chip->dev, "battery model loaded at attempt %u\n",
+				 chip->m5_attempts);
+	} else if (chip->m5_attempts >= MAX77759_FG_LOAD_ATTEMPTS) {
+		dev_err(chip->dev,
+			"battery model load failed: %d, giving up after %u attempts\n",
+			ret, chip->m5_attempts);
+	} else {
+		delay_ms = min(MAX77759_FG_RETRY_MIN_MS << (chip->m5_attempts - 1),
+			       MAX77759_FG_RETRY_MAX_MS);
+		dev_err(chip->dev,
+			"battery model load failed: %d, retrying in %u s\n",
+			ret, delay_ms / 1000);
+		queue_delayed_work(system_freezable_wq, &chip->work,
+				   msecs_to_jiffies(delay_ms));
+	}
+
+	if (first || !ret) {
+		WRITE_ONCE(chip->init_complete, true);
+		power_supply_changed(chip->battery);
+	}
+}
+
 static void max17042_init_worker(struct work_struct *work)
 {
 	struct max17042_chip *chip = container_of(to_delayed_work(work),
@@ -1557,14 +1639,8 @@ static void max17042_init_worker(struct work_struct *work)
 	int ret = 0;
 
 	if (chip->m5_model) {
-		/*
-		 * On failure, keep POR set so that the next probe retries, and
-		 * keep reporting from the gauge's default model.
-		 */
-		ret = max77759_fg_init_chip(chip);
-		if (ret)
-			dev_err(chip->dev, "battery model load failed: %d\n", ret);
-		goto done;
+		max77759_fg_init_worker(chip);
+		return;
 	}
 
 	/* Initialize registers according to values from config_data */
@@ -1583,7 +1659,6 @@ static void max17042_init_worker(struct work_struct *work)
 		return;
 	}
 
-done:
 	WRITE_ONCE(chip->init_complete, true);
 	power_supply_changed(chip->battery);
 }
