@@ -8462,6 +8462,7 @@ DRM DRIVER FOR SAMSUNG EA8074 PANELS
 M:	quatrixone <quatrix1@gmail.com>
 S:	Maintained
 F:	Documentation/devicetree/bindings/display/panel/samsung,ea8074.yaml
+F:	drivers/gpu/drm/panel/panel-samsung-ea8074.c
 
 DRM DRIVER FOR SAMSUNG MIPI DSIM BRIDGE
 M:	Inki Dae <inki.dae@samsung.com>
