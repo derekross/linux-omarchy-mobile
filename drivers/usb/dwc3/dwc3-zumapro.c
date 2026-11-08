@@ -20,6 +20,8 @@ struct dwc3_zumapro {
 	struct clk_bulk_data *clks;
 };
 
+#define to_dwc3_zumapro(d) container_of((d), struct dwc3_zumapro, dwc)
+
 static void dwc3_zumapro_phy_exit(void *data)
 {
 	struct dwc3_zumapro *zumapro = data;
@@ -41,7 +43,7 @@ static int dwc3_zumapro_probe(struct platform_device *pdev)
 	struct resource *res;
 	int ret;
 
-	/* Host/dual-role and suspend need their own power sequencing. */
+	/* Host and dual-role need their own power sequencing. */
 	if (usb_get_dr_mode(dev) != USB_DR_MODE_PERIPHERAL)
 		return dev_err_probe(dev, -EINVAL, "Only peripheral mode is supported\n");
 
@@ -91,12 +93,56 @@ static void dwc3_zumapro_remove(struct platform_device *pdev)
 
 static int dwc3_zumapro_suspend(struct device *dev)
 {
-	/* This staged path deliberately retains the firmware power state. */
-	return -EBUSY;
+	struct dwc3_zumapro *zumapro = to_dwc3_zumapro(dev_get_drvdata(dev));
+	int ret;
+
+	/*
+	 * Keep the PHY powered across the core's exit and re-init. Its last
+	 * power_off isolates the link, and dwc3_core_init() reads core
+	 * registers before it powers the PHY again; on Tensor such a read can
+	 * hang. With this reference the core resumes against the same powered,
+	 * initialized PHY it found at probe. The inherited clocks stay on.
+	 */
+	ret = phy_power_on(zumapro->usb2_phy);
+	if (ret)
+		return ret;
+
+	ret = dwc3_pm_suspend(&zumapro->dwc);
+	if (ret)
+		phy_power_off(zumapro->usb2_phy);
+
+	return ret;
+}
+
+static int dwc3_zumapro_resume(struct device *dev)
+{
+	struct dwc3_zumapro *zumapro = to_dwc3_zumapro(dev_get_drvdata(dev));
+	int ret;
+
+	ret = dwc3_pm_resume(&zumapro->dwc);
+	phy_power_off(zumapro->usb2_phy);
+
+	return ret;
+}
+
+static int dwc3_zumapro_prepare(struct device *dev)
+{
+	struct dwc3_zumapro *zumapro = to_dwc3_zumapro(dev_get_drvdata(dev));
+
+	return dwc3_pm_prepare(&zumapro->dwc);
+}
+
+static void dwc3_zumapro_complete(struct device *dev)
+{
+	struct dwc3_zumapro *zumapro = to_dwc3_zumapro(dev_get_drvdata(dev));
+
+	dwc3_pm_complete(&zumapro->dwc);
 }
 
 static const struct dev_pm_ops dwc3_zumapro_pm_ops = {
-	SYSTEM_SLEEP_PM_OPS(dwc3_zumapro_suspend, NULL)
+	SYSTEM_SLEEP_PM_OPS(dwc3_zumapro_suspend, dwc3_zumapro_resume)
+	.prepare = pm_sleep_ptr(dwc3_zumapro_prepare),
+	.complete = pm_sleep_ptr(dwc3_zumapro_complete),
 };
 
 static const struct of_device_id dwc3_zumapro_match[] = {
