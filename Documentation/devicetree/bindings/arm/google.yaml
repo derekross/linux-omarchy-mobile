@@ -58,6 +58,7 @@ properties:
       - description: Google Tensor G4 (zumapro) boards
         items:
           - enum:
+              - google,zumapro-comet
               - google,zumapro-tegu
           - const: google,zumapro
 
