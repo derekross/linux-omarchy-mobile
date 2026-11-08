@@ -16,12 +16,46 @@ description:
 
 allOf:
   - $ref: snps,dwc3-common.yaml#
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: google,zumapro-dwc3
+    then:
+      properties:
+        compatible:
+          const: google,zumapro-dwc3
+        clocks:
+          minItems: 3
+          maxItems: 3
+        clock-names:
+          items:
+            - const: bus_early
+            - const: ref
+            - const: ctrl
+        phys:
+          maxItems: 1
+        phy-names:
+          const: usb2-phy
+        dr_mode:
+          const: peripheral
+        maximum-speed:
+          const: high-speed
+      required:
+        - clocks
+        - clock-names
+        - phys
+        - phy-names
+        - dr_mode
+        - maximum-speed
 
 properties:
   compatible:
     contains:
       oneOf:
         - const: snps,dwc3
+        - const: google,zumapro-dwc3
+          description: Tensor G4 requires PHY initialization before core access.
         - const: synopsys,dwc3
           deprecated: true
 
