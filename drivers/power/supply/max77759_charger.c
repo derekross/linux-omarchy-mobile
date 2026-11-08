@@ -54,6 +54,7 @@ module_param_string(guard_psy, guard_psy, sizeof(guard_psy), 0444);
 MODULE_PARM_DESC(guard_psy, "Battery power supply whose temp and voltage_now the guard reads");
 
 #define GUARD_PERIOD_MS			30000
+#define GUARD_RETRY_MS			2000	/* while there is no reading */
 #define GUARD_HYST_DECIC		20	/* 2.0 C into a band before relaxing */
 #define GUARD_NBANDS			6
 #define GUARD_NTIERS			3
@@ -136,6 +137,7 @@ struct max77759_charger {
 	struct delayed_work guard_work;
 	bool guard_active;
 	int guard_band;		/* -1: charging inhibited */
+	bool guard_no_reading;	/* inhibited for want of a reading */
 	int guard_tier;
 	u32 fv_max_mv;		/* limits from the battery description */
 	u32 cc_max_ua;
@@ -754,6 +756,14 @@ static int psy_changed(struct notifier_block *nb, unsigned long evt, void *data)
 	static const char *psy_name = "tcpm-source";
 	struct power_supply *psy = data;
 
+	/*
+	 * A guard waiting for its first reading takes it as soon as the
+	 * battery has one, rather than at its next retry.
+	 */
+	if (evt == PSY_EVENT_PROP_CHANGED && READ_ONCE(chg->guard_no_reading) &&
+	    !strcmp(psy->desc->name, guard_psy))
+		mod_delayed_work(system_wq, &chg->guard_work, 0);
+
 	if (!strnstr(psy->desc->name, psy_name, strlen(psy_name)) ||
 	    evt != PSY_EVENT_PROP_CHANGED)
 		return NOTIFY_OK;
@@ -899,10 +909,12 @@ static void guard_work_item(struct work_struct *work)
 	struct max77759_charger *chg =
 		container_of(work, struct max77759_charger, guard_work.work);
 	int decic = 0, uv = 0, band, tier;
+	unsigned int next_ms = GUARD_PERIOD_MS;
 	bool read_ok;
 	u32 fv, cc;
 
 	if (!temp_guard) {
+		WRITE_ONCE(chg->guard_no_reading, false);
 		if (chg->guard_active)
 			guard_release(chg);
 		goto out;
@@ -914,8 +926,15 @@ static void guard_work_item(struct work_struct *work)
 		dev_info(chg->dev, "temperature guard on (%s)\n", guard_psy);
 	}
 
-	/* No reading, no charging */
+	/*
+	 * No reading, no charging. A missing reading is usually the gauge
+	 * still starting (it answers once its model load is done), so look
+	 * again soon instead of a guard period later.
+	 */
 	read_ok = !guard_read(&decic, &uv);
+	WRITE_ONCE(chg->guard_no_reading, !read_ok);
+	if (!read_ok)
+		next_ms = GUARD_RETRY_MS;
 	band = read_ok ? guard_next_band(chg->guard_band, decic) : -1;
 
 	if (band < 0) {
@@ -957,7 +976,7 @@ static void guard_work_item(struct work_struct *work)
 	chg->guard_band = band;
 	chg->guard_tier = tier;
 out:
-	schedule_delayed_work(&chg->guard_work, msecs_to_jiffies(GUARD_PERIOD_MS));
+	schedule_delayed_work(&chg->guard_work, msecs_to_jiffies(next_ms));
 }
 
 static void max77759_charger_log_state(struct max77759_charger *chg,
@@ -1050,6 +1069,15 @@ static int max77759_charger_probe(struct platform_device *pdev)
 	if (ret)
 		return dev_err_probe(dev, ret, "Failed to initialize psy work\n");
 
+	/*
+	 * Before the notifier, which can kick the guard work: devm then
+	 * unregisters the notifier before it cancels the work.
+	 */
+	chg->guard_band = -2;
+	ret = devm_delayed_work_autocancel(dev, &chg->guard_work, guard_work_item);
+	if (ret)
+		return dev_err_probe(dev, ret, "Failed to initialize guard work\n");
+
 	chg->nb.notifier_call = psy_changed;
 	ret = power_supply_reg_notifier(&chg->nb);
 	if (ret)
@@ -1069,10 +1097,6 @@ static int max77759_charger_probe(struct platform_device *pdev)
 	/* 4926 mAh: the battery in our device tree, if it doesn't say */
 	if (!chg->design_uah)
 		chg->design_uah = 4926000;
-	chg->guard_band = -2;
-	ret = devm_delayed_work_autocancel(dev, &chg->guard_work, guard_work_item);
-	if (ret)
-		return dev_err_probe(dev, ret, "Failed to initialize guard work\n");
 	schedule_delayed_work(&chg->guard_work, 0);
 
 	max77759_charger_log_state(chg, "probed");
