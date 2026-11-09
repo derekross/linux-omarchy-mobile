@@ -247,7 +247,8 @@ static const char * const cp_input_names[CP_NUM_INPUTS] = {
  * @sysreg_optional: without samsung,sysreg the link runs without I/O
  *	coherency
  * @sleep_guard: system sleep with the modem up has been tried on this SoC
- *	(gs201): the noirq sleep callbacks run; elsewhere they do nothing
+ *	(gs201): the noirq sleep callbacks run, and the root port is kept out
+ *	of the PCI core's D3 handling; elsewhere neither happens
  */
 struct gs201_pcie_cp_data {
 	bool zuma_ctrl;
@@ -808,6 +809,7 @@ static void cp_root_win_restore(struct gs201_pcie_cp *cp)
 
 static int cp_bus(struct gs201_pcie_cp *cp)
 {
+	struct pci_dev *rp;
 	int ret;
 
 	if (!cp->link_up || !cp->atu_done)
@@ -826,6 +828,18 @@ static int cp_bus(struct gs201_pcie_cp *cp)
 	ret = pci_host_probe(cp->bridge);
 	if (ret)
 		return ret;
+	/*
+	 * The link is down between transfers, and with it the root port's
+	 * configuration space. Its power state is the modem driver's call:
+	 * left to the PCI core, a system sleep with the link down marked the
+	 * root port D3cold, and resume then took the modem as disconnected,
+	 * since the link only comes back when the modem driver asks for it.
+	 * Only where system sleep with the modem up has been tried
+	 * (sleep_guard, gs201).
+	 */
+	if (cp->data->sleep_guard)
+		list_for_each_entry(rp, &cp->bridge->bus->devices, bus_list)
+			rp->dev_flags |= PCI_DEV_FLAGS_NO_D3;
 	pci_walk_bus(cp->bridge->bus, cp_bus_report, cp);
 	cp_root_win_save(cp);
 
@@ -2313,7 +2327,8 @@ static void gs201_pcie_cp_remove(struct platform_device *pdev)
  * sleep. It is a late abort, not a guard: the root port and the modem are
  * children of this device, so the PM core has already run their
  * suspend_noirq when this runs, and the PCI core has already handled
- * them; the refusal makes the PM core resume them and the sleep fails. The PMU's isolation bit is
+ * them (harmlessly, with PCI_DEV_FLAGS_NO_D3 on the port, see cp_bus());
+ * the refusal makes the PM core resume them and the sleep fails. The PMU's isolation bit is
  * only logged: a phone whose modem never started has never isolated the
  * PHY, and must still sleep.
  */
