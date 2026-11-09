@@ -1232,8 +1232,9 @@
 			phys = <&ufs_phy>;
 			phy-names = "ufs-phy";
 			samsung,sysreg = <&sysreg_ufs 0x710>;
-			pinctrl-names = "default";
+			pinctrl-names = "default", "sleep";
 			pinctrl-0 = <&ufs_reset>, <&ufs_refclk>;
+			pinctrl-1 = <&ufs_reset>, <&ufs_refclk>;
 			lanes-per-direction = <2>;
 			dma-coherent;
 			status = "disabled";
