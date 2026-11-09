@@ -762,6 +762,12 @@ static int cp_msi_setup(struct gs201_pcie_cp *cp)
 	return 0;
 }
 
+static int cp_no_d3cold_wait(struct pci_dev *pdev, void *data)
+{
+	pdev->d3cold_delay = 0;
+	return 0;
+}
+
 static int cp_bus_report(struct pci_dev *pdev, void *data)
 {
 	struct gs201_pcie_cp *cp = data;
@@ -834,12 +840,25 @@ static int cp_bus(struct gs201_pcie_cp *cp)
 	 * left to the PCI core, a system sleep with the link down marked the
 	 * root port D3cold, and resume then took the modem as disconnected,
 	 * since the link only comes back when the modem driver asks for it.
-	 * Only where system sleep with the modem up has been tried
-	 * (sleep_guard, gs201).
+	 * PCI_DEV_FLAGS_NO_D3 keeps it in D0, but a read of its PM control
+	 * register with the link down (pci_power_up() at resume, through
+	 * cp_root_map_bus(), which maps nothing then, so the read is all
+	 * ones) still marks it D3cold, and the next resume would wait up to
+	 * d3cold_delay for a link only the modem driver raises, then mark the
+	 * modem disconnected. The modem keeps its power across s2idle, and
+	 * its driver waits for its own link up and restores the endpoint
+	 * before any access, so that wait has nothing to wait for: keep
+	 * d3cold_delay zero below the port. Both only where system sleep with
+	 * the modem up has been tried (sleep_guard, gs201).
 	 */
-	if (cp->data->sleep_guard)
-		list_for_each_entry(rp, &cp->bridge->bus->devices, bus_list)
+	if (cp->data->sleep_guard) {
+		list_for_each_entry(rp, &cp->bridge->bus->devices, bus_list) {
 			rp->dev_flags |= PCI_DEV_FLAGS_NO_D3;
+			if (rp->subordinate)
+				pci_walk_bus(rp->subordinate,
+					     cp_no_d3cold_wait, NULL);
+		}
+	}
 	pci_walk_bus(cp->bridge->bus, cp_bus_report, cp);
 	cp_root_win_save(cp);
 
