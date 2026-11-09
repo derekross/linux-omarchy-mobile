@@ -709,6 +709,36 @@ static int s5m_rtc_restart_s2mpg10(struct sys_off_data *data)
 	return ret ? NOTIFY_BAD : NOTIFY_DONE;
 }
 
+/*
+ * The PMIC's warm-reset (WTSR, with its cold-reset follow-up) and sudden
+ * power loss (SMPL) restarts stay armed in the always-on RTC block across
+ * boots. Left on, the PMIC answers the AP's power-off by powering it back
+ * up, so power off turns into a restart. Google's S2MPG12 RTC driver turns
+ * all three off in its shutdown callback before every power off, and arms
+ * them again only for a restart (rtc-s2mpg12.c, s2m_rtc_shutdown()).
+ * Restarts are left alone here: they never needed it on gs201.
+ */
+static void s5m_rtc_shutdown(struct platform_device *pdev)
+{
+	struct s5m_rtc_info *info = platform_get_drvdata(pdev);
+	int ret;
+
+	if (info->device_type != S2MPG12)
+		return;
+
+	if (system_state != SYSTEM_POWER_OFF && system_state != SYSTEM_HALT)
+		return;
+
+	ret = regmap_clear_bits(info->regmap, S2MPG10_RTC_SMPL,
+				S2MPG10_SMPL_EN);
+	if (!ret)
+		ret = regmap_clear_bits(info->regmap, S2MPG10_RTC_WTSR,
+					S2MPG10_WTSR_COLDRST |
+					S2MPG10_WTSR_WTSR_EN);
+	if (ret)
+		dev_err(info->dev, "failed to disarm WTSR/SMPL: %d\n", ret);
+}
+
 static int s5m_rtc_probe(struct platform_device *pdev)
 {
 	struct sec_pmic_dev *s5m87xx = dev_get_drvdata(pdev->dev.parent);
@@ -874,6 +904,7 @@ static struct platform_driver s5m_rtc_driver = {
 		.pm	= &s5m_rtc_pm_ops,
 	},
 	.probe		= s5m_rtc_probe,
+	.shutdown	= s5m_rtc_shutdown,
 	.id_table	= s5m_rtc_id,
 };
 

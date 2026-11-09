@@ -167,4 +167,6 @@ enum s2mpg10_rtc_reg {
 #define S2MPG10_WTSR_WTSRT	GENMASK(3, 1)
 #define S2MPG10_WTSR_WTSR_EN	BIT(0)
 
+#define S2MPG10_SMPL_EN		BIT(0)
+
 #endif /*  __LINUX_MFD_SEC_RTC_H */
