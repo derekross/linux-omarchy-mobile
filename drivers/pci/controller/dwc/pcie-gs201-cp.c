@@ -99,6 +99,7 @@
 #include <linux/phy/phy.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/platform_device.h>
+#include <linux/pm.h>
 #include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/seq_file.h>
@@ -245,12 +246,15 @@ static const char * const cp_input_names[CP_NUM_INPUTS] = {
  * @host_atu: no secure-ATU SMC; the host programs the outbound iATU
  * @sysreg_optional: without samsung,sysreg the link runs without I/O
  *	coherency
+ * @sleep_guard: system sleep with the modem up has been tried on this SoC
+ *	(gs201): the noirq sleep callbacks run; elsewhere they do nothing
  */
 struct gs201_pcie_cp_data {
 	bool zuma_ctrl;
 	bool phy_bypass_once;
 	bool host_atu;
 	bool sysreg_optional;
+	bool sleep_guard;
 };
 
 struct gs201_pcie_cp {
@@ -2298,12 +2302,72 @@ static void gs201_pcie_cp_remove(struct platform_device *pdev)
 	cancel_work_sync(&cp->event_work);
 }
 
+/*
+ * System sleep (s2idle) with the modem up, on gs201 only (sleep_guard).
+ * The modem stays powered; its driver lets the AP sleep only once
+ * CP2AP_WAKEUP has dropped and the idle link has been powered down (cpif
+ * holds a wake lock while the link is up, and its suspend refuses while
+ * the line is high), as on stock, whose root complex does no link-down at
+ * suspend either and only isolates a link that is already down, as
+ * link_down does here. Should those paths ever race, this refuses the
+ * sleep. It is a late abort, not a guard: the root port and the modem are
+ * children of this device, so the PM core has already run their
+ * suspend_noirq when this runs, and the PCI core has already handled
+ * them; the refusal makes the PM core resume them and the sleep fails. The PMU's isolation bit is
+ * only logged: a phone whose modem never started has never isolated the
+ * PHY, and must still sleep.
+ */
+static int gs201_pcie_cp_suspend_noirq(struct device *dev)
+{
+	struct gs201_pcie_cp *cp = dev_get_drvdata(dev);
+	unsigned int iso = 0;
+	int ret = 0;
+
+	if (!cp->data->sleep_guard)
+		return 0;
+	if (!mutex_trylock(&cp->lock)) {
+		dev_info(dev, "sleep refused: a link step is running\n");
+		return -EBUSY;
+	}
+	if (cp->link_up || cp->dbi_ok) {
+		dev_info(dev, "sleep refused: link %s, PHY %s\n",
+			 cp->link_up ? "up" : "down",
+			 cp->dbi_ok ? "out of isolation" : "isolated");
+		ret = -EBUSY;
+	}
+	mutex_unlock(&cp->lock);
+	if (ret)
+		return ret;
+
+	if (regmap_read(cp->pmu, cp->pmu_offset, &iso))
+		dev_dbg(dev, "sleep: link down\n");
+	else
+		dev_dbg(dev, "sleep: link down, PMU %#x = %#x\n",
+			cp->pmu_offset, iso);
+	return 0;
+}
+
+static int gs201_pcie_cp_resume_noirq(struct device *dev)
+{
+	struct gs201_pcie_cp *cp = dev_get_drvdata(dev);
+
+	if (cp->data->sleep_guard)
+		dev_dbg(dev, "resume: link down\n");
+	return 0;
+}
+
+static const struct dev_pm_ops gs201_pcie_cp_pm_ops = {
+	NOIRQ_SYSTEM_SLEEP_PM_OPS(gs201_pcie_cp_suspend_noirq,
+				  gs201_pcie_cp_resume_noirq)
+};
+
 static void gs201_pcie_cp_shutdown(struct platform_device *pdev)
 {
 	gs201_pcie_cp_remove(pdev);
 }
 
 static const struct gs201_pcie_cp_data gs201_pcie_cp_data = {
+	.sleep_guard = true,
 };
 
 static const struct gs201_pcie_cp_data zumapro_pcie_cp_data = {
@@ -2327,6 +2391,7 @@ static struct platform_driver gs201_pcie_cp_driver = {
 	.driver = {
 		.name = "gs201-pcie-cp",
 		.of_match_table = gs201_pcie_cp_of_match,
+		.pm = pm_sleep_ptr(&gs201_pcie_cp_pm_ops),
 		.suppress_bind_attrs = true,	/* the modem driver uses it */
 	},
 };
