@@ -18,6 +18,7 @@
 #include <linux/of_address.h>
 #include <linux/mfd/syscon.h>
 #include <linux/phy/phy.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 
@@ -1886,8 +1887,10 @@ static int exynos_ufs_suspend(struct ufs_hba *hba, enum ufs_pm_op pm_op,
 	if (ufs->drv_data->suspend)
 		ufs->drv_data->suspend(ufs);
 
-	if (!ufshcd_is_link_active(hba))
+	if (!ufshcd_is_link_active(hba)) {
 		phy_power_off(ufs->phy);
+		pinctrl_pm_select_sleep_state(hba->dev);
+	}
 
 	return 0;
 }
@@ -1896,8 +1899,19 @@ static int exynos_ufs_resume(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 {
 	struct exynos_ufs *ufs = ufshcd_get_variant(hba);
 
-	if (!ufshcd_is_link_active(hba))
+	if (!ufshcd_is_link_active(hba)) {
+		/*
+		 * On zumapro the UFS pads (the device's reference clock and
+		 * reset) came back from a system suspend as plain inputs on
+		 * about one wake in a hundred, and the host then saw no device
+		 * however often it reset it. Select the pin state again now
+		 * that the link is down and the host's clocks are on (at
+		 * rpm_lvl 3 this runs on every runtime resume too); the
+		 * "sleep" state exists so the default is really written again.
+		 */
+		pinctrl_pm_select_default_state(hba->dev);
 		phy_power_on(ufs->phy);
+	}
 
 	exynos_ufs_config_smu(ufs);
 	exynos_ufs_fmp_resume(hba);
