@@ -38,6 +38,7 @@ properties:
               - google,zumapro-peric0-sysreg
               - google,zumapro-peric1-sysreg
               - google,zumapro-ufs-sysreg
+              - google,zumapro-vgpio2ap-sysreg
               - samsung,exynos2200-cmgp-sysreg
               - samsung,exynos2200-peric0-sysreg
               - samsung,exynos2200-peric1-sysreg
