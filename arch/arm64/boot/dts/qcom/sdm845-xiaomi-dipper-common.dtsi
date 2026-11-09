@@ -131,6 +131,17 @@
 			no-map;
 		};
 
+		/* Preserve the vendor's reserved ranges around AOP, SMEM and RMTFS. */
+		removed-region@86200000 {
+			reg = <0 0x86200000 0 0x2d00000>;
+			no-map;
+		};
+
+		removed-region@89100000 {
+			reg = <0 0x89100000 0 0x1800000>;
+			no-map;
+		};
+
 		adsp_mem: adsp@8c500000 {
 			reg = <0 0x8c500000 0 0x1e00000>;
 			no-map;
