@@ -44,3 +44,110 @@
 
 	status = "okay";
 };
+
+/*
+ * The captured MP1.0 native tree contracts ABL's 32 MiB reservation to 16 MiB.
+ * Preserve the tail independently below; do not rely on its named node size.
+ */
+&abl_reserved {
+	reg = <0x0 0xf8800000 0x01000000>;
+};
+
+&reserved_memory {
+	/* The shared dashed debug-info reservation already excludes this page. */
+
+	/*
+	 * Source ranges: Google's android-16.0.0_r0.9 GS101 DT and the Bluejay
+	 * MP1.0 overlay, reconstructed from the owner's stock A images:
+	 * gs101-rmem.dtsi: ect, seclog, cp, ramoops, suspend log, snapshot;
+	 * gs101-dma-heap.dtsi: xhci;
+	 * debug-snapshot-def.h supplies the snapshot addresses and sizes.
+	 * The stock CP memory wiring also names cp_msi_rmem. See the matching
+	 * MEMORY-PLAN.md range table in omarchy-mobile for iomem comparisons.
+	 *
+	 * Preserve the stock MP1.0 buffers while their firmware ownership is
+	 * unresolved. These are exclusions only: no driver or pool binding.
+	 * Revisit mapping and ownership before adding any consumer.
+	 */
+	firmware-ect@90000000 {
+		reg = <0x0 0x90000000 0x0003a000>;
+		no-map;
+	};
+
+	firmware-xhci@97000000 {
+		reg = <0x0 0x97000000 0x00400000>;
+		no-map;
+	};
+
+	firmware-seclog@c3000000 {
+		reg = <0x0 0xc3000000 0x00080000>;
+		no-map;
+	};
+
+	firmware-snapshot-header@d8100000 {
+		reg = <0x0 0xd8100000 0x00010000>;
+		no-map;
+	};
+
+	firmware-snapshot-events@d8110000 {
+		reg = <0x0 0xd8110000 0x00700000>;
+		no-map;
+	};
+
+	firmware-snapshot-s2d@d8810000 {
+		reg = <0x0 0xd8810000 0x01800000>;
+		no-map;
+	};
+
+	firmware-snapshot-array@da010000 {
+		reg = <0x0 0xda010000 0x00a00000>;
+		no-map;
+	};
+
+	firmware-snapshot-bcm@dd610000 {
+		reg = <0x0 0xdd610000 0x00400000>;
+		no-map;
+	};
+
+	firmware-snapshot-itmon@dda10000 {
+		reg = <0x0 0xdda10000 0x00010000>;
+		no-map;
+	};
+
+	firmware-cp-rx@e8000000 {
+		reg = <0x0 0xe8000000 0x01c00000>;
+		no-map;
+	};
+
+	firmware-cp-tx@ee000000 {
+		reg = <0x0 0xee000000 0x00400000>;
+		no-map;
+	};
+
+	firmware-cp-ipc@f0000000 {
+		reg = <0x0 0xf0000000 0x00800000>;
+		no-map;
+	};
+
+	firmware-cp-msi@f6200000 {
+		reg = <0x0 0xf6200000 0x00001000>;
+		no-map;
+	};
+
+	/* Keep the uncertain tail independent of ABL's named node edit. */
+	firmware-abl-tail@f9800000 {
+		reg = <0x0 0xf9800000 0x01000000>;
+		no-map;
+	};
+
+	/* Do not bind ramoops until persistent logging is a separate test. */
+	firmware-ramoops@fd3ff000 {
+		reg = <0x0 0xfd3ff000 0x00400000>;
+		no-map;
+	};
+
+	firmware-suspend-log@fd90c000 {
+		reg = <0x0 0xfd90c000 0x00001000>;
+		no-map;
+	};
+};
