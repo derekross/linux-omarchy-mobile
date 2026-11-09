@@ -82,6 +82,17 @@ static const struct regmap_config max77779_regmap = {
 	.cache_type = REGCACHE_NONE,
 };
 
+/*
+ * After the pack ran flat the gauge restarts with POR set and no model
+ * reloaded (nothing on Linux reloads it). It still measures and, once FSTAT
+ * says the data are ready, reports state of charge from its power-on
+ * configuration: less exact than with Google's model, far better than no
+ * battery at all. Nothing is written to the gauge either way.
+ */
+static bool trust_por = true;
+module_param(trust_por, bool, 0644);
+MODULE_PARM_DESC(trust_por, "Report the gauge after a power-on reset with no model reloaded (default on)");
+
 static int max77779_ready(struct max77779_battery *battery, u32 *status)
 {
 	u32 fstat;
@@ -94,7 +105,9 @@ static int max77779_ready(struct max77779_battery *battery, u32 *status)
 	if (ret)
 		return ret;
 	/* Never clear POR, reload a model, or publish uninitialised data. */
-	if ((*status & MAX77779_POR) || (fstat & MAX77779_NOT_READY))
+	if (fstat & MAX77779_NOT_READY)
+		return -EAGAIN;
+	if ((*status & MAX77779_POR) && !trust_por)
 		return -EAGAIN;
 	return 0;
 }
@@ -176,6 +189,23 @@ static int max77779_get_property(struct power_supply *supply,
 	}
 	if (status & MAX77779_ABSENT)
 		return -ENODATA;
+	/*
+	 * After a power-on reset with no model reloaded, the charges and the
+	 * time estimates come from the gauge's default pack, not this one:
+	 * withhold them and keep the percentage, voltage and current.
+	 */
+	if (status & MAX77779_POR) {
+		switch (property) {
+		case POWER_SUPPLY_PROP_CHARGE_NOW:
+		case POWER_SUPPLY_PROP_CHARGE_FULL:
+		case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
+		case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
+		case POWER_SUPPLY_PROP_TIME_TO_FULL_AVG:
+			return -ENODATA;
+		default:
+			break;
+		}
+	}
 	ret = regmap_read(battery->map, reg, &raw);
 	if (ret)
 		return ret;
@@ -303,6 +333,8 @@ static int max77779_probe(struct i2c_client *client)
 	ret = max77779_ready(battery, &raw);
 	if (ret)
 		return dev_err_probe(dev, ret, "Firmware model is not ready\n");
+	if (raw & MAX77779_POR)
+		dev_warn(dev, "Power-on reset, no model reloaded: state of charge from the gauge's defaults\n");
 	battery->temp_valid = max77779_temp_valid(client);
 	config.drv_data = battery;
 	config.fwnode = dev_fwnode(dev);
