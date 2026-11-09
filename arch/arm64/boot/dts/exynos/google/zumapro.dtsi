@@ -1548,6 +1548,12 @@
 			status = "disabled";
 		};
 
+		/* Latches the S2MPG14 PMIC's in-band interrupt (GIC SPI 74). */
+		sysreg_vgpio2ap: syscon@15090000 {
+			compatible = "google,zumapro-vgpio2ap-sysreg", "syscon";
+			reg = <0x0 0x15090000 0x1000>;
+		};
+
 		sysreg_apm: syscon@154204e0 {
 			compatible = "google,zumapro-apm-sysreg", "syscon";
 			/* Only the USI mode selectors. */
