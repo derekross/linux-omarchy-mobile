@@ -202,6 +202,9 @@
 
 	pmic-1 {
 		compatible = "samsung,s2mpg14-pmic";
+		interrupts = <GIC_SPI 74 IRQ_TYPE_LEVEL_HIGH>;
+		google,vgpio2ap-sysreg = <&sysreg_vgpio2ap>;
+		wakeup-source;
 
 		regulators {
 			touch_avdd: ldo4m {
