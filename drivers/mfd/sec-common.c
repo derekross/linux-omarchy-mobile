@@ -79,10 +79,11 @@ static const struct resource s2mpg14_rtc_resources[] = {
 	DEFINE_RES_IRQ_NAMED(S2MPG14_IRQ_RTCA0, "alarm"),
 };
 
-/* The qualified LDOs and the RTC with its alarm; no GPIO or protection writes. */
+/* The qualified LDOs, the RTC with its alarm and the GPIOs; no protection writes. */
 static const struct mfd_cell s2mpg14_devs[] = {
 	MFD_CELL_NAME("s2mpg14-regulator"),
 	MFD_CELL_RES("s2mpg14-rtc", s2mpg14_rtc_resources),
+	MFD_CELL_OF("s2mpg14-gpio", NULL, NULL, 0, 0, "samsung,s2mpg14-gpio"),
 };
 
 /*
@@ -92,11 +93,13 @@ static const struct mfd_cell s2mpg14_devs[] = {
 static const struct mfd_cell s2mpg14_devs_no_irq[] = {
 	MFD_CELL_NAME("s2mpg14-regulator"),
 	MFD_CELL_NAME("s2mpg14-rtc"),
+	MFD_CELL_OF("s2mpg14-gpio", NULL, NULL, 0, 0, "samsung,s2mpg14-gpio"),
 };
 
-/* The sub-PMIC's LDOs; no interrupt, meter, GPIO or RTC. */
+/* The sub-PMIC's LDOs and GPIOs; no interrupt, meter or RTC. */
 static const struct mfd_cell s2mpg15_devs[] = {
 	MFD_CELL_NAME("s2mpg15-regulator"),
+	MFD_CELL_OF("s2mpg15-gpio", NULL, NULL, 0, 0, "samsung,s2mpg15-gpio"),
 };
 
 static const struct resource s2mps11_rtc_resources[] = {

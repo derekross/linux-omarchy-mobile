@@ -58,6 +58,7 @@
 #include <media/videobuf2-dma-contig.h>
 
 #include "gs201-csis-regs.h"
+#include "zumapro-csis-core.h"
 
 #define CSIS_DRIVER_NAME	"gs201-csis"
 
@@ -75,6 +76,30 @@
 /* Lane rate limits of the DC-PHY in D-PHY mode */
 #define CSIS_MIN_LANE_RATE	80000000ULL
 #define CSIS_MAX_LANE_RATE	6500000000ULL
+
+/*
+ * zumapro (Tensor G4) has the same CSI-2 link (version 0x08010000 against
+ * gs201's 0x05040000, same layout) but a different DMA path: the ISP front
+ * end's CSIS core, whose image logical channel (LoCH) takes a link's data
+ * type on one virtual channel and writes it to memory through its Bayer
+ * WDMA (zumapro-csis-core.h). Without the core's registers in the device
+ * tree the link runs alone (as link_only), counting frames.
+ */
+struct gs201_csis_soc {
+	bool wdma;		/* gs201's CSIS WDMA, routing and CSIS sysreg */
+	unsigned int num_links;
+	u32 cmn_ctrl_extra;	/* CMN_CTRL bits the SoC's camera software sets */
+	unsigned int pixel_mode;	/* the link channel's, unless overridden */
+	unsigned int dma_bits;
+	/*
+	 * DBG_OPTION_SUITE bit 23: gs201's camera software sets it, and the link
+	 * then hands out unpacked 16-bit words, which gs201's WDMA expects.
+	 * zumapro's clears it: its CSIS core unpacks the packed CSI-2 stream.
+	 */
+	bool dbg_bit23;
+	/* PHY_CMN_CTRL lane enables: gs201 sets them; zumapro never writes it */
+	bool phy_cmn_ctrl;
+};
 
 struct gs201_csis_format {
 	u32 code;
@@ -116,6 +141,9 @@ struct gs201_csis_stats {
 	u32 dropped;
 	u32 missed_fe;
 	u32 link_irqs;
+	u32 core_irqs;		/* zumapro: core interrupts this link handled */
+	u32 core_last_agg;
+	u32 core_last_proc;
 	u32 wdma_started_at;	/* the link frame end the WDMA started at */
 	u32 wdma_restarts;	/* wdma_recover restarts */
 	u32 wdma_lines;		/* line ends since the channel's last frame start */
@@ -132,6 +160,16 @@ struct gs201_csis_stats {
 };
 
 struct gs201_csis {
+	const struct gs201_csis_soc *soc;
+	void __iomem *core;	/* zumapro: the CSIS core page, or NULL */
+	unsigned int loch;	/* zumapro: the image LoCH this link writes through */
+	void *sq_buf;		/* zumapro: the LoCH's status queue */
+	dma_addr_t sq_dma;
+	struct clk *fe_clk;	/* zumapro: the ISP front end's NOC clock */
+	unsigned long fe_rate_old;
+	void *scratch;		/* zumapro: frames with no buffer go here */
+	dma_addr_t scratch_dma;
+	size_t scratch_size;
 	struct device *dev;
 	void __iomem *link;
 	void __iomem *dma;
@@ -304,9 +342,40 @@ MODULE_PARM_DESC(wdma_line_irq, "Count WDMA line ends per channel (bring-up; man
  * stock uses quad, 2), to try how a C-PHY link hands its lines to the
  * WDMA.
  */
-static unsigned int pixel_mode = CSIS_ISPCFG_PIXEL_MODE_QUAD;
-module_param(pixel_mode, uint, 0644);
-MODULE_PARM_DESC(pixel_mode, "Link channel pixel mode, 0-3 (bring-up; default 2, quad)");
+/* zumapro bring-up: the CSIS core's memory format and the link's parallel mode */
+static int zp_mem_fmt = -1;
+module_param(zp_mem_fmt, int, 0644);
+MODULE_PARM_DESC(zp_mem_fmt, "zumapro Bayer WDMA memory format (bring-up; default RAW10 packed 4, 2 RAW16)");
+
+/*
+ * zumapro: ABL leaves the front end's NOC clock at a sixth of SHARED3
+ * (111 MHz); the main camera's C-PHY link (18.8 Gbps) then overruns the
+ * front end (link ERR_DESKEW_OVER, short frames). While a link streams, the
+ * INT DVFS domain (the clock's rail) goes up first, then the clock.
+ */
+static unsigned int fe_khz = 331776;
+module_param(fe_khz, uint, 0644);
+MODULE_PARM_DESC(fe_khz, "zumapro ISP-FE NOC clock in kHz while streaming (0: leave it)");
+
+static unsigned int fe_int_khz = 533000;
+module_param(fe_int_khz, uint, 0644);
+MODULE_PARM_DESC(fe_int_khz, "zumapro INT DVFS rate in kHz while streaming, before the ISP-FE clock (0: leave it)");
+
+static int cmn_ctrl_extra = -1;
+module_param(cmn_ctrl_extra, int, 0644);
+MODULE_PARM_DESC(cmn_ctrl_extra, "Extra link CMN_CTRL bits (bring-up; default the SoC's)");
+
+static int zp_dt = -1;
+module_param(zp_dt, int, 0644);
+MODULE_PARM_DESC(zp_dt, "zumapro LoCH data type code (bring-up; default from the CSI-2 data type)");
+
+static int parallel_mode = -1;
+module_param(parallel_mode, int, 0644);
+MODULE_PARM_DESC(parallel_mode, "Link channel parallel mode, ISP_CONFIG bits 15:14 (bring-up; default left 0)");
+
+static int pixel_mode = -1;
+module_param(pixel_mode, int, 0644);
+MODULE_PARM_DESC(pixel_mode, "Link channel pixel mode, 0-3 (bring-up; default the SoC's: gs201 2, quad; zumapro 3)");
 
 /*
  * Bring-up: start the WDMA channel only at the link's Nth frame end after
@@ -568,8 +637,11 @@ static void gs201_csis_link_start(struct gs201_csis *csis,
 					 CSIS_ISPCFG_VC);
 	}
 
-	link_write(csis, CSIS_DBG_OPTION_SUITE,
-		   link_read(csis, CSIS_DBG_OPTION_SUITE) | CSIS_DBG_OPTION_BIT23);
+	if (csis->soc->dbg_bit23)
+		link_write(csis, CSIS_DBG_OPTION_SUITE,
+			   link_read(csis, CSIS_DBG_OPTION_SUITE) | CSIS_DBG_OPTION_BIT23);
+	else
+		link_write(csis, CSIS_DBG_OPTION_SUITE, 0);
 	link_write(csis, CSIS_INT_SRC0, ~0u);
 	link_write(csis, CSIS_INT_SRC1, ~0u);
 
@@ -585,7 +657,9 @@ static void gs201_csis_link_start(struct gs201_csis *csis,
 
 		link_write(csis, CSIS_ISP_CONFIG_CH(ch), cfg_keep[ch] |
 			   FIELD_PREP(CSIS_ISPCFG_DATAFORMAT, dt) |
-			   FIELD_PREP(CSIS_ISPCFG_PIXEL_MODE, pixel_mode & 3) |
+			   FIELD_PREP(CSIS_ISPCFG_PIXEL_MODE,
+				      (pixel_mode >= 0 ? pixel_mode : csis->soc->pixel_mode) & 3) |
+			   (parallel_mode >= 0 ? FIELD_PREP(GENMASK(15, 14), parallel_mode & 3) : 0) |
 			   FIELD_PREP(CSIS_ISPCFG_VC, vc));
 		link_write(csis, CSIS_ISP_RESOL_CH(ch), !used ? 0 :
 			   FIELD_PREP(CSIS_ISP_RESOL_V, mf->height) |
@@ -601,7 +675,8 @@ static void gs201_csis_link_start(struct gs201_csis *csis,
 		   csis->lrte_epd ? CSIS_LRTE_EPD_EN | CSIS_LRTE_SPACERS_RESET :
 		   CSIS_LRTE_DEFAULT);
 	link_write(csis, CSIS_UPD_SDW, CSIS_UPD_SDW_ALL);
-	link_write(csis, CSIS_PHY_CMN_CTRL, CSIS_PHY_CMN_CTRL_ENABLE);
+	if (csis->soc->phy_cmn_ctrl)
+		link_write(csis, CSIS_PHY_CMN_CTRL, CSIS_PHY_CMN_CTRL_ENABLE);
 
 	link_write(csis, CSIS_INT_MSK0, int0_mask & CSIS_INT0_ERRORS);
 	link_write(csis, CSIS_INT_MSK1, CSIS_INT1_FRAME_START |
@@ -611,7 +686,165 @@ static void gs201_csis_link_start(struct gs201_csis *csis,
 		   FIELD_PREP(CSIS_CMN_CTRL_LANE_NUMBER, lanes - 1) |
 		   FIELD_PREP(CSIS_CMN_CTRL_INTERLEAVE, 3) |
 		   FIELD_PREP(CSIS_CMN_CTRL_F13, 2) |
+		   (cmn_ctrl_extra >= 0 ? cmn_ctrl_extra : csis->soc->cmn_ctrl_extra) |
 		   (csis->cphy ? CSIS_CMN_CTRL_CPHY : 0));
+}
+
+/* -----------------------------------------------------------------------------
+ * Hardware: the zumapro CSIS core's image LoCH
+ */
+
+static inline u32 core_read(struct gs201_csis *csis, u32 reg)
+{
+	return readl(csis->core + reg);
+}
+
+static inline void core_write(struct gs201_csis *csis, u32 reg, u32 val)
+{
+	writel(val, csis->core + reg);
+}
+
+static inline u32 img_read(struct gs201_csis *csis, u32 reg)
+{
+	return core_read(csis, ZP_IMG(csis->loch, reg));
+}
+
+static inline void img_write(struct gs201_csis *csis, u32 reg, u32 val)
+{
+	core_write(csis, ZP_IMG(csis->loch, reg), val);
+}
+
+static u32 zp_core_dt(u8 data_type)
+{
+	switch (data_type) {
+	case MIPI_CSI2_DT_RAW8:
+		return ZP_DT_RAW8;
+	case MIPI_CSI2_DT_RAW12:
+		return ZP_DT_RAW12;
+	case MIPI_CSI2_DT_RAW14:
+		return ZP_DT_RAW14;
+	default:
+		return ZP_DT_RAW10;
+	}
+}
+
+static void zp_core_set_addr(struct gs201_csis *csis, dma_addr_t addr)
+{
+	/* one batch slot; the configuration takes effect at the next frame */
+	img_write(csis, ZP_IMG_BATCH_ADDR_LSB(0),
+		  lower_32_bits(addr) & ZP_IMG_ADDR_LSB_MASK);
+	img_write(csis, ZP_IMG_BATCH_ADDR_MSB(0),
+		  upper_32_bits(addr) & ZP_IMG_ADDR_MSB_MASK);
+	img_write(csis, ZP_IMG_WDMA_CONFIG_ENABLE, 1);
+}
+
+/* The LoCH takes the link's channel 0 (VC 0) data type, as the HAL routes it. */
+static void zp_core_route(struct gs201_csis *csis)
+{
+	u32 val;
+
+	/* a LoCH a previous stream left running or in error starts clean */
+	img_write(csis, ZP_IMG_WDMA_CONFIG_ENABLE, 0);
+	img_write(csis, ZP_IMG_WDMA_CONTEXT_ENABLE, 0);
+	/*
+	 * A stream that stopped cleanly leaves the LoCH bound to its link
+	 * (EN_STATUS active), and a disabled LoCH ignores the abort, so the
+	 * next stream on another link got no interrupt at all. Abort it
+	 * enabled, with its DMA off.
+	 */
+	if (img_read(csis, ZP_IMG_LOCH_EN_STATUS) & ZP_IMG_LOCH_EN_STATUS_ACTIVE)
+		core_write(csis, ZP_LOCH_EN_SET, BIT(csis->loch));
+	core_write(csis, ZP_LOCH_ABORT, BIT(csis->loch));
+	if (readl_poll_timeout(csis->core + ZP_IMG(csis->loch, ZP_IMG_ABORT_DONE_ISR),
+			       val, val & ZP_IMG_ABORT_DONE, 100, 20000))
+		dev_dbg(csis->dev, "LoCH %u: no abort-done at start\n", csis->loch);
+	core_write(csis, ZP_LOCH_EN_CLR, BIT(csis->loch));
+	img_write(csis, ZP_IMG_ABORT_DONE_ISR, val);
+	img_write(csis, ZP_IMG_PROC_ISR, img_read(csis, ZP_IMG_PROC_ISR));
+	img_write(csis, ZP_IMG_ERR_ISR, img_read(csis, ZP_IMG_ERR_ISR));
+	core_write(csis, ZP_LOCH_INT_ISR, BIT(csis->loch));
+
+	core_write(csis, ZP_FRAME_ID_CLR, BIT(csis->loch));
+	img_write(csis, ZP_IMG_AUTO_REC_SYNC_INTV0, 0);
+	img_write(csis, ZP_IMG_AUTO_REC_SYNC_INTV1, 0);
+	img_write(csis, ZP_IMG_BATCH_INT_MSK_SOF, 1);
+	img_write(csis, ZP_IMG_BATCH_INT_MSK_EOF, 1);
+	img_write(csis, ZP_IMG_BATCH_INT_MSK_DMA_DONE, 1);
+	img_write(csis, ZP_IMG_BATCH_INT_MSK_FRAME_DONE, 1);
+	img_write(csis, ZP_IMG_CTL,
+		  FIELD_PREP(ZP_IMG_CTL_LINK, csis->link_id) |
+		  FIELD_PREP(ZP_IMG_CTL_LINK_CH, 0) |
+		  FIELD_PREP(ZP_IMG_CTL_DT, zp_dt >= 0 ? zp_dt :
+			     zp_core_dt(csis->fmt->data_type)));
+	img_write(csis, ZP_IMG_BATCH_CTL, 0);
+	img_write(csis, ZP_IMG_ISP_RESOL,
+		  FIELD_PREP(ZP_IMG_ISP_RESOL_H, csis->pix.height) |
+		  FIELD_PREP(ZP_IMG_ISP_RESOL_W, csis->pix.width));
+	img_write(csis, ZP_IMG_PROC_IER, ZP_IMG_PROC_SOF | ZP_IMG_PROC_EOF |
+		  ZP_IMG_PROC_SHADOW_UPDATE | ZP_IMG_PROC_DMA_DONE);
+}
+
+static void zp_core_unroute(struct gs201_csis *csis)
+{
+	core_write(csis, ZP_LOCH_EN_CLR, BIT(csis->loch));
+	img_write(csis, ZP_IMG_CTL, 0);
+}
+
+static void zp_core_wdma_start(struct gs201_csis *csis)
+{
+	u32 fmt = zp_mem_fmt >= 0 ? zp_mem_fmt :
+		  csis->fmt->bpp == 8 ? ZP_MEM_FMT_8BIT : ZP_MEM_FMT_RAW10_PACKED;
+
+	img_write(csis, ZP_IMG_BAYER_MEM_FORMAT, fmt);
+	img_write(csis, ZP_IMG_BAYER_STRIDE, csis->pix.bytesperline);
+	img_write(csis, ZP_IMG_BAYER_CROP_EN, 0);
+	img_write(csis, ZP_IMG_BAYER_ENABLE, BIT(0));
+	img_write(csis, ZP_IMG_SQ_CONFIG_ID_LSB, 0);
+	img_write(csis, ZP_IMG_SQ_CONFIG_ID_MSB, 0);
+	img_write(csis, ZP_IMG_SQ_BASE_ADDR_LSB, lower_32_bits(csis->sq_dma));
+	img_write(csis, ZP_IMG_SQ_BASE_ADDR_MSB, upper_32_bits(csis->sq_dma));
+
+	img_write(csis, ZP_IMG_PROC_ISR, img_read(csis, ZP_IMG_PROC_ISR));
+	img_write(csis, ZP_IMG_ERR_ISR, img_read(csis, ZP_IMG_ERR_ISR));
+	img_write(csis, ZP_IMG_WDMA_CONFIG_MISS, 1);
+	img_write(csis, ZP_IMG_PROC_IMR, ZP_IMG_PROC_SOF | ZP_IMG_PROC_EOF |
+		  ZP_IMG_PROC_DMA_DONE | ZP_IMG_PROC_FRAME_DONE);
+	img_write(csis, ZP_IMG_ERR_IMR, ZP_IMG_ERRORS);
+	core_write(csis, ZP_LOCH_INT_ISR, BIT(csis->loch));
+	core_write(csis, ZP_LOCH_INT_IMR,
+		   core_read(csis, ZP_LOCH_INT_IMR) | BIT(csis->loch));
+
+	img_write(csis, ZP_IMG_WDMA_CONFIG_ENABLE, 1);
+	img_write(csis, ZP_IMG_WDMA_CONTEXT_ENABLE, 1);
+	core_write(csis, ZP_LOCH_EN_SET, BIT(csis->loch));
+
+	dev_info(csis->dev, "LoCH %u on: link %u, CTL 0x%08x RESOL 0x%08x, %u bytes a line, format %u, slot 0 0x%x:%08x; LOCH_EN 0x%08x\n",
+		 csis->loch, csis->link_id, img_read(csis, ZP_IMG_CTL),
+		 img_read(csis, ZP_IMG_ISP_RESOL), csis->pix.bytesperline, fmt,
+		 img_read(csis, ZP_IMG_BATCH_ADDR_MSB(0)),
+		 img_read(csis, ZP_IMG_BATCH_ADDR_LSB(0)),
+		 core_read(csis, ZP_LOCH_EN));
+}
+
+static void zp_core_wdma_stop(struct gs201_csis *csis)
+{
+	u32 val;
+
+	img_write(csis, ZP_IMG_WDMA_CONFIG_ENABLE, 0);
+	img_write(csis, ZP_IMG_WDMA_CONTEXT_ENABLE, 0);
+	core_write(csis, ZP_LOCH_EN_CLR, BIT(csis->loch));
+	core_write(csis, ZP_LOCH_ABORT, BIT(csis->loch));
+	if (readl_poll_timeout(csis->core + ZP_IMG(csis->loch, ZP_IMG_ABORT_DONE_ISR),
+			       val, val & ZP_IMG_ABORT_DONE, 100, 50000))
+		dev_dbg(csis->dev, "LoCH %u: no abort-done\n", csis->loch);
+	img_write(csis, ZP_IMG_ABORT_DONE_ISR, val);
+	core_write(csis, ZP_LOCH_INT_IMR,
+		   core_read(csis, ZP_LOCH_INT_IMR) & ~BIT(csis->loch));
+	img_write(csis, ZP_IMG_PROC_IMR, 0);
+	img_write(csis, ZP_IMG_ERR_IMR, 0);
+	img_write(csis, ZP_IMG_PROC_ISR, img_read(csis, ZP_IMG_PROC_ISR));
+	img_write(csis, ZP_IMG_ERR_ISR, img_read(csis, ZP_IMG_ERR_ISR));
+	core_write(csis, ZP_LOCH_INT_ISR, BIT(csis->loch));
 }
 
 static void gs201_csis_link_stop(struct gs201_csis *csis)
@@ -620,7 +853,8 @@ static void gs201_csis_link_stop(struct gs201_csis *csis)
 	link_write(csis, CSIS_INT_MSK1, 0);
 	link_write(csis, CSIS_CMN_CTRL,
 		   link_read(csis, CSIS_CMN_CTRL) & ~CSIS_CMN_CTRL_CSI_EN);
-	link_write(csis, CSIS_PHY_CMN_CTRL, 0);
+	if (csis->soc->phy_cmn_ctrl)
+		link_write(csis, CSIS_PHY_CMN_CTRL, 0);
 }
 
 /* -----------------------------------------------------------------------------
@@ -865,7 +1099,9 @@ static void gs201_csis_next_buffer(struct gs201_csis *csis)
 					      struct gs201_csis_buffer, list);
 	if (csis->next) {
 		list_del(&csis->next->list);
-		if (csis->dma_on)
+		if (csis->dma_on && csis->core)
+			zp_core_set_addr(csis, csis->next->addr);
+		else if (csis->dma_on)
 			gs201_csis_wdma_set_addr(csis, csis->next->addr);
 	}
 }
@@ -998,6 +1234,107 @@ static irqreturn_t gs201_csis_wdma_irq(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+/*
+ * zumapro: the CSIS core's interrupt is shared by every LoCH. Start of frame
+ * latched the slot address: that buffer becomes active and the next is
+ * programmed; DMA done completes it.
+ */
+static irqreturn_t zp_core_irq(int irq, void *data)
+{
+	struct gs201_csis *csis = data;
+	struct gs201_csis_buffer *done = NULL, *failed = NULL;
+	u32 agg, proc, err;
+
+	if (READ_ONCE(gs201_csis_owner) != csis)
+		return IRQ_NONE;
+
+	agg = core_read(csis, ZP_LOCH_INT_ISR);
+	csis->stats.core_last_agg = agg;
+	if (!(agg & BIT(csis->loch)))
+		return IRQ_NONE;
+	proc = img_read(csis, ZP_IMG_PROC_ISR);
+	csis->stats.core_irqs++;
+	csis->stats.core_last_proc = proc;
+	err = img_read(csis, ZP_IMG_ERR_ISR) & ZP_IMG_ERRORS;
+	img_write(csis, ZP_IMG_PROC_ISR, proc);
+	if (err)
+		img_write(csis, ZP_IMG_ERR_ISR, err);
+	core_write(csis, ZP_LOCH_INT_ISR, BIT(csis->loch));
+
+	spin_lock(&csis->slock);
+	csis->stats.wdma_fs[0] += !!(proc & ZP_IMG_PROC_SOF);
+	csis->stats.wdma_fe[0] += !!(proc & ZP_IMG_PROC_EOF);
+	csis->stats.wdma_le[0] += !!(proc & ZP_IMG_PROC_FRAME_DONE);
+	if (err) {
+		unsigned long be = err;
+		unsigned int bit;
+
+		csis->stats.wdma_errors++;
+		csis->stats.last_wdma_err = err;
+		for_each_set_bit(bit, &be, 32)
+			csis->stats.wdma_bits[bit]++;
+		if (!csis->wdma_err_logged) {
+			csis->wdma_err_logged = true;
+			dev_warn(csis->dev, "LoCH %u error 0x%04x (proc 0x%02x): CTL 0x%08x RESOL 0x%08x STRIDE %u, slot 0 0x%x:%08x, activity 0x%08x, WDMA debug 0x%08x, AXI response errors 0x%08x, config miss 0x%x\n",
+				 csis->loch, err, proc, img_read(csis, ZP_IMG_CTL),
+				 img_read(csis, ZP_IMG_ISP_RESOL),
+				 img_read(csis, ZP_IMG_BAYER_STRIDE),
+				 img_read(csis, ZP_IMG_BATCH_ADDR_MSB(0)),
+				 img_read(csis, ZP_IMG_BATCH_ADDR_LSB(0)),
+				 img_read(csis, ZP_IMG_ACTIVITY_STATUS),
+				 img_read(csis, ZP_IMG_WDMA_DBG_INFO),
+				 img_read(csis, ZP_IMG_AXI_RESP_ERR_STATUS),
+				 img_read(csis, ZP_IMG_WDMA_CONFIG_MISS));
+		}
+	}
+
+	/*
+	 * Each frame start latches the slot programmed before it, so the slot
+	 * is reprogrammed only here, never mid-frame (a configuration written
+	 * during a frame is a "late config" and stops the LoCH): the next
+	 * queued buffer, or the scratch buffer.
+	 */
+	if (proc & ZP_IMG_PROC_SOF) {
+		if (csis->active) {
+			failed = csis->active;
+			csis->active = NULL;
+			csis->stats.missed_fe++;
+		}
+		csis->active = csis->next;
+		csis->next = NULL;
+		if (!list_empty(&csis->pending)) {
+			gs201_csis_next_buffer(csis);
+		} else {
+			zp_core_set_addr(csis, csis->scratch_dma);
+			csis->stats.dropped++;
+		}
+	}
+
+	if ((proc & ZP_IMG_PROC_DMA_DONE) && csis->active) {
+		done = csis->active;
+		csis->active = NULL;
+		csis->stats.wdma_done++;
+	}
+	spin_unlock(&csis->slock);
+
+	if (failed) {
+		failed->vb.vb2_buf.timestamp = ktime_get_ns();
+		failed->vb.sequence = csis->sequence++;
+		failed->vb.field = V4L2_FIELD_NONE;
+		vb2_buffer_done(&failed->vb.vb2_buf, keep_failed ?
+				VB2_BUF_STATE_DONE : VB2_BUF_STATE_ERROR);
+	}
+	if (done) {
+		done->vb.vb2_buf.timestamp = ktime_get_ns();
+		done->vb.sequence = csis->sequence++;
+		done->vb.field = V4L2_FIELD_NONE;
+		vb2_buffer_done(&done->vb.vb2_buf, err && !keep_failed ?
+				VB2_BUF_STATE_ERROR : VB2_BUF_STATE_DONE);
+	}
+
+	return IRQ_HANDLED;
+}
+
 /* -----------------------------------------------------------------------------
  * Streaming
  */
@@ -1087,7 +1424,7 @@ static int gs201_csis_enable_streams(struct v4l2_subdev *sd,
 	if (lanes < 0)
 		return lanes;
 
-	{
+	if (csis->sysreg) {
 		unsigned int sel = 0, rst = 0;
 
 		regmap_read(csis->sysreg, CSIS_SYSREG_LINK_SEL, &sel);
@@ -1113,7 +1450,7 @@ static int gs201_csis_enable_streams(struct v4l2_subdev *sd,
 		goto err_dvfs;
 
 	gs201_csis_link_start(csis, mf, f, lanes);
-	if (csis->dma_on && wdma_after_link)
+	if (csis->dma_on && wdma_after_link && !csis->core)
 		gs201_csis_wdma_start(csis);
 
 	ret = v4l2_subdev_enable_streams(csis->source.sd,
@@ -1122,7 +1459,7 @@ static int gs201_csis_enable_streams(struct v4l2_subdev *sd,
 		goto err_link;
 
 	/* Bring-up: what each part looks like right after the start. */
-	{
+	if (csis->sysreg) {
 		unsigned int sel = 0, rst = 0;
 
 		regmap_read(csis->sysreg, CSIS_SYSREG_LINK_SEL, &sel);
@@ -1165,7 +1502,7 @@ static int gs201_csis_disable_streams(struct v4l2_subdev *sd,
 
 	v4l2_subdev_disable_streams(csis->source.sd, csis->source.pad->index,
 				    BIT(0));
-	if (link_sel_bits)
+	if (link_sel_bits && csis->sysreg)
 		regmap_write(csis->sysreg, CSIS_SYSREG_LINK_SEL, csis->link_sel_saved);
 	gs201_csis_link_stop(csis);
 	phy_power_off(csis->phy);
@@ -1546,7 +1883,9 @@ static void gs201_csis_buf_queue(struct vb2_buffer *vb)
 
 	spin_lock_irqsave(&csis->slock, flags);
 	list_add_tail(&buf->list, &csis->pending);
-	if (!csis->next && vb2_start_streaming_called(vb->vb2_queue))
+	/* zumapro programs the slot at frame start only */
+	if (!csis->next && vb2_start_streaming_called(vb->vb2_queue) &&
+	    !csis->core)
 		gs201_csis_next_buffer(csis);
 	spin_unlock_irqrestore(&csis->slock, flags);
 }
@@ -1588,14 +1927,32 @@ static int gs201_csis_start_streaming(struct vb2_queue *vq, unsigned int count)
 	csis->sequence = 0;
 	memset(&csis->stats, 0, sizeof(csis->stats));
 	csis->wdma_err_logged = false;
-	csis->dma_on = !link_only;
+	csis->dma_on = !link_only && (csis->soc->wdma || csis->core);
 
 	spin_lock_irqsave(&csis->slock, flags);
 	if (!csis->next)
 		gs201_csis_next_buffer(csis);
 	spin_unlock_irqrestore(&csis->slock, flags);
 
-	if (csis->dma_on) {
+	if (csis->dma_on && csis->core) {
+		gs201_csis_dvfs_vote(csis, csis->int_clk, "INT", fe_int_khz,
+				     &csis->int_rate_old);
+		gs201_csis_dvfs_vote(csis, csis->fe_clk, "ISP-FE", fe_khz,
+				     &csis->fe_rate_old);
+		csis->scratch_size = csis->pix.sizeimage;
+		csis->scratch = dma_alloc_coherent(csis->dev, csis->scratch_size,
+						   &csis->scratch_dma, GFP_KERNEL);
+		if (!csis->scratch) {
+			gs201_csis_dvfs_restore(csis->fe_clk, &csis->fe_rate_old);
+			gs201_csis_dvfs_restore(csis->int_clk, &csis->int_rate_old);
+			ret = -ENOMEM;
+			goto err_pipeline;
+		}
+		if (!csis->next)
+			zp_core_set_addr(csis, csis->scratch_dma);
+		zp_core_route(csis);
+		zp_core_wdma_start(csis);
+	} else if (csis->dma_on) {
 		ret = gs201_csis_route(csis);
 		if (ret)
 			goto err_pipeline;
@@ -1612,7 +1969,15 @@ static int gs201_csis_start_streaming(struct vb2_queue *vq, unsigned int count)
 	return 0;
 
 err_wdma:
-	if (csis->dma_on) {
+	if (csis->dma_on && csis->core) {
+		zp_core_wdma_stop(csis);
+		zp_core_unroute(csis);
+		dma_free_coherent(csis->dev, csis->scratch_size, csis->scratch,
+				  csis->scratch_dma);
+		csis->scratch = NULL;
+		gs201_csis_dvfs_restore(csis->fe_clk, &csis->fe_rate_old);
+		gs201_csis_dvfs_restore(csis->int_clk, &csis->int_rate_old);
+	} else if (csis->dma_on) {
 		gs201_csis_wdma_stop(csis);
 		gs201_csis_dvfs_restore(csis->int_clk, &csis->int_rate_old);
 		gs201_csis_unroute(csis);
@@ -1656,7 +2021,21 @@ static void gs201_csis_stop_streaming(struct vb2_queue *vq)
 	csis->wdma_arm = 0;
 	spin_unlock_irqrestore(&csis->slock, flags);
 	v4l2_subdev_disable_streams(&csis->sd, CSIS_PAD_SOURCE, BIT(0));
-	if (csis->dma_on) {
+	if (csis->dma_on && csis->core) {
+		dev_info(csis->dev, "LoCH %u at stop: frame %u, done frame %u, activity 0x%08x, WDMA debug 0x%08x, AXI response errors 0x%08x\n",
+			 csis->loch, img_read(csis, ZP_IMG_FRAME_ID),
+			 img_read(csis, ZP_IMG_DONE_FRAME_ID),
+			 img_read(csis, ZP_IMG_ACTIVITY_STATUS),
+			 img_read(csis, ZP_IMG_WDMA_DBG_INFO),
+			 img_read(csis, ZP_IMG_AXI_RESP_ERR_STATUS));
+		zp_core_wdma_stop(csis);
+		zp_core_unroute(csis);
+		dma_free_coherent(csis->dev, csis->scratch_size, csis->scratch,
+				  csis->scratch_dma);
+		csis->scratch = NULL;
+		gs201_csis_dvfs_restore(csis->fe_clk, &csis->fe_rate_old);
+		gs201_csis_dvfs_restore(csis->int_clk, &csis->int_rate_old);
+	} else if (csis->dma_on) {
 		gs201_csis_wdma_stop(csis);
 		gs201_csis_dvfs_restore(csis->int_clk, &csis->int_rate_old);
 		gs201_csis_unroute(csis);
@@ -1671,7 +2050,7 @@ static void gs201_csis_stop_streaming(struct vb2_queue *vq)
 		 csis->stats.wdma_done, csis->stats.wdma_errors,
 		 csis->stats.last_wdma_err, csis->stats.dropped,
 		 csis->stats.missed_fe);
-	if (csis->dma_on)
+	if (csis->dma_on && csis->dma)
 		dev_info(csis->dev, "WDMA debug at stop: frames 0x%08x, lines/data 0x%08x\n",
 			 readl(csis->dma + CSIS_DMA_CMN_DBG_VCNT(csis->ctx_id)),
 			 readl(csis->dma + CSIS_DMA_CMN_DBG_HDCNT(csis->ctx_id)));
@@ -1715,6 +2094,8 @@ static int gs201_csis_stats_show(struct seq_file *s, void *unused)
 	seq_printf(s, "wdma_done %u\nwdma_errors %u\nlast_wdma_err 0x%08x\ndropped %u\nmissed_fe %u\nlink_irqs %u\n",
 		   st.wdma_done, st.wdma_errors, st.last_wdma_err, st.dropped,
 		   st.missed_fe, st.link_irqs);
+	seq_printf(s, "core_irqs %u\ncore_last_agg 0x%08x\ncore_last_proc 0x%08x\n",
+		   st.core_irqs, st.core_last_agg, st.core_last_proc);
 	gs201_csis_print_bits(s, NULL, "int0", st.int0_bits, 32);
 	gs201_csis_print_bits(s, NULL, "int1", st.int1_bits, 8);
 	gs201_csis_print_bits(s, NULL, "wdma", st.wdma_bits, 32);
@@ -1758,10 +2139,10 @@ static int gs201_csis_regs_show(struct seq_file *s, void *unused)
 	for (i = 0; i < ARRAY_SIZE(link_regs); i++)
 		seq_printf(s, "link 0x%03x = 0x%08x\n", link_regs[i],
 			   link_read(csis, link_regs[i]));
-	for (i = 0; i < ARRAY_SIZE(wdma_regs); i++)
+	for (i = 0; csis->wdma && i < ARRAY_SIZE(wdma_regs); i++)
 		seq_printf(s, "wdma 0x%03x = 0x%08x\n", wdma_regs[i],
 			   wdma_read(csis, wdma_regs[i]));
-	for (i = 0; i < ARRAY_SIZE(ch_regs); i++) {
+	for (i = 0; csis->wdma && i < ARRAY_SIZE(ch_regs); i++) {
 		u32 r = CSIS_WDMA_CH(csis->wdma_ch, ch_regs[i]);
 
 		seq_printf(s, "wdma 0x%03x = 0x%08x\n", r, wdma_read(csis, r));
@@ -1806,7 +2187,7 @@ static int gs201_csis_scan_show(struct seq_file *s, void *unused)
 			seq_printf(s, "link%u+0x%03x = 0x%08x\n", csis->link_id,
 				   off, link_read(csis, off));
 
-	for (i = 0; i < ARRAY_SIZE(sysreg_regs); i++) {
+	for (i = 0; csis->sysreg && i < ARRAY_SIZE(sysreg_regs); i++) {
 		if (regmap_read(csis->sysreg, sysreg_regs[i], &val))
 			continue;
 		seq_printf(s, "sysreg+0x%03x = 0x%08x\n", sysreg_regs[i], val);
@@ -2060,9 +2441,30 @@ static int gs201_csis_probe(struct platform_device *pdev)
 	INIT_LIST_HEAD(&csis->pending);
 	platform_set_drvdata(pdev, csis);
 
+	csis->soc = of_device_get_match_data(dev);
+	if (!csis->soc)
+		return -ENODEV;
+
 	csis->link = devm_platform_ioremap_resource_byname(pdev, "link");
 	if (IS_ERR(csis->link))
 		return PTR_ERR(csis->link);
+
+	if (!csis->soc->wdma) {
+		/* zumapro: the CSIS core page, optional (without it, link only) */
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "core");
+		if (res) {
+			csis->core = devm_ioremap(dev, res->start, resource_size(res));
+			if (!csis->core)
+				return -ENOMEM;
+		}
+		device_property_read_u32(dev, "google,image-loch", &csis->loch);
+		csis->fe_clk = devm_clk_get_optional(dev, "fe");
+		if (IS_ERR(csis->fe_clk))
+			return dev_err_probe(dev, PTR_ERR(csis->fe_clk), "ISP-FE clock\n");
+		if (csis->loch > 6)
+			return dev_err_probe(dev, -EINVAL, "bad google,image-loch\n");
+		goto no_wdma;
+	}
 
 	/* The DMA common page is shared by all instances: map, don't claim. */
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dma");
@@ -2088,6 +2490,7 @@ static int gs201_csis_probe(struct platform_device *pdev)
 			return -ENOMEM;
 	}
 
+no_wdma:
 	csis->cam_clk = devm_clk_get_optional(dev, "cam");
 	if (IS_ERR(csis->cam_clk))
 		return dev_err_probe(dev, PTR_ERR(csis->cam_clk), "CAM clock\n");
@@ -2096,10 +2499,10 @@ static int gs201_csis_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, PTR_ERR(csis->int_clk), "INT clock\n");
 
 	ret = device_property_read_u32(dev, "google,csis-link", &csis->link_id);
-	if (ret || csis->link_id > 7)
+	if (ret || csis->link_id >= csis->soc->num_links)
 		return dev_err_probe(dev, -EINVAL, "bad google,csis-link\n");
 	ret = device_property_read_u32(dev, "google,wdma-context", &csis->ctx_id);
-	if (ret || csis->ctx_id > 3)
+	if (csis->soc->wdma && (ret || csis->ctx_id > 3))
 		return dev_err_probe(dev, -EINVAL, "bad google,wdma-context\n");
 
 	csis->ebuf = csis->ctx_id;
@@ -2110,10 +2513,13 @@ static int gs201_csis_probe(struct platform_device *pdev)
 	csis->lrte_epd = device_property_read_bool(dev,
 						   "google,lrte-packet-delimiters");
 
-	csis->sysreg = syscon_regmap_lookup_by_phandle(dev->of_node,
-						       "google,csis-sysreg");
-	if (IS_ERR(csis->sysreg))
-		return dev_err_probe(dev, PTR_ERR(csis->sysreg), "no CSIS sysreg\n");
+	if (csis->soc->wdma) {
+		csis->sysreg = syscon_regmap_lookup_by_phandle(dev->of_node,
+							       "google,csis-sysreg");
+		if (IS_ERR(csis->sysreg))
+			return dev_err_probe(dev, PTR_ERR(csis->sysreg),
+					     "no CSIS sysreg\n");
+	}
 
 	csis->phy = devm_phy_get(dev, NULL);
 	if (IS_ERR(csis->phy))
@@ -2123,9 +2529,28 @@ static int gs201_csis_probe(struct platform_device *pdev)
 	if (ret && ret != -ENODEV)
 		return dev_err_probe(dev, ret, "memory region\n");
 
-	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(CSIS_WDMA_ADDR_BITS));
+	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(csis->soc->dma_bits));
 	if (ret)
 		goto err_mem;
+
+	if (csis->core) {
+		/* the LoCH writes a status record per frame: give it a page */
+		csis->sq_buf = dmam_alloc_coherent(dev, PAGE_SIZE, &csis->sq_dma,
+						   GFP_KERNEL);
+		if (!csis->sq_buf) {
+			ret = -ENOMEM;
+			goto err_mem;
+		}
+		irq = platform_get_irq_byname(pdev, "core");
+		if (irq < 0) {
+			ret = irq;
+			goto err_mem;
+		}
+		ret = devm_request_irq(dev, irq, zp_core_irq, IRQF_SHARED,
+				       dev_name(dev), csis);
+		if (ret)
+			goto err_mem;
+	}
 
 	irq = platform_get_irq_byname(pdev, "link");
 	if (irq < 0) {
@@ -2137,15 +2562,17 @@ static int gs201_csis_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_mem;
 
-	irq = platform_get_irq_byname(pdev, "wdma");
-	if (irq < 0) {
-		ret = irq;
-		goto err_mem;
+	if (csis->soc->wdma) {
+		irq = platform_get_irq_byname(pdev, "wdma");
+		if (irq < 0) {
+			ret = irq;
+			goto err_mem;
+		}
+		ret = devm_request_irq(dev, irq, gs201_csis_wdma_irq, IRQF_SHARED,
+				       dev_name(dev), csis);
+		if (ret)
+			goto err_mem;
 	}
-	ret = devm_request_irq(dev, irq, gs201_csis_wdma_irq, IRQF_SHARED,
-			       dev_name(dev), csis);
-	if (ret)
-		goto err_mem;
 
 	csis->fmt = &gs201_csis_formats[0];
 	csis->pix.width = CSIS_DEF_WIDTH;
@@ -2194,8 +2621,27 @@ static void gs201_csis_remove(struct platform_device *pdev)
 	of_reserved_mem_device_release(&pdev->dev);
 }
 
+static const struct gs201_csis_soc gs201_csis_gs201 = {
+	.wdma = true,
+	.num_links = 8,
+	.pixel_mode = CSIS_ISPCFG_PIXEL_MODE_QUAD,
+	.dma_bits = CSIS_WDMA_ADDR_BITS,
+	.dbg_bit23 = true,
+	.phy_cmn_ctrl = true,
+};
+
+/* Links 0-11 have contexts and interrupts; stock wires sensors to 0-8. */
+static const struct gs201_csis_soc gs201_csis_zumapro = {
+	.num_links = 12,
+	/* the zumapro HAL's CMN_CTRL bits 15:12 are 5, gs201's 4 */
+	.cmn_ctrl_extra = ZP_LINK_CMN_CTRL_F12,
+	.pixel_mode = ZP_LINK_PIXEL_MODE,
+	.dma_bits = ZP_ADDR_BITS,
+};
+
 static const struct of_device_id gs201_csis_of_match[] = {
-	{ .compatible = "google,gs201-csis" },
+	{ .compatible = "google,gs201-csis", .data = &gs201_csis_gs201 },
+	{ .compatible = "google,zumapro-csis", .data = &gs201_csis_zumapro },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, gs201_csis_of_match);

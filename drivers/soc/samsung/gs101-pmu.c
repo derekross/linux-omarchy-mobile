@@ -343,6 +343,7 @@ const struct exynos_pmu_data gs101_pmu_data = {
 #define ZUMA_CLUSTER1_NONCPU_INT_EN	0x1544
 #define ZUMA_HSI0_STATUS		0x2a84
 #define ZUMA_PAD_CTRL_NFC_CLK		0x3e84
+#define ZUMA_PHY_CTRL_CSIS		0x3ebc
 #define ZUMA_PHY_CTRL_UFS		0x3ec0
 #define ZUMA_PHY_CTRL_PCIE0		0x3ec4
 #define ZUMA_PHY_CTRL_PCIE1		0x3ec8
@@ -360,6 +361,7 @@ static const struct regmap_range zuma_pmu_registers[] = {
 	regmap_reg_range(ZUMA_HSI0_STATUS, ZUMA_HSI0_STATUS),
 	/* PHY isolation */
 	regmap_reg_range(GS101_PHY_CTRL_USB20, GS101_PHY_CTRL_USB20),
+	regmap_reg_range(ZUMA_PHY_CTRL_CSIS, ZUMA_PHY_CTRL_CSIS),
 	regmap_reg_range(ZUMA_PHY_CTRL_UFS, ZUMA_PHY_CTRL_UFS),
 	regmap_reg_range(ZUMA_PHY_CTRL_PCIE0, ZUMA_PHY_CTRL_PCIE0),
 	regmap_reg_range(ZUMA_PHY_CTRL_PCIE1, ZUMA_PHY_CTRL_PCIE1),
