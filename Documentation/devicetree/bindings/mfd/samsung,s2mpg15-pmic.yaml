@@ -10,7 +10,7 @@ maintainers:
   - W4HO <87742609+W4HO-ham@users.noreply.github.com>
 
 description: |
-  S2MPG15 is the sub PMIC paired with Google's Tensor G4 and is reached
+  S2MPG15 is the sub PMIC paired with Google's Tensor G3 and G4 and is reached
   through ACPM. Its LDOs supply the AoC sensors, the GNSS receiver, the
   camera sensors and the fingerprint sensor.
   Interrupt, meter, GPIO and RTC functions are not described here.

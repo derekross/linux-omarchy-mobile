@@ -10,7 +10,7 @@ maintainers:
   - W4HO <87742609+W4HO-ham@users.noreply.github.com>
 
 description: |
-  The sub-PMIC paired with Google's Tensor G4. LDO5S and LDO7S supply the
+  The sub-PMIC paired with Google's Tensor G3 and G4. LDO5S and LDO7S supply the
   AoC sensors, LDO9S, LDO10S and LDO11S the GNSS receiver's core, RF front
   end and auxiliary supply, LDO12S the camera sensors' 1.8 V and LDO15S the
   fingerprint sensor's 3.3 V. Enable control and voltage readback are
