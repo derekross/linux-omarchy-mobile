@@ -53,6 +53,17 @@
 		};
 	};
 
+	/*
+	 * The handshake lines of the Kepler GNSS core in the S5300 modem
+	 * (its SPI device is on spi21): the core's request to the host,
+	 * which is also the host's interrupt, and the host's request to it.
+	 */
+	gnss {
+		compatible = "samsung,exynos-gnss";
+		gnss2ap-spi-gpios = <&gpa5 4 GPIO_ACTIVE_HIGH>;
+		ap2gnss-spi-gpios = <&gpp2 3 GPIO_ACTIVE_HIGH>;
+	};
+
 	gpio-keys {
 		compatible = "gpio-keys";
 
@@ -779,6 +790,27 @@
 	};
 };
 
+/*
+ * The Kepler GNSS core's data link, 64-byte blocks on USI3 of HSI0. The bus
+ * keeps zumapro's port configuration: a 64-byte block then moves in one
+ * piece (with gs101's, the controller driver cuts it into 60 and 4 bytes,
+ * and the second piece sometimes times out). Feedback delay 0 is stock's.
+ * The bus has no pin group and runs on the bootloader's pin state.
+ */
+&spi21 {
+	status = "okay";
+
+	gnss@0 {
+		compatible = "samsung,gnss-spi";
+		reg = <0>;
+		spi-max-frequency = <3125000>;
+
+		controller-data {
+			samsung,spi-feedback-delay = <0>;
+		};
+	};
+};
+
 &sysreg_apm {
 	status = "okay";
 };
@@ -873,6 +905,10 @@
 &usi2_hsi0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&touch_reset_held>;
+	status = "okay";
+};
+
+&usi3_hsi0 {
 	status = "okay";
 };
 
