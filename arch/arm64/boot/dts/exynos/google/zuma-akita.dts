@@ -121,6 +121,32 @@
 };
 
 /*
+ * The main PMIC, behind the ACPM firmware. Its regulators are described
+ * with their consumers, which run them through the firmware. The touch
+ * controller's avdd is 3.0 V here (the stock phone's LDO4M), not the
+ * Pixel 8 Pro's 3.3 V.
+ */
+&acpm_ipc {
+	pmic-1 {
+		compatible = "samsung,s2mpg14-pmic";
+
+		regulators {
+			touch_avdd: ldo4m {
+				regulator-name = "touch-avdd";
+				regulator-min-microvolt = <3000000>;
+				regulator-max-microvolt = <3000000>;
+			};
+
+			touch_vdd: ldo25m {
+				regulator-name = "touch-vdd";
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+			};
+		};
+	};
+};
+
+/*
  * Behind the init's storage guard (only slot B's boot images and userdata
  * writable), which sets every partition read-only before anything mounts
  * them.
