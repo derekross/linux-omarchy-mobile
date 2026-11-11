@@ -769,6 +769,12 @@
 			};
 		};
 
+		/* Latches the S2MPG14 PMIC's in-band interrupt (GIC SPI 74). */
+		sysreg_vgpio2ap: syscon@15090000 {
+			compatible = "google,zuma-vgpio2ap-sysreg", "syscon";
+			reg = <0x15090000 0x1000>;
+		};
+
 		ap2apm_mailbox: mailbox@15110000 {
 			compatible = "google,zuma-mbox", "google,gs101-mbox";
 			reg = <0x15110000 0x1000>;
