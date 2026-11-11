@@ -365,7 +365,7 @@
 				regulator-max-microvolt = <1300000>;
 			};
 
-			ldo17m {
+			s2mpg10_ldo17m: ldo17m {
 				regulator-name = "vdd085_pcie1";
 				regulator-min-microvolt = <725000>;
 				regulator-max-microvolt = <1300000>;
@@ -377,7 +377,7 @@
 				regulator-max-microvolt = <1950000>;
 			};
 
-			ldo19m {
+			s2mpg10_ldo19m: ldo19m {
 				regulator-name = "vdd18_pcie1";
 				regulator-min-microvolt = <1600000>;
 				regulator-max-microvolt = <1950000>;

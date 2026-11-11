@@ -10,6 +10,7 @@
 
 #include "gs101-pixel-common.dtsi"
 #include "gs101-bluejay-input.dtsi"
+#include "gs101-bluejay-wifi.dtsi"
 
 / {
 	model = "Bluejay";
