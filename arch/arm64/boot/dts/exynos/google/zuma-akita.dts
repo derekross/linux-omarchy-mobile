@@ -7,6 +7,7 @@
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/irq.h>
 #include "zuma.dtsi"
 
 / {
@@ -146,6 +147,32 @@
 	};
 };
 
+&spi20 {
+	status = "okay";
+
+	/*
+	 * Goodix GT9895 (Berlin), the Pixel 7a's controller: both of stock's
+	 * firmware files (goodix_firmware_ak3a.bin and _ak3b.bin) say "9895".
+	 * Wired as zuma-husky's touchscreen: 10 MHz, interrupt on gpn0-0
+	 * (falling edge, stock's goodix,irq-flags = 2), reset on gpp21-2.
+	 * avdd is LDO4M at 3.0 V and vddio LDO25M at 1.8 V, as on stock.
+	 */
+	touchscreen@0 {
+		compatible = "goodix,gt9895";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+		interrupt-parent = <&gpn0>;
+		interrupts = <0 IRQ_TYPE_EDGE_FALLING>;
+		reset-gpios = <&gpp21 2 GPIO_ACTIVE_LOW>;
+		avdd-supply = <&touch_avdd>;
+		vddio-supply = <&touch_vdd>;
+		touchscreen-size-x = <1080>;
+		touchscreen-size-y = <2400>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&ts_irq &ts_reset>;
+	};
+};
+
 /*
  * Behind the init's storage guard (only slot B's boot images and userdata
  * writable), which sets every partition read-only before anything mounts
@@ -169,5 +196,9 @@
 };
 
 &usbdrd_phy {
+	status = "okay";
+};
+
+&usi2_hsi0 {
 	status = "okay";
 };
