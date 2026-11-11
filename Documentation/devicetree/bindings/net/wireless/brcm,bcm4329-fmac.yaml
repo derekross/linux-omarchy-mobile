@@ -53,6 +53,9 @@ properties:
               - cypress,cyw43012-fmac
               - infineon,cyw43439-fmac
           - const: brcm,bcm4329-fmac
+      - items:
+          - const: pci14e4,4441
+          - const: brcm,bcm4329-fmac
       - enum:
           - brcm,bcm4329-fmac
           - pci14e4,43dc  # BCM4355
