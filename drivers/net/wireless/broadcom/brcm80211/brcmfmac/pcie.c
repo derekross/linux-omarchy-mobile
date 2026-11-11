@@ -10,6 +10,7 @@
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
+#include <linux/dma-map-ops.h>
 #include <linux/interrupt.h>
 #include <linux/bcma/bcma.h>
 #include <linux/sched.h>
@@ -18,6 +19,9 @@
 #include <linux/io.h>
 #include <linux/iopoll.h>
 #include <linux/random.h>
+#include <linux/of.h>
+#include <linux/of_reserved_mem.h>
+#include <linux/swiotlb.h>
 #include <linux/unaligned.h>
 
 #include <soc.h>
@@ -379,6 +383,7 @@ struct brcmf_otp_params {
 };
 
 struct brcmf_pciedev_info {
+	bool restricted_dma;
 	enum brcmf_pcie_state state;
 	bool in_irq;
 	struct pci_dev *pdev;
@@ -1802,6 +1807,16 @@ static int brcmf_pcie_init_ringbuffers(struct brcmf_pciedev_info *devinfo)
 				BRCMF_NROF_H2D_COMMON_MSGRINGS;
 		max_completionrings = BRCMF_NROF_D2H_COMMON_MSGRINGS;
 	}
+	if (devinfo->restricted_dma &&
+	    (max_submissionrings < BRCMF_NROF_H2D_COMMON_MSGRINGS ||
+	    max_submissionrings < max_flowrings + BRCMF_NROF_H2D_COMMON_MSGRINGS ||
+	    max_submissionrings > 1024 ||
+	    max_completionrings < BRCMF_NROF_D2H_COMMON_MSGRINGS ||
+	    max_completionrings > 64)) {
+		brcmf_err(bus, "invalid ring index counts: %u/%u/%u\n",
+			  max_flowrings, max_submissionrings, max_completionrings);
+		return -EIO;
+	}
 	if (max_flowrings > 512) {
 		brcmf_err(bus, "invalid max_flowrings(%d)\n", max_flowrings);
 		return -EIO;
@@ -2528,13 +2543,59 @@ static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
 }
 
 
+static int brcmf_pcie_restricted_dma_guard(struct device *dev)
+{
+#if IS_ENABLED(CONFIG_DMA_RESTRICTED_POOL)
+	struct device_node *np;
+	struct reserved_mem *rmem;
+	struct io_tlb_mem *mem = dev->dma_io_tlb_mem;
+	bool valid;
+
+	if (!of_device_is_compatible(dev->of_node, "brcm,bcm4329-fmac"))
+		return -ENODEV;
+	np = of_parse_phandle(dev->of_node, "memory-region", 0);
+	if (!np)
+		return -ENODEV;
+	rmem = of_reserved_mem_lookup(np);
+	valid = of_device_is_available(np) &&
+		of_device_is_compatible(np, "restricted-dma-pool") &&
+		!get_dma_ops(dev) && !dev->dma_range_map &&
+		!dma_get_min_align_mask(dev) &&
+		rmem && rmem->size && rmem->base <= DMA_BIT_MASK(32) &&
+		rmem->size - 1 <= DMA_BIT_MASK(32) - rmem->base &&
+		mem && rmem->priv == mem && mem->for_alloc && mem->force_bounce &&
+		mem->defpool.start == rmem->base &&
+		mem->defpool.end == rmem->base + rmem->size;
+	of_node_put(np);
+#ifdef CONFIG_SWIOTLB_DYNAMIC
+	valid = valid && mem && !mem->can_grow;
+#endif
+	if (!valid)
+		return -EINVAL;
+	dev_info(dev, "restricted DMA attachment verified below 4 GiB\n");
+	return 0;
+#else
+	return -EOPNOTSUPP;
+#endif
+}
+
 static int brcmf_pcie_get_resource(struct brcmf_pciedev_info *devinfo)
 {
 	struct pci_dev *pdev = devinfo->pdev;
 	struct brcmf_bus *bus = dev_get_drvdata(&pdev->dev);
 	int err;
+	u64 mask = DMA_BIT_MASK(64);
+	bool restricted_dma = devinfo->restricted_dma;
 	phys_addr_t  bar0_addr, bar1_addr;
 	ulong bar1_size;
+
+	if (restricted_dma) {
+		mask = DMA_BIT_MASK(32);
+		err = brcmf_pcie_restricted_dma_guard(&pdev->dev);
+		if (err)
+			return dev_err_probe(&pdev->dev, err,
+					     "refusing unconfined restricted DMA\n");
+	}
 
 	err = pci_enable_device(pdev);
 	if (err) {
@@ -2542,14 +2603,15 @@ static int brcmf_pcie_get_resource(struct brcmf_pciedev_info *devinfo)
 		return err;
 	}
 
-	pci_set_master(pdev);
+	if (!restricted_dma)
+		pci_set_master(pdev);
 
 	/* The dongle takes 64-bit host addresses in every ring and buffer
 	 * descriptor. Without this the PCI default 32-bit mask applies, and
 	 * every allocation from a restricted DMA pool placed above 4 GiB
 	 * fails.
 	 */
-	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+	err = dma_set_mask_and_coherent(&pdev->dev, mask);
 	if (err) {
 		err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
 		if (err) {
@@ -2557,6 +2619,9 @@ static int brcmf_pcie_get_resource(struct brcmf_pciedev_info *devinfo)
 			return err;
 		}
 	}
+
+	if (restricted_dma)
+		pci_set_master(pdev);
 
 	/* Bar-0 mapped address */
 	bar0_addr = pci_resource_start(pdev, 0);
@@ -3264,6 +3329,8 @@ brcmf_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		return ret;
 
 	devinfo->pdev = pdev;
+	devinfo->restricted_dma =
+		of_property_read_bool(pdev->dev.of_node, "brcm,requires-restricted-dma");
 	spin_lock_init(&devinfo->tcm_lock);
 	mutex_init(&devinfo->rx_lock);
 	INIT_DELAYED_WORK(&devinfo->poll_work, brcmf_pcie_poll_worker);
@@ -3314,6 +3381,10 @@ brcmf_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		kfree(bus);
 		goto fail;
 	}
+
+	bus->msgbuf->max_dma_buffer_size = U32_MAX;
+	of_property_read_u32(pdev->dev.of_node, "brcm,max-dma-buffer-size",
+			     &bus->msgbuf->max_dma_buffer_size);
 
 	/* hook it all together. */
 	pcie_bus_dev->devinfo = devinfo;
