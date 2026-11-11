@@ -7,6 +7,8 @@
 #include <linux/of_irq.h>
 #include <linux/of_net.h>
 #include <linux/clk.h>
+#include <linux/etherdevice.h>
+#include <linux/hex.h>
 
 #include <defs.h>
 #include "debug.h"
@@ -63,6 +65,27 @@ static int brcmf_of_get_country_codes(struct device *dev,
 
 	settings->country_codes = cc;
 
+	return 0;
+}
+
+/* Some bootloaders provide ASCII, while of_get_mac_address() expects bytes. */
+static int brcmf_of_chosen_mac(struct device *dev, u8 *mac)
+{
+	struct device_node *config;
+	const char *value;
+	int len, ret = -EINVAL;
+
+	config = of_find_node_by_path("/chosen/config");
+	if (!config)
+		return -ENODEV;
+	value = of_get_property(config, "wlan_mac1", &len);
+	if (value && len == 18 && !value[17] && mac_pton(value, mac))
+		ret = 0;
+	else if (value && len == 13 && !value[12])
+		ret = hex2bin(mac, value, ETH_ALEN);
+	of_node_put(config);
+	if (ret || !is_valid_ether_addr(mac) || is_local_ether_addr(mac))
+		return dev_err_probe(dev, -EINVAL, "invalid provisioned WLAN MAC\n");
 	return 0;
 }
 
@@ -127,6 +150,10 @@ int brcmf_of_probe(struct device *dev, enum brcmf_bus_type bus_type,
 	err = brcmf_of_get_country_codes(dev, settings);
 	if (err)
 		brcmf_err("failed to get OF country code map (err=%d)\n", err);
+
+	if (bus_type == BRCMF_BUSTYPE_PCIE &&
+	    of_property_read_bool(np, "brcm,mac-address-from-chosen"))
+		return brcmf_of_chosen_mac(dev, settings->mac);
 
 	err = of_get_mac_address(np, settings->mac);
 	if (err == -EPROBE_DEFER)

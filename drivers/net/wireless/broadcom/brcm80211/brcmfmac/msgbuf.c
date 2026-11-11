@@ -270,6 +270,8 @@ struct brcmf_msgbuf {
 
 	u16 rx_dataoffset;
 	u32 max_rxbufpost;
+	u32 max_dma_buffer_size;
+	atomic_t tx_oversize_dropped;
 	u16 rx_metadata_offset;
 	u32 rxbufpost;
 
@@ -363,13 +365,19 @@ brcmf_msgbuf_init_pktids(u32 nr_array_entries,
 
 
 static int
-brcmf_msgbuf_alloc_pktid(struct device *dev,
+brcmf_msgbuf_alloc_pktid(struct brcmf_msgbuf *msgbuf,
 			 struct brcmf_msgbuf_pktids *pktids,
 			 struct sk_buff *skb, u16 data_offset,
 			 dma_addr_t *physaddr, u32 *idx, bool ctrl)
 {
+	struct device *dev = msgbuf->drvr->bus_if->dev;
 	struct brcmf_msgbuf_pktid *array;
 	u32 first, end, count;
+
+	if (msgbuf->max_dma_buffer_size != U32_MAX &&
+	    (data_offset > skb->len ||
+	     skb->len - data_offset > msgbuf->max_dma_buffer_size))
+		return -E2BIG;
 
 	array = pktids->array;
 
@@ -849,6 +857,7 @@ static void brcmf_msgbuf_txflow(struct brcmf_msgbuf *msgbuf, u16 flowid)
 	u64 address;
 	u8 ethhdr[ETH_HLEN];
 	bool sfh;
+	u32 max_dma_size = msgbuf->max_dma_buffer_size;
 
 	commonring = msgbuf->flowrings[flowid];
 	if (!brcmf_commonring_write_available(commonring))
@@ -864,11 +873,19 @@ static void brcmf_msgbuf_txflow(struct brcmf_msgbuf *msgbuf, u16 flowid)
 				 brcmf_flowring_qlen(flow, flowid));
 			break;
 		}
+		if (max_dma_size != U32_MAX &&
+		    (max_dma_size < BRCMF_MSGBUF_SFH_LLC_LEN ||
+		     skb->len > max_dma_size - BRCMF_MSGBUF_SFH_LLC_LEN)) {
+			atomic_inc(&msgbuf->tx_oversize_dropped);
+			brcmf_txfinalize(brcmf_get_ifp(drvr,
+				brcmf_flowring_ifidx_get(flow, flowid)), skb, false);
+			continue;
+		}
 		skb_orphan(skb);
 		memcpy(ethhdr, skb->data, ETH_HLEN);
 		sfh = brcmf_msgbuf_sfh_llc(msgbuf) &&
 		      !brcmf_msgbuf_sfh_llc_insert(skb);
-		if (brcmf_msgbuf_alloc_pktid(msgbuf->drvr->bus_if->dev,
+		if (brcmf_msgbuf_alloc_pktid(msgbuf,
 					     msgbuf->tx_pktids, skb,
 					     sfh ? 0 : ETH_HLEN,
 					     &physaddr, &pktid, false)) {
@@ -1106,7 +1123,7 @@ static u32 brcmf_msgbuf_rxbuf_data_post(struct brcmf_msgbuf *msgbuf, u32 count)
 		}
 
 		pktlen = skb->len;
-		if (brcmf_msgbuf_alloc_pktid(msgbuf->drvr->bus_if->dev,
+		if (brcmf_msgbuf_alloc_pktid(msgbuf,
 					     msgbuf->rx_pktids, skb, 0,
 					     &physaddr, &pktid, false)) {
 			dev_kfree_skb_any(skb);
@@ -1218,7 +1235,7 @@ brcmf_msgbuf_rxbuf_ctrl_post(struct brcmf_msgbuf *msgbuf, bool event_buf,
 		}
 
 		pktlen = skb->len;
-		if (brcmf_msgbuf_alloc_pktid(msgbuf->drvr->bus_if->dev,
+		if (brcmf_msgbuf_alloc_pktid(msgbuf,
 					     msgbuf->rx_pktids, skb, 0,
 					     &physaddr, &pktid, true)) {
 			dev_kfree_skb_any(skb);
@@ -1751,6 +1768,8 @@ static int brcmf_msgbuf_stats_read(struct seq_file *seq, void *data)
 	struct brcmf_flowring_ring *ring;
 	struct brcmf_flowring_hash *hash;
 
+	seq_printf(seq, "tx_oversize_dropped: %d\n",
+		   atomic_read(&msgbuf->tx_oversize_dropped));
 	commonring = msgbuf->commonrings[BRCMF_H2D_MSGRING_CONTROL_SUBMIT];
 	seq_printf(seq, "h2d_ctl_submit: rp %4u, wp %4u, depth %4u\n",
 		   commonring->r_ptr, commonring->w_ptr, commonring->depth);
@@ -1835,6 +1854,8 @@ int brcmf_proto_msgbuf_attach(struct brcmf_pub *drvr)
 		goto fail;
 
 	msgbuf->drvr = drvr;
+	msgbuf->max_dma_buffer_size = if_msgbuf->max_dma_buffer_size;
+	atomic_set(&msgbuf->tx_oversize_dropped, 0);
 	msgbuf->ioctbuf = dma_alloc_coherent(drvr->bus_if->dev,
 					     BRCMF_TX_IOCTL_MAX_MSG_SIZE,
 					     &msgbuf->ioctbuf_handle,

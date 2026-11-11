@@ -119,6 +119,7 @@ struct brcmf_bus_ops {
  *
  * @commonrings: commonrings which are always there.
  * @flowrings: commonrings which are dynamically created and destroyed for data.
+ * @max_dma_buffer_size: maximum packet DMA mapping, U32_MAX if unrestricted.
  * @rx_dataoffset: if set then all rx data has this offset.
  * @max_rxbufpost: maximum number of buffers to post for rx.
  * @max_flowrings: maximum number of tx flow rings supported.
@@ -128,6 +129,7 @@ struct brcmf_bus_ops {
 struct brcmf_bus_msgbuf {
 	struct brcmf_commonring *commonrings[BRCMF_NROF_COMMON_MSGRINGS];
 	struct brcmf_commonring **flowrings;
+	u32 max_dma_buffer_size;
 	u32 rx_dataoffset;
 	u32 max_rxbufpost;
 	u16 max_flowrings;
