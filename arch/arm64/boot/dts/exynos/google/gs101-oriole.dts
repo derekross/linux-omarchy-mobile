@@ -8,6 +8,7 @@
 
 /dts-v1/;
 
+#include <dt-bindings/leds/common.h>
 #include <dt-bindings/regulator/samsung,s2mpg10-regulator.h>
 #include "gs101-pixel-common.dtsi"
 
@@ -105,5 +106,37 @@
 		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
 		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
 		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+};
+
+/*
+ * Rear flash wiring from Google's GPL gs101-oriole-camera.dtsi. Keep the
+ * external strobe low; torch only, one sink with a conservative 6 mA cap.
+ * Enable only after a guarded qualification on the matching kernel.
+ */
+&usi7 {
+	samsung,mode = <USI_MODE_I2C>;
+	samsung,clkreq-on;
+	status = "disabled";
+};
+
+&hsi2c_7 {
+	clock-frequency = <100000>;
+	status = "disabled";
+
+	led-controller@63 {
+		compatible = "ti,lm3644";
+		reg = <0x63>;
+		enable-gpios = <&gpp23 6 GPIO_ACTIVE_HIGH>;
+		strobe-gpios = <&gpp27 0 GPIO_ACTIVE_HIGH>;
+		status = "disabled";
+
+		led {
+			function = LED_FUNCTION_TORCH;
+			color = <LED_COLOR_ID_WHITE>;
+			led-sources = <1>;
+			led-max-microamp = <6000>;
+			default-state = "off";
+		};
 	};
 };
