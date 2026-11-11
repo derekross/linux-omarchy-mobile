@@ -27,6 +27,12 @@ properties:
     maxItems: 1
     description: GPIO connected to the HWEN pin.
 
+  strobe-gpios:
+    maxItems: 1
+    description: |
+      GPIO connected to the active-high STROBE pin. When supplied, the
+      torch-only driver holds it low to prevent external flash triggering.
+
   led:
     type: object
     $ref: common.yaml#
