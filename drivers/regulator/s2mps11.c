@@ -2282,13 +2282,30 @@ static const struct regulator_ops s2mpg14_ldo_ops = {
 	.disable		= regulator_disable_regmap,
 };
 
+/*
+ * The touchscreen supplies can also be set: ABL may leave them at another
+ * voltage than the board's controller needs (3.3 V on LDO4M where the
+ * Pixel 8a's runs at 3.0 V). The selector tables are Google's
+ * (s2mpg14-regulator.c: LDO4M group 5, LDO25M group 4, 64 steps of 25 mV)
+ * and set the low six bits of the control register, as there.
+ */
+static const struct regulator_ops s2mpg14_ldo_vsel_ops = {
+	.list_voltage		= regulator_list_voltage_linear,
+	.map_voltage		= regulator_map_voltage_linear,
+	.get_voltage_sel	= regulator_get_voltage_sel_regmap,
+	.set_voltage_sel	= regulator_set_voltage_sel_regmap,
+	.is_enabled		= regulator_is_enabled_regmap,
+	.enable			= regulator_enable_regmap,
+	.disable		= regulator_disable_regmap,
+};
+
 static const struct regulator_desc s2mpg14_regulators[] = {
 	{
 		.name = "ldo4m",
 		.id = 3,
 		.of_match = of_match_ptr("ldo4m"),
 		.regulators_node = of_match_ptr("regulators"),
-		.ops = &s2mpg14_ldo_ops,
+		.ops = &s2mpg14_ldo_vsel_ops,
 		.type = REGULATOR_VOLTAGE,
 		.owner = THIS_MODULE,
 		.min_uV = 1800000,
@@ -2352,7 +2369,7 @@ static const struct regulator_desc s2mpg14_regulators[] = {
 		.id = 24,
 		.of_match = of_match_ptr("ldo25m"),
 		.regulators_node = of_match_ptr("regulators"),
-		.ops = &s2mpg14_ldo_ops,
+		.ops = &s2mpg14_ldo_vsel_ops,
 		.type = REGULATOR_VOLTAGE,
 		.owner = THIS_MODULE,
 		.min_uV = 700000,
