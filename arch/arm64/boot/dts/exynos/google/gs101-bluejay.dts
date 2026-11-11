@@ -9,6 +9,7 @@
 /dts-v1/;
 
 #include "gs101-pixel-common.dtsi"
+#include "gs101-bluejay-input.dtsi"
 
 / {
 	model = "Bluejay";
