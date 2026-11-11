@@ -33,6 +33,7 @@ properties:
               - google,zuma-peric0-sysreg
               - google,zuma-peric1-sysreg
               - google,zuma-ufs-sysreg
+              - google,zuma-vgpio2ap-sysreg
               - google,zumapro-apm-sysreg
               - google,zumapro-hsi0-sysreg
               - google,zumapro-peric0-sysreg
