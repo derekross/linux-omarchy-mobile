@@ -47,6 +47,23 @@
 		enable-active-high;
 	};
 
+	/*
+	 * The pack, for the fuel gauge and the charger cell. 4486 mAh is the
+	 * design capacity the stock phone's gauge reports
+	 * (charge_full_design); Google's charger node names 4404 mAh. The
+	 * charge limits are deliberately below stock's 4.48 V
+	 * (google,fv-max-uv): 4.2 V and about 0.3 C, as on the Pixel 8 Pro,
+	 * until a review raises them.
+	 */
+	battery: battery {
+		compatible = "simple-battery";
+		charge-full-design-microamp-hours = <4486000>;
+		voltage-max-design-microvolt = <4480000>;
+		voltage-min-design-microvolt = <3300000>;
+		constant-charge-voltage-max-microvolt = <4200000>;
+		constant-charge-current-max-microamp = <1320000>;
+	};
+
 	chosen {
 		/*
 		 * ABL requires bootargs to exist; it appends its own after these.
@@ -167,6 +184,53 @@
 	};
 };
 
+&cmu_peric1 {
+	status = "okay";
+};
+
+/*
+ * The MAX77759's fuel gauge (0x36) and PMIC (0x66, which also holds the
+ * charger at 0x69), as on the Pixel 8 Pro (Google's
+ * zuma-akita-battery.dtsi: the same addresses, interrupts gpa7-7 and
+ * gpa8-0, and a 5 mOhm sense resistor). The bus pins are pulled up, as
+ * the stock phone's live device tree has them. The Type-C controller at
+ * 0x25 isn't described yet.
+ */
+&hsi2c_11 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	fuel-gauge@36 {
+		compatible = "maxim,max77759-fg";
+		reg = <0x36>;
+		interrupts-extended = <&gpa7 7 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-0 = <&if_pmic_fg_int>;
+		pinctrl-names = "default";
+		shunt-resistor-micro-ohms = <5000>;
+		monitored-battery = <&battery>;
+	};
+
+	pmic@66 {
+		compatible = "maxim,max77759";
+		reg = <0x66>;
+		interrupts-extended = <&gpa8 0 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-0 = <&if_pmic_int>;
+		pinctrl-names = "default";
+		interrupt-controller;
+		#interrupt-cells = <2>;
+		/* for the charger cell */
+		monitored-battery = <&battery>;
+
+		gpio {
+			compatible = "maxim,max77759-gpio";
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+		};
+	};
+};
+
 &spi20 {
 	status = "okay";
 
@@ -191,6 +255,10 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&ts_irq &ts_reset>;
 	};
+};
+
+&sysreg_peric1 {
+	status = "okay";
 };
 
 /*
@@ -220,5 +288,9 @@
 };
 
 &usi2_hsi0 {
+	status = "okay";
+};
+
+&usi11 {
 	status = "okay";
 };
