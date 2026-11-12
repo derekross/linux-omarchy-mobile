@@ -189,6 +189,23 @@
 };
 
 /*
+ * The battery pack's EEPROM, as on the Pixel 8 Pro: an at,24c08 at 0x50
+ * (Google's zuma-akita-battery.dtsi, pack_bee). Byte 0x17 is the battery
+ * ID that picks the fuel gauge's model. Read-only; the bus stays off
+ * here and a bring-up overlay switches USI9 and hsi2c_9 on.
+ */
+&hsi2c_9 {
+	clock-frequency = <400000>;
+
+	eeprom@50 {
+		compatible = "atmel,24c08";
+		reg = <0x50>;
+		pagesize = <16>;
+		read-only;
+	};
+};
+
+/*
  * The MAX77759's fuel gauge (0x36) and PMIC (0x66, which also holds the
  * charger at 0x69), as on the Pixel 8 Pro (Google's
  * zuma-akita-battery.dtsi: the same addresses, interrupts gpa7-7 and
