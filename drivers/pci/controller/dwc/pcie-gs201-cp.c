@@ -762,9 +762,10 @@ static int cp_msi_setup(struct gs201_pcie_cp *cp)
 	return 0;
 }
 
-static int cp_no_d3cold_wait(struct pci_dev *pdev, void *data)
+static int cp_ep_sleep_setup(struct pci_dev *pdev, void *data)
 {
 	pdev->d3cold_delay = 0;
+	dev_pm_syscore_device(&pdev->dev, true);
 	return 0;
 }
 
@@ -848,15 +849,21 @@ static int cp_bus(struct gs201_pcie_cp *cp)
 	 * modem disconnected. The modem keeps its power across s2idle, and
 	 * its driver waits for its own link up and restores the endpoint
 	 * before any access, so that wait has nothing to wait for: keep
-	 * d3cold_delay zero below the port. Both only where system sleep with
-	 * the modem up has been tried (sleep_guard, gs201).
+	 * d3cold_delay zero below the port. The modem itself is left out of
+	 * system sleep altogether (a syscore device for the PM core): its
+	 * driver keeps the modem's power and PCI state, and the PCI core's
+	 * own suspend and resume of it (disable and save, then the power-up
+	 * read, restore and re-enable) ran behind that driver's back when a
+	 * sleep was aborted, after which the driver could not reach the modem.
+	 * All of this only where system sleep with the modem up has been
+	 * tried (sleep_guard, gs201).
 	 */
 	if (cp->data->sleep_guard) {
 		list_for_each_entry(rp, &cp->bridge->bus->devices, bus_list) {
 			rp->dev_flags |= PCI_DEV_FLAGS_NO_D3;
 			if (rp->subordinate)
 				pci_walk_bus(rp->subordinate,
-					     cp_no_d3cold_wait, NULL);
+					     cp_ep_sleep_setup, NULL);
 		}
 	}
 	pci_walk_bus(cp->bridge->bus, cp_bus_report, cp);
@@ -2345,11 +2352,13 @@ static void gs201_pcie_cp_remove(struct platform_device *pdev)
  * link_down does here. Should those paths ever race, this refuses the
  * sleep. It is a late abort, not a guard: the root port and the modem are
  * children of this device, so the PM core has already run their
- * suspend_noirq when this runs, and the PCI core has already handled
- * them (harmlessly, with PCI_DEV_FLAGS_NO_D3 on the port, see cp_bus());
- * the refusal makes the PM core resume them and the sleep fails. The PMU's isolation bit is
- * only logged: a phone whose modem never started has never isolated the
- * PHY, and must still sleep.
+ * suspend_noirq when this runs. The PCI core has handled the root port
+ * by then (harmlessly, with PCI_DEV_FLAGS_NO_D3 on it) and leaves the
+ * modem alone (a syscore device, see cp_bus()); the refusal makes the PM
+ * core resume them and the sleep fails, with the modem driver's state of
+ * the modem untouched. The PMU's isolation bit is only logged: a phone
+ * whose modem never started has never isolated the PHY, and must still
+ * sleep.
  */
 static int gs201_pcie_cp_suspend_noirq(struct device *dev)
 {
