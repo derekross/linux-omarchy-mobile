@@ -17,6 +17,12 @@ description:
 
 allOf:
   - $ref: /schemas/net/wireless/wireless-controller.yaml#
+  - if:
+      required:
+        - brcm,requires-restricted-dma
+    then:
+      required:
+        - memory-region
 
 properties:
   compatible:
@@ -46,6 +52,9 @@ properties:
               - cypress,cyw4373-fmac
               - cypress,cyw43012-fmac
               - infineon,cyw43439-fmac
+          - const: brcm,bcm4329-fmac
+      - items:
+          - const: pci14e4,4441
           - const: brcm,bcm4329-fmac
       - enum:
           - brcm,bcm4329-fmac
@@ -125,6 +134,27 @@ properties:
       platforms with different antenna configs to have different firmware and/or
       NVRAM. This would normally be filled in by the bootloader from platform
       configuration data.
+
+  brcm,requires-restricted-dma:
+    type: boolean
+    description:
+      The PCIe endpoint has no qualified IOMMU isolation. Require an attached,
+      non-expanding restricted DMA pool wholly addressable with a 32-bit DMA
+      mask before allowing bus mastering. The pool geometry comes from the
+      memory-region reference, not a board-specific address in the driver.
+
+  brcm,max-dma-buffer-size:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    minimum: 2048
+    maximum: 65536
+    description: Maximum packet buffer size qualified for the restricted pool.
+
+  brcm,mac-address-from-chosen:
+    type: boolean
+    description:
+      The bootloader publishes the provisioned WLAN MAC as an ASCII string
+      in /chosen/config/wlan_mac1, in colon-separated or twelve-hex-digit form.
+      Read that value instead of a binary MAC property on the endpoint.
 
   memory-region:
     maxItems: 1
