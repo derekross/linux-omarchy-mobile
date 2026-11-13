@@ -18,6 +18,7 @@ properties:
   compatible:
     oneOf:
       - enum:
+          - google,gs201-mfc              # Google GS201 (MFC v15)
           - samsung,exynos5433-mfc        # Exynos5433
           - samsung,mfc-v5                # Exynos4
           - samsung,mfc-v6                # Exynos5
@@ -164,6 +165,7 @@ allOf:
         compatible:
           contains:
             enum:
+              - google,gs201-mfc
               - tesla,fsd-mfc
     then:
       properties:
