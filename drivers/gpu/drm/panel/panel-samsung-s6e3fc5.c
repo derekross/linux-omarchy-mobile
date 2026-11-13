@@ -113,59 +113,12 @@ static void s6e3fc5_reset(struct s6e3fc5 *ctx)
 /* Cold init after reset, for PVT panels (Google's s6e3fc5_init_cmds). */
 static void s6e3fc5_init(struct mipi_dsi_multi_context *ctx)
 {
+	/* Google's s6e3fc5_init_cmds: sleep out, TE on, 1080x2400 window. */
 	mipi_dsi_dcs_exit_sleep_mode_multi(ctx);
-	mipi_dsi_msleep(ctx, 10);
-
-	s6e3fc5_unlock_lvl2(ctx);
-	/* disable black insertion */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xbb, 0x0b, 0x04, 0x04, 0x41, 0x3d, 0x0c);
-	/* delete toggle */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x58, 0x94);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0x94, 0x0c, 0x60, 0x0c, 0x60);
-	s6e3fc5_sync_begin(ctx);
-	/* VLIN1 7.9 V */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x12, 0xb1);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb1, 0x08);
-	/* VGH 7.4 V */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x0e, 0xf4);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xf4, 0x18, 0x18, 0x18, 0x18, 0x18);
-	/* VREG 4.5 V */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x31, 0xf4);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xf4, 0x00, 0x00, 0x00, 0x00, 0x00);
-	s6e3fc5_sync_end(ctx);
-	s6e3fc5_lock_lvl2(ctx);
-	mipi_dsi_msleep(ctx, 110);
-
-	/* TE on, a bare 0x35 as the vendor driver sends it */
-	mipi_dsi_dcs_write_seq_multi(ctx, MIPI_DCS_SET_TEAR_ON);
-
-	s6e3fc5_unlock_lvl2(ctx);
-	/* AOD SAP settings */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x04, 0xf6);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xf6, 0x5a);
-	/* enable SP */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x02, 0xf3, 0x68);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0x68, 0x09, 0x09, 0x09, 0x0a, 0x0a, 0x0a);
-	/* FFC: 165 MHz, 1% tolerance */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x36, 0xc5);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xc5, 0x11, 0x10, 0x50, 0x05, 0x4e, 0x74);
-	/* NS transition flicker setting */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xab, 0x83);
-	/* TSP sync auto mode */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x3c, 0xb9);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb9, 0x19, 0x09);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x40, 0xb9);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb9, 0x30, 0x03);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x05, 0xf2);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xf2, 0xc8, 0xc0);
-	/* frame insertion count */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x10, 0xbd);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xbd, 0x00);
-	s6e3fc5_freq_update(ctx);
-	s6e3fc5_lock_lvl2(ctx);
-
-	mipi_dsi_dcs_set_column_address_multi(ctx, 0, 1440 - 1);
-	mipi_dsi_dcs_set_page_address_multi(ctx, 0, 3120 - 1);
+	mipi_dsi_msleep(ctx, 120);
+	mipi_dsi_dcs_write_seq_multi(ctx, MIPI_DCS_SET_TEAR_ON, 0x00);
+	mipi_dsi_dcs_set_column_address_multi(ctx, 0, 1080 - 1);
+	mipi_dsi_dcs_set_page_address_multi(ctx, 0, 2400 - 1);
 }
 
 /*
@@ -179,57 +132,14 @@ static void s6e3fc5_init(struct mipi_dsi_multi_context *ctx)
 static void s6e3fc5_write_rate(struct mipi_dsi_multi_context *ctx,
 			       unsigned int hz)
 {
-	const bool early_exit = hz == 120;
-
-	s6e3fc5_unlock_lvl2(ctx);
-	/* TE width, HS */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x04, 0xb9);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb9, 0x0c, 0x42, 0x00, 0x1b,
-				     0x0c, 0x42, 0x00, 0x1b,
-				     0x0c, 0x42, 0x00, 0x1b);
-	/* TE: fixed (0x51) with early exit, changeable (0x04) without */
-	if (early_exit)
-		mipi_dsi_dcs_write_seq_multi(ctx, 0xb9, 0x51);
+	/* Google's s6e3fc5_change_frequency: test key, 0x60, update. */
+	mipi_dsi_dcs_write_seq_multi(ctx, 0xf0, 0x5a, 0x5a);
+	if (hz == 90)
+		mipi_dsi_dcs_write_seq_multi(ctx, 0x60, 0x00, 0x00);
 	else
-		mipi_dsi_dcs_write_seq_multi(ctx, 0xb9, 0x04);
-	/* TE2: the same option, rising edge 0x10, falling edge 0x30 */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x42, 0xf2);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xf2, 0x0d);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x01, 0xb9);
-	if (early_exit) {
-		mipi_dsi_dcs_write_seq_multi(ctx, 0xb9, 0x51);
-		mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x22, 0xb9);
-		mipi_dsi_dcs_write_seq_multi(ctx, 0xb9, 0x00, 0x10, 0x00, 0x30,
-					     0x00, 0x10, 0x00, 0x30);
-	} else {
-		mipi_dsi_dcs_write_seq_multi(ctx, 0xb9, 0x04);
-		mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x1e, 0xb9);
-		mipi_dsi_dcs_write_seq_multi(ctx, 0xb9, 0x00, 0x10, 0x00, 0x30);
-	}
-	/* IRC on */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x01, 0x9b, 0x92);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0x92, 0x21);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x02, 0xf3, 0x68);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0x68, 0x09, 0x09, 0x09, 0x0a, 0x0a, 0x0a);
-	/* HS operation */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xf2, 0x01);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0x60, 0x00);
-	/* early exit on/off */
-	if (early_exit)
-		mipi_dsi_dcs_write_seq_multi(ctx, 0xbd, 0x21, 0x01, 0x83, 0x03, 0x03);
-	else
-		mipi_dsi_dcs_write_seq_multi(ctx, 0xbd, 0x21, 0x81, 0x83, 0x03, 0x03);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x1e, 0xbd);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xbd, 0x00, 0x00, 0x00, 0x02,
-				     0x00, 0x06, 0x00, 0x16);
-	/* manual frame rate: 0x00 = 120 Hz, 0x01 = 60 Hz */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xbd, 0x21);
-	if (early_exit)
-		mipi_dsi_dcs_write_seq_multi(ctx, 0x60, 0x00);
-	else
-		mipi_dsi_dcs_write_seq_multi(ctx, 0x60, 0x01);
+		mipi_dsi_dcs_write_seq_multi(ctx, 0x60, 0x08, 0x00);
 	s6e3fc5_freq_update(ctx);
-	s6e3fc5_lock_lvl2(ctx);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0xf0, 0xa5, 0xa5);
 }
 
 /* DSC on, then the PPS generated from the lynx DSC configuration. */
@@ -245,32 +155,12 @@ static void s6e3fc5_dsc(struct mipi_dsi_multi_context *ctx)
 
 static void s6e3fc5_display_on(struct mipi_dsi_multi_context *ctx)
 {
-	s6e3fc5_unlock_lvl2(ctx);
-	s6e3fc5_sync_begin(ctx);
-	/* AMP type change */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x4f, 0xf4);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xf4, 0x70);
-	/* VREG 6.8 V */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x31, 0xf4);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xf4, 0x17, 0x17, 0x17, 0x17, 0x17);
-	s6e3fc5_sync_end(ctx);
-	s6e3fc5_lock_lvl2(ctx);
 	mipi_dsi_dcs_set_display_on_multi(ctx);
 }
 
 static void s6e3fc5_display_off(struct mipi_dsi_multi_context *ctx)
 {
 	mipi_dsi_dcs_set_display_off_multi(ctx);
-	s6e3fc5_unlock_lvl2(ctx);
-	s6e3fc5_sync_begin(ctx);
-	/* VREG 4.5 V */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x31, 0xf4);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xf4, 0x00, 0x00, 0x00, 0x00, 0x00);
-	/* AMP type change */
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xb0, 0x00, 0x4f, 0xf4);
-	mipi_dsi_dcs_write_seq_multi(ctx, 0xf4, 0x50);
-	s6e3fc5_sync_end(ctx);
-	s6e3fc5_lock_lvl2(ctx);
 }
 
 static int s6e3fc5_prepare(struct drm_panel *panel)
@@ -397,7 +287,7 @@ static int s6e3fc5_set_refresh_rate(struct drm_panel *panel, unsigned int hz)
 	.type = DRM_MODE_TYPE_DRIVER | (flags),				\
 }
 
-/* 1440x3120 at 60 Hz (the vendor driver's preferred mode) and 120 Hz */
+/* 1080x2400 at 60 Hz (the vendor driver's preferred mode) and 90 Hz */
 static const struct drm_display_mode s6e3fc5_modes[] = {
 	S6E3FC5_MODE(168498, DRM_MODE_TYPE_PREFERRED),
 	S6E3FC5_MODE(252747, 0),
@@ -703,15 +593,6 @@ static int s6e3fc5_probe(struct mipi_dsi_device *dsi)
 	 * bootloader's running panel over directly instead.
 	 */
 	ret = gpiod_direction_output(ctx->reset_gpio, 0);
-	if (ret == -EOPNOTSUPP) {
-		/*
-		 * gpp23 is behind gpio-shared-proxy on lynx and cannot set
-		 * direction. Test-only: trust the bootloader's running panel.
-		 */
-		dev_warn(dev, "reset line is shared; leaving it as the bootloader set it\n");
-		ctx->reset_gpio = NULL;
-		ret = 0;
-	}
 	if (ret < 0)
 		return dev_err_probe(dev, ret, "failed to set up reset-gpios\n");
 	handover = true;
