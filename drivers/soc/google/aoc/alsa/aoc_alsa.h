@@ -344,6 +344,8 @@ struct aoc_chip {
 #if !(IS_ENABLED(CONFIG_SOC_GS101) || IS_ENABLED(CONFIG_SOC_GS201))
 	struct CMD_AUDIO_OUTPUT_DECODER_CFG_SPEED decoder_cfg_speed;
 #endif
+	/* zuma AoC: the deep buffer drops pre-start data (from the aoc node's compatible) */
+	bool deep_buffer_drops_prefill;
 };
 
 struct aoc_alsa_stream {
@@ -398,6 +400,10 @@ struct aoc_alsa_stream {
 	struct workqueue_struct *incall_period_wq;
 	struct workqueue_struct *voip_period_wq;
 	struct work_struct pcm_period_work;
+	/* zuma only: data written before the start, written again once the AoC has started */
+	void *prefill;
+	size_t prefill_len;
+	size_t prefill_cap;
 };
 
 bool aoc_support_interrupt_idx(int idx);
