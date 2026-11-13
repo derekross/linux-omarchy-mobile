@@ -301,6 +301,7 @@ struct s5p_mfc_priv_buf {
  * @fw_get_done:	flag set when request_firmware() is complete and
  *			copied into fw_buf
  * @risc_on:		flag indicates RISC is on or off
+ * @dynamic_dpb:	decoder hands one DPB to the firmware per frame (MFCv15)
  *
  */
 struct s5p_mfc_dev {
@@ -348,6 +349,7 @@ struct s5p_mfc_dev {
 	enum s5p_mfc_fw_ver fw_ver;
 	bool fw_get_done;
 	bool risc_on; /* indicates if RISC is on or off */
+	bool dynamic_dpb;
 };
 
 /*
@@ -592,6 +594,7 @@ struct s5p_mfc_codec_ops {
  * @dst_bufs_cnt:	number of allocated destination buffers
  * @sequence:		counter for the sequence number for v4l2
  * @dec_dst_flag:	flags for buffers queued in the hardware
+ * @dpb_used:		DPBs still held by the firmware (dynamic DPB, MFCv15)
  * @dec_src_buf_size:	size of the buffer for source buffers in decoding
  * @codec_mode:		number of codec mode used by MFC hw
  * @slice_interface:	slice interface flag
@@ -685,6 +688,7 @@ struct s5p_mfc_ctx {
 
 	unsigned int sequence;
 	unsigned long dec_dst_flag;
+	unsigned long dpb_used;
 	size_t dec_src_buf_size;
 
 	/* Control values */

@@ -1134,6 +1134,7 @@ static void s5p_mfc_stop_streaming(struct vb2_queue *q)
 		ctx->dst_queue_cnt = 0;
 		ctx->dpb_flush_flag = 1;
 		ctx->dec_dst_flag = 0;
+		ctx->dpb_used = 0;
 		if (IS_MFCV6_PLUS(dev) && (ctx->state == MFCINST_RUNNING)) {
 			ctx->state = MFCINST_FLUSH;
 			set_work_bit_irqsave(ctx);
