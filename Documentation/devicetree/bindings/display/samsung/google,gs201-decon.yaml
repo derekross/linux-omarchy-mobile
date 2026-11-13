@@ -23,6 +23,7 @@ properties:
     oneOf:
       - enum:
           - google,gs201-decon
+          - google,gs201-decon-lynx
           - google,zuma-decon
           - google,zumapro-decon
       - items:
