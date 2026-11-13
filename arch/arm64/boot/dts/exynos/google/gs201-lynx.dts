@@ -68,6 +68,29 @@
 	};
 
 	/*
+	 * Panel rails: vci is S2MPG12 LDO27M and vddi is S2MPG13 BUCKA.
+	 * Neither PMIC has a regulator driver yet, so these stay as the
+	 * bootloader left them (always on, no control).
+	 */
+	panel_vddi: regulator-panel-vddi {
+		compatible = "regulator-fixed";
+		regulator-name = "panel-vddi";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	panel_vci: regulator-panel-vci {
+		compatible = "regulator-fixed";
+		regulator-name = "panel-vci";
+		regulator-min-microvolt = <3000000>;
+		regulator-max-microvolt = <3000000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	/*
 	 * ABL adds sec_dram, sec_pt and pkvm_guest_firmware to this tree
 	 * itself. Stock's tui, mfc_fw and famodel are pools the kernel
 	 * places at boot (size and alloc-ranges, no fixed address), so
@@ -324,9 +347,9 @@
 	panel: panel@0 {
 		compatible = "samsung,s6e3fc5";
 		reg = <0>;
-		reset-gpios = <&gpp23 2 GPIO_ACTIVE_LOW>;
-		vddio-supply = <&ldo25m>;
-		avdd-supply = <&ldo26m>;
+		reset-gpios = <&gpa7 1 GPIO_ACTIVE_LOW>;
+		vddio-supply = <&panel_vddi>;
+		avdd-supply = <&panel_vci>;
 		width-mm = <70>;
 		height-mm = <149>;
 	};
