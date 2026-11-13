@@ -966,7 +966,8 @@ static int s5p_mfc_queue_setup(struct vb2_queue *vq,
 		/* Setup buffer count */
 		if (*buf_count < ctx->pb_count)
 			*buf_count = ctx->pb_count;
-		if (*buf_count > ctx->pb_count + MFC_MAX_EXTRA_DPB)
+		if (!dev->dynamic_dpb &&
+		    *buf_count > ctx->pb_count + MFC_MAX_EXTRA_DPB)
 			*buf_count = ctx->pb_count + MFC_MAX_EXTRA_DPB;
 		if (*buf_count > MFC_MAX_BUFFERS)
 			*buf_count = MFC_MAX_BUFFERS;
