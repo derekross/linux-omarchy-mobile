@@ -2013,6 +2013,20 @@
 			};
 		};
 
+		/*
+		 * MFC v15.6 video codec. Its two System MMUs (0x1c870000,
+		 * 0x1c8a0000) are left in bypass and CMU_MFC is not described
+		 * yet, so the firmware and its buffers need memory below 4 GiB
+		 * from the board's memory-region, and the block runs on the
+		 * clock and power domain the bootloader leaves on.
+		 */
+		mfc: video-codec@1c8d0000 {
+			compatible = "google,gs201-mfc";
+			reg = <0x1c8d0000 0x10000>;
+			interrupts = <GIC_SPI 504 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+
 		gpu: gpu@28000000 {
 			compatible = "google,gs201-mali", "arm,mali-valhall-csf";
 			reg = <0x28000000 0x480000>;
