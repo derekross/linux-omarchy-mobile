@@ -133,6 +133,14 @@ static const struct gs_dsim_rate gs_dsim_rates[][2] = {
 		{ .hz = 60, .underrun = 0x2235, .te_ctrl1 = 0x34c53c1e },
 		{ .hz = 120, .underrun = 0x06a7, .te_ctrl1 = 0x1a621e0f },
 	},
+	/*
+	 * Pixel 7, S6E3FC3 P10: the bootloader's 60 Hz pair, read on the
+	 * phone. Its 90 Hz has no timers yet, so the second slot stays
+	 * empty and the link is never switched.
+	 */
+	{
+		{ .hz = 60, .underrun = 0x1cf8, .te_ctrl1 = 0x2a82306d },
+	},
 };
 
 struct gs_dsim {
