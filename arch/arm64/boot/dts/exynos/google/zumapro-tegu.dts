@@ -230,6 +230,10 @@
 				regulator-name = "eusb-vdda12";
 			};
 
+			eusb_repeater_vdd: ldo19m {
+				regulator-name = "eusb-repeater-vdd";
+			};
+
 			touch_vdd: ldo25m {
 				regulator-name = "touch-vdd";
 			};
@@ -545,6 +549,21 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&hsi2c9_bus>;
 	status = "okay";
+
+	usb_repeater: usb-repeater@3e {
+		compatible = "ti,tusb2e11";
+		reg = <0x3e>;
+		#phy-cells = <0>;
+		vdd3v3-supply = <&eusb_repeater_vdd>;
+		ti,uart-port1 = <0x0a>;
+		ti,usb2-tx-adjust = <0x4f>;
+		ti,usb2-hs-tx-pre-emphasis = <0x3c>;
+		ti,usb2-rx-adjust = <0x92>;
+		ti,usb2-disconnect-squelch = <0x86>;
+		ti,eusb2-hs-tx-pre-emphasis = <0x00>;
+		ti,eusb2-tx-adjust = <0x0b>;
+		ti,eusb2-rx-adjust = <0x60>;
+	};
 
 	haptic-driver@43 {
 		compatible = "cirrus,cs40l26a";
@@ -891,6 +910,7 @@
 &usb_hsphy {
 	vdd-supply = <&eusb_vdd>;
 	vdda12-supply = <&eusb_vdda12>;
+	phys = <&usb_repeater>;
 	status = "okay";
 };
 
