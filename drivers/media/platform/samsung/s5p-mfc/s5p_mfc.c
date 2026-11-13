@@ -540,10 +540,24 @@ static void s5p_mfc_handle_seq_done(struct s5p_mfc_ctx *ctx,
 		if (FW_HAS_E_MIN_SCRATCH_BUF(dev))
 			ctx->scratch_buf_size = s5p_mfc_hw_call(dev->mfc_ops,
 						get_min_scratch_buf_size, dev);
-		if (ctx->img_width == 0 || ctx->img_height == 0)
+		if (ctx->img_width == 0 || ctx->img_height == 0) {
 			ctx->state = MFCINST_ERROR;
-		else
+		} else {
+			static const struct v4l2_event ev_src_ch = {
+				.type = V4L2_EVENT_SOURCE_CHANGE,
+				.u.src_change.changes =
+					V4L2_EVENT_SRC_CH_RESOLUTION,
+			};
+
 			ctx->state = MFCINST_HEAD_PARSED;
+			/*
+			 * The stateful decoder interface (dev-decoder.rst,
+			 * "Initialization"): the client learns the stream's
+			 * format from this event, not by calling G_FMT on
+			 * CAPTURE in a loop.
+			 */
+			v4l2_event_queue_fh(&ctx->fh, &ev_src_ch);
+		}
 
 		if ((ctx->codec_mode == S5P_MFC_CODEC_H264_DEC ||
 			ctx->codec_mode == S5P_MFC_CODEC_H264_MVC_DEC) &&
