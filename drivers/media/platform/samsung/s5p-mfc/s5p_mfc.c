@@ -381,6 +381,9 @@ static void s5p_mfc_handle_frame(struct s5p_mfc_ctx *ctx,
 				& S5P_FIMV_DEC_STATUS_DECODING_STATUS_MASK;
 	dec_frame_status = s5p_mfc_hw_call(dev->mfc_ops, get_dec_status, dev)
 				& S5P_FIMV_DEC_STATUS_DECODING_STATUS_MASK;
+	/* DPBs the firmware still holds (references or not yet displayed) */
+	if (dev->dynamic_dpb)
+		ctx->dpb_used = readl(dev->mfc_regs->d_used_dpb_flag_lower);
 	res_change = (s5p_mfc_hw_call(dev->mfc_ops, get_dspl_status, dev)
 				& S5P_FIMV_DEC_STATUS_RESOLUTION_MASK)
 				>> S5P_FIMV_DEC_STATUS_RESOLUTION_SHIFT;
@@ -1358,6 +1361,7 @@ static int s5p_mfc_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Failed to get device MFC hardware variant information\n");
 		return -ENOENT;
 	}
+	dev->dynamic_dpb = IS_MFCV15(dev);
 
 	dev->regs_base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(dev->regs_base))

@@ -654,7 +654,18 @@ static int s5p_mfc_set_dec_frame_buffer_v6(struct s5p_mfc_ctx *ctx)
 	mfc_debug(2, "Frame size: %d ch: %d mv: %d\n",
 			frame_size, frame_size_ch, frame_size_mv);
 
-	for (i = 0; i < ctx->total_dpb_count; i++) {
+	/*
+	 * Dynamic DPB: the DPB addresses are given one per frame at
+	 * FRAME_START (s5p_mfc_set_dynamic_dpb_v15()), not here.
+	 */
+	if (dev->dynamic_dpb) {
+		writel(readl(mfc_regs->d_init_buffer_options) |
+		       S5P_FIMV_D_INIT_BUF_OPT_DYNAMIC_DPB_V15,
+		       mfc_regs->d_init_buffer_options);
+		ctx->dpb_used = 0;
+	}
+
+	for (i = 0; !dev->dynamic_dpb && i < ctx->total_dpb_count; i++) {
 		/* Bank2 */
 		mfc_debug(2, "Luma %d: %zx\n", i,
 					ctx->dst_bufs[i].cookie.raw.luma);
@@ -1826,6 +1837,57 @@ static inline void s5p_mfc_set_flush(struct s5p_mfc_ctx *ctx, int flush)
 	}
 }
 
+/*
+ * Dynamic DPB (MFCv15): pick a capture buffer queued in the driver that the
+ * firmware does not hold any more, as the vendor driver does
+ * (mfc_search_for_dpb()). If the firmware holds all of them it releases one
+ * by displaying it, so any queued buffer may be given then.
+ */
+static struct s5p_mfc_buf *s5p_mfc_search_dynamic_dpb_v15(struct s5p_mfc_ctx *ctx)
+{
+	struct s5p_mfc_buf *buf;
+
+	list_for_each_entry(buf, &ctx->dst_queue, list)
+		if (!(ctx->dpb_used & BIT(buf->b->vb2_buf.index)))
+			return buf;
+
+	if (!list_empty(&ctx->dst_queue) &&
+	    hweight_long(ctx->dpb_used) >= ctx->total_dpb_count)
+		return list_first_entry(&ctx->dst_queue, struct s5p_mfc_buf,
+					list);
+	return NULL;
+}
+
+static void s5p_mfc_set_dynamic_dpb_v15(struct s5p_mfc_ctx *ctx)
+{
+	struct s5p_mfc_dev *dev = ctx->dev;
+	const struct s5p_mfc_regs *mfc_regs = dev->mfc_regs;
+	struct s5p_mfc_buf *buf;
+	u32 set = 0;
+	int i;
+
+	buf = s5p_mfc_search_dynamic_dpb_v15(ctx);
+	if (buf) {
+		i = buf->b->vb2_buf.index;
+		set = BIT(i);
+		writel(buf->cookie.raw.luma, mfc_regs->d_first_plane_dpb + i * 4);
+		writel(buf->cookie.raw.chroma,
+		       mfc_regs->d_second_plane_dpb + i * 4);
+		if (ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YUV420M ||
+		    ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YVU420M)
+			writel(buf->cookie.raw.chroma_1,
+			       mfc_regs->d_third_plane_dpb + i * 4);
+		mfc_debug(2, "Dynamic DPB %d: %zx (used %#lx)\n", i,
+			  buf->cookie.raw.luma, ctx->dpb_used);
+	}
+
+	writel(0, mfc_regs->d_nal_start_options);
+	writel(set, mfc_regs->d_dynamic_dpb_flag_lower);
+	writel(0, mfc_regs->d_dynamic_dpb_flag_upper);
+	writel(set, mfc_regs->d_available_dpb_flag_lower);
+	writel(0, mfc_regs->d_available_dpb_flag_upper);
+}
+
 /* Decode a single frame */
 static int s5p_mfc_decode_one_frame_v6(struct s5p_mfc_ctx *ctx,
 			enum s5p_mfc_decode_arg last_frame)
@@ -1833,7 +1895,10 @@ static int s5p_mfc_decode_one_frame_v6(struct s5p_mfc_ctx *ctx,
 	struct s5p_mfc_dev *dev = ctx->dev;
 	const struct s5p_mfc_regs *mfc_regs = dev->mfc_regs;
 
-	writel(ctx->dec_dst_flag, mfc_regs->d_available_dpb_flag_lower);
+	if (dev->dynamic_dpb)
+		s5p_mfc_set_dynamic_dpb_v15(ctx);
+	else
+		writel(ctx->dec_dst_flag, mfc_regs->d_available_dpb_flag_lower);
 	writel(ctx->slice_interface & 0x1, mfc_regs->d_slice_if_enable);
 
 	writel(ctx->inst_no, mfc_regs->instance_id);
@@ -1967,6 +2032,10 @@ static inline int s5p_mfc_run_dec_frame(struct s5p_mfc_ctx *ctx)
 	/* Frames are being decoded */
 	if (list_empty(&ctx->src_queue)) {
 		mfc_debug(2, "No src buffers.\n");
+		return -EAGAIN;
+	}
+	if (dev->dynamic_dpb && !s5p_mfc_search_dynamic_dpb_v15(ctx)) {
+		mfc_debug(2, "No free DPB (used %#lx).\n", ctx->dpb_used);
 		return -EAGAIN;
 	}
 	/* Get the next source buffer */
@@ -2655,6 +2724,17 @@ const struct s5p_mfc_regs *s5p_mfc_init_regs_v6_plus(struct s5p_mfc_dev *dev)
 	R(e_hevc_lf_beta_offset_div2, S5P_FIMV_E_HEVC_LF_BETA_OFFSET_DIV2_V10);
 	R(e_hevc_lf_tc_offset_div2, S5P_FIMV_E_HEVC_LF_TC_OFFSET_DIV2_V10);
 	R(e_hevc_nal_control, S5P_FIMV_E_HEVC_NAL_CONTROL_V10);
+
+	if (!IS_MFCV15(dev))
+		goto done;
+
+	/* Dynamic DPB registers of MFC v15 */
+	R(d_nal_start_options, S5P_FIMV_D_NAL_START_OPTIONS_V15);
+	R(d_available_dpb_flag_upper, S5P_FIMV_D_AVAILABLE_DPB_FLAG_UPPER_V15);
+	R(d_dynamic_dpb_flag_upper, S5P_FIMV_D_DYNAMIC_DPB_FLAG_UPPER_V15);
+	R(d_dynamic_dpb_flag_lower, S5P_FIMV_D_DYNAMIC_DPB_FLAG_LOWER_V15);
+	R(d_used_dpb_flag_upper, S5P_FIMV_D_USED_DPB_FLAG_UPPER_V15);
+	R(d_used_dpb_flag_lower, S5P_FIMV_D_USED_DPB_FLAG_LOWER_V15);
 
 done:
 	return &mfc_regs;
