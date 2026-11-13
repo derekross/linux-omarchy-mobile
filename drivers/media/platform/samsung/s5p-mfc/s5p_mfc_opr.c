@@ -35,7 +35,7 @@ int s5p_mfc_alloc_priv_buf(struct s5p_mfc_dev *dev, unsigned int mem_ctx,
 			   struct s5p_mfc_priv_buf *b)
 {
 	unsigned int bits = dev->mem_size >> PAGE_SHIFT;
-	unsigned int count = b->size >> PAGE_SHIFT;
+	unsigned int count = DIV_ROUND_UP(b->size, PAGE_SIZE);
 	unsigned int align = (SZ_64K >> PAGE_SHIFT) - 1;
 	unsigned int start, offset;
 
@@ -97,7 +97,7 @@ void s5p_mfc_release_priv_buf(struct s5p_mfc_dev *dev,
 {
 	if (dev->mem_virt) {
 		unsigned int start = (b->dma - dev->mem_base) >> PAGE_SHIFT;
-		unsigned int count = b->size >> PAGE_SHIFT;
+		unsigned int count = DIV_ROUND_UP(b->size, PAGE_SIZE);
 
 		bitmap_clear(dev->mem_bitmap, start, count);
 	} else {
