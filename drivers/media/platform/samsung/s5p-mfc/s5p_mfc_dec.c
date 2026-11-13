@@ -61,14 +61,14 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode     = S5P_MFC_CODEC_NONE,
 		.type           = MFC_FMT_RAW,
 		.num_planes     = 3,
-		.versions       = MFC_V12_BIT,
+		.versions       = MFC_V12_BIT | MFC_V15_BIT,
 	},
 	{
 		.fourcc         = V4L2_PIX_FMT_YVU420M,
 		.codec_mode     = S5P_MFC_CODEC_NONE,
 		.type           = MFC_FMT_RAW,
 		.num_planes     = 3,
-		.versions       = MFC_V12_BIT
+		.versions       = MFC_V12_BIT | MFC_V15_BIT
 	},
 	{
 		.fourcc		= V4L2_PIX_FMT_H264,
@@ -1002,6 +1002,32 @@ static int s5p_mfc_queue_setup(struct vb2_queue *vq,
 	return 0;
 }
 
+/*
+ * MFCv15 firmware rejects any buffer below its own base address. The private
+ * buffers are allocated after it, but the vb2 buffers come from the generic
+ * DMA allocator and nothing guarantees their position unless the device has
+ * its own "memory-region". Warn so that a failure can be traced to this.
+ */
+static void s5p_mfc_check_buf_addr_v15(struct s5p_mfc_ctx *ctx,
+				       struct vb2_buffer *vb, unsigned int planes)
+{
+	struct s5p_mfc_dev *dev = ctx->dev;
+	dma_addr_t addr;
+	unsigned int i;
+
+	if (!IS_MFCV15(dev))
+		return;
+
+	for (i = 0; i < planes; i++) {
+		addr = vb2_dma_contig_plane_dma_addr(vb, i);
+		if (addr < dev->fw_buf.dma)
+			dev_warn(&dev->plat_dev->dev,
+				 "%s buffer %u plane %u at %pad is below the firmware base %pad, the MFC will reject it\n",
+				 V4L2_TYPE_IS_OUTPUT(vb->type) ? "OUTPUT" : "CAPTURE",
+				 vb->index, i, &addr, &dev->fw_buf.dma);
+	}
+}
+
 static int s5p_mfc_buf_init(struct vb2_buffer *vb)
 {
 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
@@ -1031,6 +1057,7 @@ static int s5p_mfc_buf_init(struct vb2_buffer *vb)
 				return -EINVAL;
 			}
 		}
+		s5p_mfc_check_buf_addr_v15(ctx, vb, ctx->dst_fmt->num_planes);
 		i = vb->index;
 		ctx->dst_bufs[i].b = vbuf;
 		ctx->dst_bufs[i].cookie.raw.luma =
@@ -1054,6 +1081,7 @@ static int s5p_mfc_buf_init(struct vb2_buffer *vb)
 			return -EINVAL;
 		}
 
+		s5p_mfc_check_buf_addr_v15(ctx, vb, 1);
 		i = vb->index;
 		ctx->src_bufs[i].b = vbuf;
 		ctx->src_bufs[i].cookie.stream =

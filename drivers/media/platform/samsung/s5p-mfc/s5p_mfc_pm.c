@@ -26,7 +26,12 @@ int s5p_mfc_init_pm(struct s5p_mfc_dev *dev)
 
 	/* clock control */
 	for (i = 0; i < pm->num_clocks; i++) {
-		pm->clocks[i] = devm_clk_get(pm->device, pm->clk_names[i]);
+		if (dev->variant->clocks_optional)
+			pm->clocks[i] = devm_clk_get_optional(pm->device,
+							      pm->clk_names[i]);
+		else
+			pm->clocks[i] = devm_clk_get(pm->device,
+						     pm->clk_names[i]);
 		if (IS_ERR(pm->clocks[i])) {
 			/* additional clocks are optional */
 			if (i && PTR_ERR(pm->clocks[i]) == -ENOENT) {
