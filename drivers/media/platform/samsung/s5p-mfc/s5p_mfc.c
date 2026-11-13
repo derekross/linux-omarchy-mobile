@@ -1233,9 +1233,27 @@ static int s5p_mfc_configure_common_memory(struct s5p_mfc_dev *mfc_dev)
 {
 	struct device *dev = &mfc_dev->plat_dev->dev;
 	unsigned long mem_size = SZ_4M;
+	int ret;
 
 	if (IS_ENABLED(CONFIG_DMA_CMA) || exynos_is_iommu_available(dev))
 		mem_size = SZ_8M;
+
+	if (IS_MFCV15(mfc_dev)) {
+		/*
+		 * The firmware sees physical addresses through 32-bit
+		 * registers and rejects buffers below its own base, so all of
+		 * the private buffers (codec buffers included) live in this
+		 * region, after the firmware. An optional "memory-region"
+		 * also serves the vb2 buffers from the same pool.
+		 */
+		mem_size = MFC_MEM_SIZE_V15;
+		ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(32));
+		if (ret)
+			return ret;
+		ret = of_reserved_mem_device_init(dev);
+		if (ret && ret != -ENODEV)
+			return ret;
+	}
 
 	if (mfc_mem_size)
 		mem_size = memparse(mfc_mem_size, NULL);
@@ -1248,6 +1266,8 @@ static int s5p_mfc_configure_common_memory(struct s5p_mfc_dev *mfc_dev)
 					       &mfc_dev->mem_base, GFP_KERNEL);
 	if (!mfc_dev->mem_virt) {
 		bitmap_free(mfc_dev->mem_bitmap);
+		if (IS_MFCV15(mfc_dev))
+			of_reserved_mem_device_release(dev);
 		dev_err(dev, "failed to preallocate %ld MiB for the firmware and context buffers\n",
 			(mem_size / SZ_1M));
 		return -ENOMEM;
@@ -1288,6 +1308,8 @@ static void s5p_mfc_unconfigure_common_memory(struct s5p_mfc_dev *mfc_dev)
 			  mfc_dev->mem_base);
 	bitmap_free(mfc_dev->mem_bitmap);
 	vb2_dma_contig_clear_max_seg_size(dev);
+	if (IS_MFCV15(mfc_dev))
+		of_reserved_mem_device_release(dev);
 }
 
 static int s5p_mfc_configure_dma_memory(struct s5p_mfc_dev *mfc_dev)
@@ -1432,6 +1454,18 @@ static int s5p_mfc_probe(struct platform_device *pdev)
 	}
 	v4l2_info(&dev->v4l2_dev,
 		  "decoder registered as /dev/video%d\n", dev->vfd_dec->num);
+
+	/*
+	 * The v15 encoder's registers differ from v12's (0xF770/0xF774 clash
+	 * with the decoder's) and nothing here programs them yet: no encoder
+	 * node rather than one that hangs the firmware.
+	 */
+	if (IS_MFCV15(dev)) {
+		video_device_release(dev->vfd_enc);
+		dev->vfd_enc = NULL;
+		pr_debug("%s--\n", __func__);
+		return 0;
+	}
 
 	ret = video_register_device(dev->vfd_enc, VFL_TYPE_VIDEO, 0);
 	if (ret) {
@@ -1719,6 +1753,23 @@ static struct s5p_mfc_variant mfc_drvdata_v12 = {
 	.num_clocks	= 1,
 };
 
+static const struct s5p_mfc_buf_size buf_size_v15 = {
+	.fw     = MAX_FW_SIZE_V15,
+	.cpb    = MAX_CPB_SIZE_V15,
+	.priv   = &mfc_buf_size_v12,
+};
+
+static const struct s5p_mfc_variant mfc_drvdata_v15 = {
+	.version        = MFC_VERSION_V15,
+	.version_bit    = MFC_V15_BIT,
+	.port_num       = MFC_NUM_PORTS_V15,
+	.buf_size       = &buf_size_v15,
+	.fw_name[0]     = "s5p-mfc-v15.fw",
+	.clk_names	= {"mfc"},
+	.num_clocks	= 1,
+	.clocks_optional = true,
+};
+
 static const struct of_device_id exynos_mfc_match[] = {
 	{
 		.compatible = "samsung,mfc-v5",
@@ -1744,6 +1795,9 @@ static const struct of_device_id exynos_mfc_match[] = {
 	}, {
 		.compatible = "tesla,fsd-mfc",
 		.data = &mfc_drvdata_v12,
+	}, {
+		.compatible = "google,gs201-mfc",
+		.data = &mfc_drvdata_v15,
 	},
 	{},
 };

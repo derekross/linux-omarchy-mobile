@@ -178,7 +178,13 @@ int s5p_mfc_reset(struct s5p_mfc_dev *dev)
 
 static inline void s5p_mfc_init_memctrl(struct s5p_mfc_dev *dev)
 {
-	if (IS_MFCV6_PLUS(dev)) {
+	if (IS_MFCV15(dev)) {
+		/* 0x0054 is the secure firmware base on MFCv15 */
+		mfc_write(dev, dev->dma_base[BANK_L_CTX],
+			  S5P_FIMV_RISC_NONSECURE_BASE_ADDR_V15);
+		mfc_debug(2, "Base Address : %pad\n",
+			  &dev->dma_base[BANK_L_CTX]);
+	} else if (IS_MFCV6_PLUS(dev)) {
 		mfc_write(dev, dev->dma_base[BANK_L_CTX],
 			  S5P_FIMV_RISC_BASE_ADDRESS_V6);
 		mfc_debug(2, "Base Address : %pad\n",
@@ -205,6 +211,34 @@ static inline void s5p_mfc_clear_cmds(struct s5p_mfc_dev *dev)
 		mfc_write(dev, 0, S5P_FIMV_RISC2HOST_CMD);
 		mfc_write(dev, 0, S5P_FIMV_HOST2RISC_CMD);
 	}
+}
+
+/*
+ * MFCv15: check that the IP is the one the driver knows and wait until the
+ * firmware accepts commands, as the vendor driver does before SYS_INIT.
+ */
+static int s5p_mfc_v15_check_fw(struct s5p_mfc_dev *dev)
+{
+	unsigned long timeout;
+	u32 ver;
+
+	ver = mfc_read(dev, S5P_FIMV_MFC_VERSION_V15);
+	if (ver != MFC_HW_VERSION_V15) {
+		mfc_err("Unsupported MFC IP version 0x%08x (expected 0x%08x)\n",
+			ver, MFC_HW_VERSION_V15);
+		return -ENODEV;
+	}
+
+	timeout = jiffies + msecs_to_jiffies(MFC_BW_TIMEOUT);
+	while (!(mfc_read(dev, S5P_FIMV_FW_STATUS_INFO_V15) &
+		 S5P_FIMV_FW_STATUS_READY_V15)) {
+		if (time_after(jiffies, timeout)) {
+			mfc_err("Timeout waiting for the firmware status\n");
+			return -EIO;
+		}
+		usleep_range(100, 200);
+	}
+	return 0;
 }
 
 /* Initialize hardware */
@@ -235,6 +269,10 @@ int s5p_mfc_init_hw(struct s5p_mfc_dev *dev)
 	s5p_mfc_clear_cmds(dev);
 	/* 3. Release reset signal to the RISC */
 	s5p_mfc_clean_dev_int_flags(dev);
+	/* MFCv15 needs the clock ungated before the RISC starts */
+	if (IS_MFCV15(dev))
+		mfc_write(dev, 0x0, S5P_FIMV_MFC_CLOCK_OFF_V10);
+
 	if (IS_MFCV6_PLUS(dev)) {
 		dev->risc_on = 1;
 		mfc_write(dev, 0x1, S5P_FIMV_RISC_ON_V6);
@@ -242,7 +280,7 @@ int s5p_mfc_init_hw(struct s5p_mfc_dev *dev)
 	else
 		mfc_write(dev, 0x3ff, S5P_FIMV_SW_RESET);
 
-	if (IS_MFCV10_PLUS(dev))
+	if (IS_MFCV10_PLUS(dev) && !IS_MFCV15(dev))
 		mfc_write(dev, 0x0, S5P_FIMV_MFC_CLOCK_OFF_V10);
 
 	mfc_debug(2, "Will now wait for completion of firmware transfer\n");
@@ -253,6 +291,14 @@ int s5p_mfc_init_hw(struct s5p_mfc_dev *dev)
 		return -EIO;
 	}
 	s5p_mfc_clean_dev_int_flags(dev);
+	if (IS_MFCV15(dev)) {
+		ret = s5p_mfc_v15_check_fw(dev);
+		if (ret) {
+			s5p_mfc_reset(dev);
+			s5p_mfc_clock_off(dev);
+			return ret;
+		}
+	}
 	/* 4. Initialize firmware */
 	ret = s5p_mfc_hw_call(dev->mfc_cmds, sys_init_cmd, dev);
 	if (ret) {
