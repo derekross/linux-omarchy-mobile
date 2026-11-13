@@ -664,21 +664,28 @@ static const struct samsung_div_clock hsi0_dividers[] __initconst = {
 	      0x1824, 0, 4, 0, CLK_DIVIDER_READ_ONLY),
 };
 
+/*
+ * The USI2 and USI3 gates are in manual mode and stay on. A register access
+ * in the first microseconds after one of them is opened never returns, and
+ * the USI driver's resume and the SPI controllers' runtime PM open them
+ * right before theirs: on the Pixel 9a that hung the noirq resume now and
+ * then.
+ */
 static const struct samsung_gate_clock hsi0_gates[] __initconst = {
 	GATE(CLK_GOUT_HSI0_USI2_SOURCE, "zumapro_gout_hsi0_usi2_source",
 	     "zumapro_mout_hsi0_usi2_local",
-	     0x2120, 21, CLK_IGNORE_UNUSED, 0),
+	     0x2120, 21, CLK_IS_CRITICAL, 0),
 	GATE(CLK_GOUT_HSI0_USI2_IP, "zumapro_gout_hsi0_usi2_ip", "zumapro_dout_hsi0_usi2",
-	     0x20fc, 21, CLK_IGNORE_UNUSED | CLK_SET_RATE_PARENT, 0),
+	     0x20fc, 21, CLK_IS_CRITICAL | CLK_SET_RATE_PARENT, 0),
 	GATE(CLK_GOUT_HSI0_USI2_PCLK, "zumapro_gout_hsi0_usi2_pclk", "zumapro_mout_hsi0_noc_local",
-	     0x2100, 21, CLK_IGNORE_UNUSED, 0),
+	     0x2100, 21, CLK_IS_CRITICAL, 0),
 	GATE(CLK_GOUT_HSI0_USI3_SOURCE, "zumapro_gout_hsi0_usi3_source",
 	     "zumapro_mout_hsi0_usi3_local",
-	     0x2124, 21, CLK_IGNORE_UNUSED | CLK_SET_RATE_PARENT, 0),
+	     0x2124, 21, CLK_IS_CRITICAL | CLK_SET_RATE_PARENT, 0),
 	GATE(CLK_GOUT_HSI0_USI3_IP, "zumapro_gout_hsi0_usi3_ip", "zumapro_dout_hsi0_usi3",
-	     0x2104, 21, CLK_IGNORE_UNUSED | CLK_SET_RATE_PARENT, 0),
+	     0x2104, 21, CLK_IS_CRITICAL | CLK_SET_RATE_PARENT, 0),
 	GATE(CLK_GOUT_HSI0_USI3_PCLK, "zumapro_gout_hsi0_usi3_pclk", "zumapro_mout_hsi0_noc_local",
-	     0x2108, 21, CLK_IGNORE_UNUSED, 0),
+	     0x2108, 21, CLK_IS_CRITICAL, 0),
 };
 
 /*
