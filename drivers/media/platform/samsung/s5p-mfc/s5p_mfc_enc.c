@@ -1236,6 +1236,7 @@ static int enc_post_frame_start(struct s5p_mfc_ctx *ctx)
 	int slice_type;
 	unsigned int strm_size;
 	bool src_ready;
+	u64 timestamp = 0;
 
 	slice_type = s5p_mfc_hw_call(dev->mfc_ops, get_enc_slice_type, dev);
 	strm_size = s5p_mfc_hw_call(dev->mfc_ops, get_enc_strm_size, dev);
@@ -1263,6 +1264,7 @@ static int enc_post_frame_start(struct s5p_mfc_ctx *ctx)
 					== mb_c_1_addr) {
 				list_del(&mb_entry->list);
 				ctx->src_queue_cnt--;
+				timestamp = mb_entry->b->vb2_buf.timestamp;
 				vb2_buffer_done(&mb_entry->b->vb2_buf,
 						VB2_BUF_STATE_DONE);
 				break;
@@ -1284,6 +1286,7 @@ static int enc_post_frame_start(struct s5p_mfc_ctx *ctx)
 					== mb_c_1_addr) {
 				list_del(&mb_entry->list);
 				ctx->ref_queue_cnt--;
+				timestamp = mb_entry->b->vb2_buf.timestamp;
 				vb2_buffer_done(&mb_entry->b->vb2_buf,
 						VB2_BUF_STATE_DONE);
 				break;
@@ -1319,6 +1322,8 @@ static int enc_post_frame_start(struct s5p_mfc_ctx *ctx)
 			mb_entry->b->flags |= V4L2_BUF_FLAG_BFRAME;
 			break;
 		}
+		/* The frame just encoded is the source buffer found above */
+		mb_entry->b->vb2_buf.timestamp = timestamp;
 		vb2_set_plane_payload(&mb_entry->b->vb2_buf, 0, strm_size);
 		vb2_buffer_done(&mb_entry->b->vb2_buf, VB2_BUF_STATE_DONE);
 	}
