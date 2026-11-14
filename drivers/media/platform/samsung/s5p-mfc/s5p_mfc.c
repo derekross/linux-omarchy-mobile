@@ -1761,10 +1761,20 @@ static struct s5p_mfc_variant mfc_drvdata_v12 = {
 	.num_clocks	= 1,
 };
 
+/* Google's gs201 sizes (mfc_ctx_buf_size in its exynos-mfc driver) */
+static const struct s5p_mfc_buf_size_v6 mfc_buf_size_v15 = {
+	.dev_ctx        = MFC_CTX_BUF_SIZE_V12,
+	.h264_dec_ctx   = MFC_H264_DEC_CTX_BUF_SIZE_V12,
+	.other_dec_ctx  = MFC_OTHER_DEC_CTX_BUF_SIZE_V15,
+	.h264_enc_ctx   = MFC_H264_ENC_CTX_BUF_SIZE_V12,
+	.hevc_enc_ctx   = MFC_HEVC_ENC_CTX_BUF_SIZE_V15,
+	.other_enc_ctx  = MFC_OTHER_ENC_CTX_BUF_SIZE_V15,
+};
+
 static const struct s5p_mfc_buf_size buf_size_v15 = {
 	.fw     = MAX_FW_SIZE_V15,
 	.cpb    = MAX_CPB_SIZE_V15,
-	.priv   = &mfc_buf_size_v12,
+	.priv   = &mfc_buf_size_v15,
 };
 
 static const struct s5p_mfc_variant mfc_drvdata_v15 = {
