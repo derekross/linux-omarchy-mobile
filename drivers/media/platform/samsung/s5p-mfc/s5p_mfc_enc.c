@@ -2608,6 +2608,7 @@ static void s5p_mfc_stop_streaming(struct vb2_queue *q)
 	}
 	ctx->state = MFCINST_FINISHED;
 	spin_lock_irqsave(&dev->irqlock, flags);
+	ctx->last_pending = false;
 	if (q->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		s5p_mfc_cleanup_queue(&ctx->dst_queue, &ctx->vq_dst);
 		INIT_LIST_HEAD(&ctx->dst_queue);
@@ -2640,6 +2641,15 @@ static void s5p_mfc_buf_queue(struct vb2_buffer *vb)
 		mfc_buf->flags &= ~MFC_BUF_FLAG_USED;
 		/* Mark destination as available for use by MFC */
 		spin_lock_irqsave(&dev->irqlock, flags);
+		if (ctx->last_pending) {
+			/* The drain ended while no buffer was queued */
+			ctx->last_pending = false;
+			spin_unlock_irqrestore(&dev->irqlock, flags);
+			vb2_set_plane_payload(vb, 0, 0);
+			to_vb2_v4l2_buffer(vb)->flags |= V4L2_BUF_FLAG_LAST;
+			vb2_buffer_done(vb, VB2_BUF_STATE_DONE);
+			return;
+		}
 		list_add_tail(&mfc_buf->list, &ctx->dst_queue);
 		ctx->dst_queue_cnt++;
 		spin_unlock_irqrestore(&dev->irqlock, flags);

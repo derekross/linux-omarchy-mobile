@@ -653,13 +653,18 @@ static void s5p_mfc_handle_stream_complete(struct s5p_mfc_ctx *ctx)
 
 	ctx->state = MFCINST_FINISHED;
 
+	/* Called from the interrupt handler, under dev->irqlock */
 	if (!list_empty(&ctx->dst_queue)) {
 		mb_entry = list_entry(ctx->dst_queue.next, struct s5p_mfc_buf,
 									list);
 		list_del(&mb_entry->list);
 		ctx->dst_queue_cnt--;
 		vb2_set_plane_payload(&mb_entry->b->vb2_buf, 0, 0);
+		/* Tell the client that the drain is done */
+		mb_entry->b->flags |= V4L2_BUF_FLAG_LAST;
 		vb2_buffer_done(&mb_entry->b->vb2_buf, VB2_BUF_STATE_DONE);
+	} else {
+		ctx->last_pending = true;
 	}
 
 	clear_work_bit(ctx);

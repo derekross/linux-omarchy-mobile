@@ -573,6 +573,8 @@ struct s5p_mfc_codec_ops {
  * @dst_queue_cnt:	number of buffers queued on the dest internal queue
  * @type:		type of the instance - decoder or encoder
  * @state:		state of the context
+ * @last_pending:	the encoder drained with no capture buffer queued: the
+ *			next one is returned empty with V4L2_BUF_FLAG_LAST
  * @inst_no:		number of hw instance associated with the context
  * @img_width:		width of the image that is decoded or encoded
  * @img_height:		height of the image that is decoded or encoded
@@ -662,6 +664,7 @@ struct s5p_mfc_ctx {
 
 	enum s5p_mfc_inst_type type;
 	enum s5p_mfc_inst_state state;
+	bool last_pending;
 	int inst_no;
 
 	/* Image parameters */
