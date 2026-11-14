@@ -327,6 +327,7 @@ static int vidioc_enum_fmt(struct file *file, struct v4l2_fmtdesc *f,
 	if (i == ARRAY_SIZE(formats))
 		return -EINVAL;
 	f->pixelformat = formats[i].fourcc;
+	f->flags = formats[i].flags;
 	return 0;
 }
 
