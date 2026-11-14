@@ -71,6 +71,13 @@ static const struct s5p_mfc_fmt formats[] = {
 		.versions       = MFC_V12_BIT | MFC_V15_BIT
 	},
 	{
+		.fourcc		= V4L2_PIX_FMT_NV12,
+		.codec_mode	= S5P_FIMV_CODEC_NONE,
+		.type		= MFC_FMT_RAW,
+		.num_planes	= 1,
+		.versions	= MFC_V15_BIT,
+	},
+	{
 		.fourcc		= V4L2_PIX_FMT_H264,
 		.codec_mode	= S5P_MFC_CODEC_H264_DEC,
 		.type		= MFC_FMT_DEC,
@@ -378,6 +385,9 @@ static int vidioc_g_fmt(struct file *file, void *priv, struct v4l2_format *f)
 		pix_mp->plane_fmt[0].sizeimage = ctx->luma_size;
 		pix_mp->plane_fmt[1].bytesperline = ctx->stride[1];
 		pix_mp->plane_fmt[1].sizeimage = ctx->chroma_size;
+		/* NV12 in one buffer: the chroma follows the luma */
+		if (ctx->dst_fmt->num_planes == 1)
+			pix_mp->plane_fmt[0].sizeimage = s5p_mfc_dec_nv12_size(ctx);
 		if (ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YUV420M || ctx->dst_fmt->fourcc ==
 				V4L2_PIX_FMT_YVU420M) {
 			pix_mp->plane_fmt[2].bytesperline = ctx->stride[2];
@@ -467,6 +477,13 @@ static int vidioc_s_fmt(struct file *file, void *priv, struct v4l2_format *f)
 	if (f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		/* dst_fmt is validated by call to vidioc_try_fmt */
 		ctx->dst_fmt = find_format(f, MFC_FMT_RAW);
+		/*
+		 * After the header was parsed the plane sizes were worked out
+		 * for the old format; NV12 in one buffer lays them out
+		 * differently, so work them out again.
+		 */
+		if (ctx->state == MFCINST_HEAD_PARSED)
+			s5p_mfc_hw_call(dev->mfc_ops, dec_calc_dpb_size, ctx);
 		ret = 0;
 		goto out;
 	} else if (f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
@@ -969,7 +986,7 @@ static int s5p_mfc_queue_setup(struct vb2_queue *vq,
 			mfc_err("invalid format\n");
 			return -EINVAL;
 		}
-		*plane_count = format->comp_planes;
+		*plane_count = format->mem_planes;
 
 		/* Setup buffer count */
 		if (*buf_count < ctx->pb_count)
@@ -990,6 +1007,8 @@ static int s5p_mfc_queue_setup(struct vb2_queue *vq,
 	    vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		psize[0] = ctx->luma_size;
 		psize[1] = ctx->chroma_size;
+		if (ctx->dst_fmt->num_planes == 1)
+			psize[0] = s5p_mfc_dec_nv12_size(ctx);
 		if (ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YUV420M || ctx->dst_fmt->fourcc ==
 				V4L2_PIX_FMT_YVU420M)
 			psize[2] = ctx->chroma_size_1;
@@ -1054,8 +1073,10 @@ static int s5p_mfc_buf_init(struct vb2_buffer *vb)
 				return -EINVAL;
 			}
 		}
-		if (vb2_plane_size(vb, 0) < ctx->luma_size ||
-			vb2_plane_size(vb, 1) < ctx->chroma_size) {
+		if (ctx->dst_fmt->num_planes == 1 ?
+		    vb2_plane_size(vb, 0) < s5p_mfc_dec_nv12_size(ctx) :
+		    vb2_plane_size(vb, 0) < ctx->luma_size ||
+		    vb2_plane_size(vb, 1) < ctx->chroma_size) {
 			mfc_err("Plane buffer (CAPTURE) is too small\n");
 			return -EINVAL;
 		}
@@ -1071,7 +1092,11 @@ static int s5p_mfc_buf_init(struct vb2_buffer *vb)
 		ctx->dst_bufs[i].b = vbuf;
 		ctx->dst_bufs[i].cookie.raw.luma =
 					vb2_dma_contig_plane_dma_addr(vb, 0);
-		ctx->dst_bufs[i].cookie.raw.chroma =
+		if (ctx->dst_fmt->num_planes == 1)
+			ctx->dst_bufs[i].cookie.raw.chroma =
+				ctx->dst_bufs[i].cookie.raw.luma + ctx->luma_size;
+		else
+			ctx->dst_bufs[i].cookie.raw.chroma =
 					vb2_dma_contig_plane_dma_addr(vb, 1);
 		if (ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YUV420M || ctx->dst_fmt->fourcc ==
 				V4L2_PIX_FMT_YVU420M) {
