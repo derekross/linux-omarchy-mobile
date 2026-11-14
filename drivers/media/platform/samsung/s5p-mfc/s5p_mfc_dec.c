@@ -1022,6 +1022,12 @@ static int s5p_mfc_queue_setup(struct vb2_queue *vq,
 		/* Setup buffer count */
 		if (*buf_count < ctx->pb_count)
 			*buf_count = ctx->pb_count;
+		/*
+		 * With dynamic DPB the firmware can hold all of its minimum
+		 * at once; leave some for the client to display.
+		 */
+		if (dev->dynamic_dpb && *buf_count < ctx->pb_count + 4)
+			*buf_count = ctx->pb_count + 4;
 		if (!dev->dynamic_dpb &&
 		    *buf_count > ctx->pb_count + MFC_MAX_EXTRA_DPB)
 			*buf_count = ctx->pb_count + MFC_MAX_EXTRA_DPB;
