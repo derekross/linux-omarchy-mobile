@@ -1580,7 +1580,8 @@ static int s5p_mfc_set_enc_params_vp8(struct s5p_mfc_ctx *ctx)
 		writel(reg, mfc_regs->e_rc_frame_rate);
 	}
 
-	/* frame QP */
+	/* frame QP: reg may hold the frame rate now */
+	reg = readl(mfc_regs->e_rc_config);
 	reg &= ~(0x7F);
 	reg |= p_vp8->rc_frame_qp & 0x7F;
 	writel(reg, mfc_regs->e_rc_config);
