@@ -132,12 +132,13 @@
 		 * rejects any buffer below its own base, so they all come from
 		 * one contiguous pool below 4 GiB, firmware first. Reusable,
 		 * so the pages serve movable allocations while no video is
-		 * decoded.
+		 * decoded. 256 MiB holds the firmware and a 4K stream decoded
+		 * to single-buffer NV12.
 		 */
 		mfc_pool: mfc-pool {
 			compatible = "shared-dma-pool";
 			reusable;
-			size = <0x8000000>;
+			size = <0x10000000>;
 			/* read with the root's #address-cells (2), not #size-cells */
 			alignment = <0x0 0x200000>;
 			alloc-ranges = <0x0 0x80000000 0x80000000>;
