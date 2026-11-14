@@ -1125,6 +1125,14 @@ static void s5p_mfc_stop_streaming(struct vb2_queue *q)
 		ctx->state ==  MFCINST_RUNNING) &&
 		dev->curr_ctx == ctx->num && dev->hw_lock) {
 		ctx->state = MFCINST_ABORT;
+		/*
+		 * Take the context off the run queue. Otherwise the interrupt
+		 * handler of the frame being decoded picks it again in
+		 * try_run, which clears the context's interrupt flags before
+		 * finding nothing to run in MFCINST_ABORT, and the wait below
+		 * misses that FRAME_DONE and times out.
+		 */
+		clear_work_bit(ctx);
 		spin_unlock_irqrestore(&dev->irqlock, flags);
 		s5p_mfc_wait_for_done_ctx(ctx,
 					S5P_MFC_R2H_CMD_FRAME_DONE_RET, 0);
