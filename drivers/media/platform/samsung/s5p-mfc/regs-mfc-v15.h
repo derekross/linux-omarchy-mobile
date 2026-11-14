@@ -33,6 +33,9 @@
 #define MFC_NUM_PORTS_V15		1
 #define MAX_FW_SIZE_V15			(SZ_1M)
 #define MAX_CPB_SIZE_V15		(7 * SZ_1M)
+#define MFC_OTHER_DEC_CTX_BUF_SIZE_V15	(60 * SZ_1K)
+#define MFC_HEVC_ENC_CTX_BUF_SIZE_V15	(50 * SZ_1K)
+#define MFC_OTHER_ENC_CTX_BUF_SIZE_V15	(50 * SZ_1K)
 
 /*
  * The firmware rejects every buffer below its own base address, so the
