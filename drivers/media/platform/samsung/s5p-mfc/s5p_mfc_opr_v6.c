@@ -563,6 +563,18 @@ static void s5p_mfc_enc_calc_src_size_v6(struct s5p_mfc_ctx *ctx)
 
 	if (IS_MFCV12(ctx->dev)) {
 		switch (ctx->src_fmt->fourcc) {
+		case V4L2_PIX_FMT_NV12:
+			/*
+			 * One buffer, laid out as V4L2 NV12: a 64 byte aligned
+			 * stride (as Google's NV12N) and the chroma right after
+			 * bytesperline * height.
+			 */
+			ctx->stride[0] = ALIGN(ctx->img_width, 64);
+			ctx->stride[1] = ctx->stride[0];
+			ctx->luma_size = ctx->stride[0] * ctx->img_height;
+			ctx->chroma_size = ctx->stride[1] * ctx->img_height / 2;
+			ctx->chroma_size_1 = 0;
+			return;
 		case V4L2_PIX_FMT_NV12M:
 		case V4L2_PIX_FMT_NV21M:
 			ctx->stride[0] = ALIGN(ctx->img_width, S5P_FIMV_NV12M_HALIGN_V6);
@@ -971,7 +983,8 @@ static int s5p_mfc_set_enc_params(struct s5p_mfc_ctx *ctx)
 	writel(reg, mfc_regs->e_enc_options);
 
 	/* memory structure cur. frame */
-	if (ctx->src_fmt->fourcc == V4L2_PIX_FMT_NV12M) {
+	if (ctx->src_fmt->fourcc == V4L2_PIX_FMT_NV12M ||
+	    ctx->src_fmt->fourcc == V4L2_PIX_FMT_NV12) {
 		/* 0: Linear, 1: 2D tiled*/
 		reg = readl(mfc_regs->e_enc_options);
 		reg &= ~(0x1 << 7);
@@ -2153,7 +2166,11 @@ static inline int s5p_mfc_run_enc_frame(struct s5p_mfc_ctx *ctx)
 			ctx->state = MFCINST_FINISHING;
 		} else {
 			src_y_addr = vb2_dma_contig_plane_dma_addr(&src_mb->b->vb2_buf, 0);
-			src_c_addr = vb2_dma_contig_plane_dma_addr(&src_mb->b->vb2_buf, 1);
+			/* One-buffer NV12: the chroma follows the luma */
+			if (ctx->src_fmt->num_planes == 1)
+				src_c_addr = src_y_addr + ctx->luma_size;
+			else
+				src_c_addr = vb2_dma_contig_plane_dma_addr(&src_mb->b->vb2_buf, 1);
 			if (ctx->src_fmt->fourcc == V4L2_PIX_FMT_YUV420M || ctx->src_fmt->fourcc ==
 					V4L2_PIX_FMT_YVU420M)
 				src_c_1_addr = vb2_dma_contig_plane_dma_addr
