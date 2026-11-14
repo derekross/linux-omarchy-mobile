@@ -2018,12 +2018,15 @@
 		 * 0x1c8a0000) are left in bypass and CMU_MFC is not described
 		 * yet, so the firmware and its buffers need memory below 4 GiB
 		 * from the board's memory-region, and the block runs on the
-		 * clock and power domain the bootloader leaves on.
+		 * power domain the bootloader leaves on. Its rate (and voltage)
+		 * is the ACPM firmware's MFC DVFS domain.
 		 */
 		mfc: video-codec@1c8d0000 {
 			compatible = "google,gs201-mfc";
 			reg = <0x1c8d0000 0x10000>;
 			interrupts = <GIC_SPI 504 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&acpm_ipc GS201_CLK_ACPM_DVFS_MFC>;
+			clock-names = "mfc";
 			status = "disabled";
 		};
 
