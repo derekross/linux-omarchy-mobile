@@ -259,7 +259,7 @@ static int s6e3fc5_set_refresh_rate(struct drm_panel *panel, unsigned int hz)
 	struct s6e3fc5 *ctx = to_s6e3fc5(panel);
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 
-	if (hz != 60 && hz != 120)
+	if (hz != 60 && hz != 90)
 		return -EINVAL;
 
 	/* always sent in full: the caller may not know the panel's state */
