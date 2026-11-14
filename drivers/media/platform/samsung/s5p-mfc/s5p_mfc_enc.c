@@ -747,7 +747,7 @@ static struct mfc_control controls[] = {
 		.minimum = 0,
 		.maximum = 51,
 		.step = 1,
-		.default_value = 0,
+		.default_value = 51,
 	},
 	{
 		.id = V4L2_CID_MPEG_VIDEO_HEVC_PROFILE,
