@@ -1772,6 +1772,8 @@ static const struct s5p_mfc_variant mfc_drvdata_v15 = {
 	.clk_names	= {"mfc"},
 	.num_clocks	= 1,
 	.clocks_optional = true,
+	/* The top MFC rate of Google's gs201 tables (mfc_freqs) */
+	.active_clk_rate = 666000000,
 };
 
 static const struct of_device_id exynos_mfc_match[] = {
