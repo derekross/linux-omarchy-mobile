@@ -19,7 +19,7 @@
 #include <media/v4l2-ioctl.h>
 #include <media/videobuf2-v4l2.h>
 #include "regs-mfc.h"
-#include "regs-mfc-v12.h"
+#include "regs-mfc-v15.h"
 
 #define S5P_MFC_NAME		"s5p-mfc"
 
@@ -199,6 +199,7 @@ struct s5p_mfc_pm {
 	struct clk	*clocks[MFC_MAX_CLOCKS];
 	int		num_clocks;
 	bool		use_clock_gating;
+	unsigned long	idle_clk_rate;
 
 	struct device	*device;
 };
@@ -225,6 +226,9 @@ struct s5p_mfc_buf_size {
 	const void *priv;
 };
 
+struct s5p_mfc_ctx;
+size_t s5p_mfc_dec_nv12_size(const struct s5p_mfc_ctx *ctx);
+
 struct s5p_mfc_variant {
 	unsigned int version;
 	unsigned int port_num;
@@ -234,6 +238,8 @@ struct s5p_mfc_variant {
 	const char	*clk_names[MFC_MAX_CLOCKS];
 	int		num_clocks;
 	bool		use_clock_gating;
+	bool		clocks_optional;
+	unsigned long	active_clk_rate;
 };
 
 /**
@@ -300,6 +306,7 @@ struct s5p_mfc_priv_buf {
  * @fw_get_done:	flag set when request_firmware() is complete and
  *			copied into fw_buf
  * @risc_on:		flag indicates RISC is on or off
+ * @dynamic_dpb:	decoder hands one DPB to the firmware per frame (MFCv15)
  *
  */
 struct s5p_mfc_dev {
@@ -347,6 +354,7 @@ struct s5p_mfc_dev {
 	enum s5p_mfc_fw_ver fw_ver;
 	bool fw_get_done;
 	bool risc_on; /* indicates if RISC is on or off */
+	bool dynamic_dpb;
 };
 
 /*
@@ -591,6 +599,7 @@ struct s5p_mfc_codec_ops {
  * @dst_bufs_cnt:	number of allocated destination buffers
  * @sequence:		counter for the sequence number for v4l2
  * @dec_dst_flag:	flags for buffers queued in the hardware
+ * @dpb_used:		DPBs still held by the firmware (dynamic DPB, MFCv15)
  * @dec_src_buf_size:	size of the buffer for source buffers in decoding
  * @codec_mode:		number of codec mode used by MFC hw
  * @slice_interface:	slice interface flag
@@ -684,6 +693,7 @@ struct s5p_mfc_ctx {
 
 	unsigned int sequence;
 	unsigned long dec_dst_flag;
+	unsigned long dpb_used;
 	size_t dec_src_buf_size;
 
 	/* Control values */
@@ -790,6 +800,7 @@ void s5p_mfc_cleanup_queue(struct list_head *lh, struct vb2_queue *vq);
 #define IS_MFCV8_PLUS(dev)	((dev)->variant->version >= 0x80)
 #define IS_MFCV10_PLUS(dev)	((dev)->variant->version >= 0xA0)
 #define IS_MFCV12(dev)		((dev)->variant->version >= 0xC0)
+#define IS_MFCV15(dev)		((dev)->variant->version >= 0xF0)
 #define FW_HAS_E_MIN_SCRATCH_BUF(dev) (IS_MFCV10_PLUS(dev))
 
 #define MFC_V5_BIT	BIT(0)
@@ -798,14 +809,16 @@ void s5p_mfc_cleanup_queue(struct list_head *lh, struct vb2_queue *vq);
 #define MFC_V8_BIT	BIT(3)
 #define MFC_V10_BIT	BIT(5)
 #define MFC_V12_BIT	BIT(7)
+#define MFC_V15_BIT	BIT(8)
 
 #define MFC_V5PLUS_BITS		(MFC_V5_BIT | MFC_V6_BIT | MFC_V7_BIT | \
-					MFC_V8_BIT | MFC_V10_BIT | MFC_V12_BIT)
+					MFC_V8_BIT | MFC_V10_BIT | MFC_V12_BIT | \
+					MFC_V15_BIT)
 #define MFC_V6PLUS_BITS		(MFC_V6_BIT | MFC_V7_BIT | MFC_V8_BIT | \
-					MFC_V10_BIT | MFC_V12_BIT)
+					MFC_V10_BIT | MFC_V12_BIT | MFC_V15_BIT)
 #define MFC_V7PLUS_BITS		(MFC_V7_BIT | MFC_V8_BIT | MFC_V10_BIT | \
-					MFC_V12_BIT)
+					MFC_V12_BIT | MFC_V15_BIT)
 
-#define MFC_V10PLUS_BITS	(MFC_V10_BIT | MFC_V12_BIT)
+#define MFC_V10PLUS_BITS	(MFC_V10_BIT | MFC_V12_BIT | MFC_V15_BIT)
 
 #endif /* S5P_MFC_COMMON_H_ */

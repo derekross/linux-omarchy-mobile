@@ -356,6 +356,10 @@ static void s5p_mfc_handle_frame_new(struct s5p_mfc_ctx *ctx, unsigned int err)
 						ctx->luma_size);
 			vb2_set_plane_payload(&dst_buf->b->vb2_buf, 1,
 						ctx->chroma_size);
+			/* NV12 in one buffer: plane 0 holds the whole frame */
+			if (ctx->dst_fmt->num_planes == 1)
+				vb2_set_plane_payload(&dst_buf->b->vb2_buf, 0,
+						      s5p_mfc_dec_nv12_size(ctx));
 			clear_bit(dst_buf->b->vb2_buf.index,
 							&ctx->dec_dst_flag);
 
@@ -381,6 +385,9 @@ static void s5p_mfc_handle_frame(struct s5p_mfc_ctx *ctx,
 				& S5P_FIMV_DEC_STATUS_DECODING_STATUS_MASK;
 	dec_frame_status = s5p_mfc_hw_call(dev->mfc_ops, get_dec_status, dev)
 				& S5P_FIMV_DEC_STATUS_DECODING_STATUS_MASK;
+	/* DPBs the firmware still holds (references or not yet displayed) */
+	if (dev->dynamic_dpb)
+		ctx->dpb_used = readl(dev->mfc_regs->d_used_dpb_flag_lower);
 	res_change = (s5p_mfc_hw_call(dev->mfc_ops, get_dspl_status, dev)
 				& S5P_FIMV_DEC_STATUS_RESOLUTION_MASK)
 				>> S5P_FIMV_DEC_STATUS_RESOLUTION_SHIFT;
@@ -540,13 +547,34 @@ static void s5p_mfc_handle_seq_done(struct s5p_mfc_ctx *ctx,
 		if (FW_HAS_E_MIN_SCRATCH_BUF(dev))
 			ctx->scratch_buf_size = s5p_mfc_hw_call(dev->mfc_ops,
 						get_min_scratch_buf_size, dev);
-		if (ctx->img_width == 0 || ctx->img_height == 0)
+		if (ctx->img_width == 0 || ctx->img_height == 0) {
 			ctx->state = MFCINST_ERROR;
-		else
-			ctx->state = MFCINST_HEAD_PARSED;
+		} else {
+			static const struct v4l2_event ev_src_ch = {
+				.type = V4L2_EVENT_SOURCE_CHANGE,
+				.u.src_change.changes =
+					V4L2_EVENT_SRC_CH_RESOLUTION,
+			};
 
+			ctx->state = MFCINST_HEAD_PARSED;
+			/*
+			 * The stateful decoder interface (dev-decoder.rst,
+			 * "Initialization"): the client learns the stream's
+			 * format from this event, not by calling G_FMT on
+			 * CAPTURE in a loop.
+			 */
+			v4l2_event_queue_fh(&ctx->fh, &ev_src_ch);
+		}
+
+		/*
+		 * The buffer the header came in may hold the first frame too.
+		 * Keep it for decoding unless the header used it up: on MFC
+		 * v15 for every codec, as the first HEVC IRAP picture and the
+		 * first VP8/VP9 key frame share the header's buffer.
+		 */
 		if ((ctx->codec_mode == S5P_MFC_CODEC_H264_DEC ||
-			ctx->codec_mode == S5P_MFC_CODEC_H264_MVC_DEC) &&
+			ctx->codec_mode == S5P_MFC_CODEC_H264_MVC_DEC ||
+			IS_MFCV15(dev)) &&
 				!list_empty(&ctx->src_queue)) {
 			struct s5p_mfc_buf *src_buf;
 
@@ -1219,9 +1247,27 @@ static int s5p_mfc_configure_common_memory(struct s5p_mfc_dev *mfc_dev)
 {
 	struct device *dev = &mfc_dev->plat_dev->dev;
 	unsigned long mem_size = SZ_4M;
+	int ret;
 
 	if (IS_ENABLED(CONFIG_DMA_CMA) || exynos_is_iommu_available(dev))
 		mem_size = SZ_8M;
+
+	if (IS_MFCV15(mfc_dev)) {
+		/*
+		 * The firmware sees physical addresses through 32-bit
+		 * registers and rejects buffers below its own base, so all of
+		 * the private buffers (codec buffers included) live in this
+		 * region, after the firmware. An optional "memory-region"
+		 * also serves the vb2 buffers from the same pool.
+		 */
+		mem_size = MFC_MEM_SIZE_V15;
+		ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(32));
+		if (ret)
+			return ret;
+		ret = of_reserved_mem_device_init(dev);
+		if (ret && ret != -ENODEV)
+			return ret;
+	}
 
 	if (mfc_mem_size)
 		mem_size = memparse(mfc_mem_size, NULL);
@@ -1234,6 +1280,8 @@ static int s5p_mfc_configure_common_memory(struct s5p_mfc_dev *mfc_dev)
 					       &mfc_dev->mem_base, GFP_KERNEL);
 	if (!mfc_dev->mem_virt) {
 		bitmap_free(mfc_dev->mem_bitmap);
+		if (IS_MFCV15(mfc_dev))
+			of_reserved_mem_device_release(dev);
 		dev_err(dev, "failed to preallocate %ld MiB for the firmware and context buffers\n",
 			(mem_size / SZ_1M));
 		return -ENOMEM;
@@ -1274,6 +1322,8 @@ static void s5p_mfc_unconfigure_common_memory(struct s5p_mfc_dev *mfc_dev)
 			  mfc_dev->mem_base);
 	bitmap_free(mfc_dev->mem_bitmap);
 	vb2_dma_contig_clear_max_seg_size(dev);
+	if (IS_MFCV15(mfc_dev))
+		of_reserved_mem_device_release(dev);
 }
 
 static int s5p_mfc_configure_dma_memory(struct s5p_mfc_dev *mfc_dev)
@@ -1322,6 +1372,7 @@ static int s5p_mfc_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Failed to get device MFC hardware variant information\n");
 		return -ENOENT;
 	}
+	dev->dynamic_dpb = IS_MFCV15(dev);
 
 	dev->regs_base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(dev->regs_base))
@@ -1418,6 +1469,18 @@ static int s5p_mfc_probe(struct platform_device *pdev)
 	}
 	v4l2_info(&dev->v4l2_dev,
 		  "decoder registered as /dev/video%d\n", dev->vfd_dec->num);
+
+	/*
+	 * The v15 encoder's registers differ from v12's (0xF770/0xF774 clash
+	 * with the decoder's) and nothing here programs them yet: no encoder
+	 * node rather than one that hangs the firmware.
+	 */
+	if (IS_MFCV15(dev)) {
+		video_device_release(dev->vfd_enc);
+		dev->vfd_enc = NULL;
+		pr_debug("%s--\n", __func__);
+		return 0;
+	}
 
 	ret = video_register_device(dev->vfd_enc, VFL_TYPE_VIDEO, 0);
 	if (ret) {
@@ -1705,6 +1768,35 @@ static struct s5p_mfc_variant mfc_drvdata_v12 = {
 	.num_clocks	= 1,
 };
 
+/* Google's gs201 sizes (mfc_ctx_buf_size in its exynos-mfc driver) */
+static const struct s5p_mfc_buf_size_v6 mfc_buf_size_v15 = {
+	.dev_ctx        = MFC_CTX_BUF_SIZE_V12,
+	.h264_dec_ctx   = MFC_H264_DEC_CTX_BUF_SIZE_V12,
+	.other_dec_ctx  = MFC_OTHER_DEC_CTX_BUF_SIZE_V15,
+	.h264_enc_ctx   = MFC_H264_ENC_CTX_BUF_SIZE_V12,
+	.hevc_enc_ctx   = MFC_HEVC_ENC_CTX_BUF_SIZE_V15,
+	.other_enc_ctx  = MFC_OTHER_ENC_CTX_BUF_SIZE_V15,
+};
+
+static const struct s5p_mfc_buf_size buf_size_v15 = {
+	.fw     = MAX_FW_SIZE_V15,
+	.cpb    = MAX_CPB_SIZE_V15,
+	.priv   = &mfc_buf_size_v15,
+};
+
+static const struct s5p_mfc_variant mfc_drvdata_v15 = {
+	.version        = MFC_VERSION_V15,
+	.version_bit    = MFC_V15_BIT,
+	.port_num       = MFC_NUM_PORTS_V15,
+	.buf_size       = &buf_size_v15,
+	.fw_name[0]     = "s5p-mfc-v15.fw",
+	.clk_names	= {"mfc"},
+	.num_clocks	= 1,
+	.clocks_optional = true,
+	/* The top MFC rate of Google's gs201 tables (mfc_freqs) */
+	.active_clk_rate = 666000000,
+};
+
 static const struct of_device_id exynos_mfc_match[] = {
 	{
 		.compatible = "samsung,mfc-v5",
@@ -1730,6 +1822,9 @@ static const struct of_device_id exynos_mfc_match[] = {
 	}, {
 		.compatible = "tesla,fsd-mfc",
 		.data = &mfc_drvdata_v12,
+	}, {
+		.compatible = "google,gs201-mfc",
+		.data = &mfc_drvdata_v15,
 	},
 	{},
 };

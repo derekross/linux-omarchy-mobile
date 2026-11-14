@@ -125,6 +125,24 @@
 			reg = <0x0 0xfac00000 (1080 * 2400 * 4)>;
 			no-map;
 		};
+
+		/*
+		 * MFC firmware, contexts and frames. The MFC takes 32-bit
+		 * addresses, its System MMU is in bypass and the firmware
+		 * rejects any buffer below its own base, so they all come from
+		 * one contiguous pool below 4 GiB, firmware first. Reusable,
+		 * so the pages serve movable allocations while no video is
+		 * decoded. 256 MiB holds the firmware and a 4K stream decoded
+		 * to single-buffer NV12.
+		 */
+		mfc_pool: mfc-pool {
+			compatible = "shared-dma-pool";
+			reusable;
+			size = <0x10000000>;
+			/* read with the root's #address-cells (2), not #size-cells */
+			alignment = <0x0 0x200000>;
+			alloc-ranges = <0x0 0x80000000 0x80000000>;
+		};
 	};
 };
 
@@ -243,6 +261,11 @@
 
 &gpu {
 	/* No mali-supply: the G3D rails follow the PMU power domain and ACPM. */
+	status = "okay";
+};
+
+&mfc {
+	memory-region = <&mfc_pool>;
 	status = "okay";
 };
 

@@ -35,7 +35,7 @@ int s5p_mfc_alloc_priv_buf(struct s5p_mfc_dev *dev, unsigned int mem_ctx,
 			   struct s5p_mfc_priv_buf *b)
 {
 	unsigned int bits = dev->mem_size >> PAGE_SHIFT;
-	unsigned int count = b->size >> PAGE_SHIFT;
+	unsigned int count = DIV_ROUND_UP(b->size, PAGE_SIZE);
 	unsigned int align = (SZ_64K >> PAGE_SHIFT) - 1;
 	unsigned int start, offset;
 
@@ -78,6 +78,13 @@ int s5p_mfc_alloc_generic_buf(struct s5p_mfc_dev *dev, unsigned int mem_ctx,
 {
 	struct device *mem_dev = dev->mem_dev[mem_ctx];
 
+	/*
+	 * MFCv15 firmware rejects buffers below its base address, so the codec
+	 * buffers come from the same region as the firmware.
+	 */
+	if (IS_MFCV15(dev))
+		return s5p_mfc_alloc_priv_buf(dev, mem_ctx, b);
+
 	mfc_debug(3, "Allocating generic buf: %zu\n", b->size);
 
 	b->ctx = mem_ctx;
@@ -97,7 +104,7 @@ void s5p_mfc_release_priv_buf(struct s5p_mfc_dev *dev,
 {
 	if (dev->mem_virt) {
 		unsigned int start = (b->dma - dev->mem_base) >> PAGE_SHIFT;
-		unsigned int count = b->size >> PAGE_SHIFT;
+		unsigned int count = DIV_ROUND_UP(b->size, PAGE_SIZE);
 
 		bitmap_clear(dev->mem_bitmap, start, count);
 	} else {
@@ -114,6 +121,12 @@ void s5p_mfc_release_generic_buf(struct s5p_mfc_dev *dev,
 			      struct s5p_mfc_priv_buf *b)
 {
 	struct device *mem_dev = dev->mem_dev[b->ctx];
+
+	if (IS_MFCV15(dev)) {
+		if (b->virt)
+			s5p_mfc_release_priv_buf(dev, b);
+		return;
+	}
 	dma_free_coherent(mem_dev, b->size, b->virt, b->dma);
 	b->virt = NULL;
 	b->dma = 0;

@@ -61,14 +61,21 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode     = S5P_MFC_CODEC_NONE,
 		.type           = MFC_FMT_RAW,
 		.num_planes     = 3,
-		.versions       = MFC_V12_BIT,
+		.versions       = MFC_V12_BIT | MFC_V15_BIT,
 	},
 	{
 		.fourcc         = V4L2_PIX_FMT_YVU420M,
 		.codec_mode     = S5P_MFC_CODEC_NONE,
 		.type           = MFC_FMT_RAW,
 		.num_planes     = 3,
-		.versions       = MFC_V12_BIT
+		.versions       = MFC_V12_BIT | MFC_V15_BIT
+	},
+	{
+		.fourcc		= V4L2_PIX_FMT_NV12,
+		.codec_mode	= S5P_FIMV_CODEC_NONE,
+		.type		= MFC_FMT_RAW,
+		.num_planes	= 1,
+		.versions	= MFC_V15_BIT,
 	},
 	{
 		.fourcc		= V4L2_PIX_FMT_H264,
@@ -84,7 +91,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_H264_MVC_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V6PLUS_BITS,
+		.versions	= (MFC_V6PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION |
 				  V4L2_FMT_FLAG_CONTINUOUS_BYTESTREAM,
 	},
@@ -93,7 +100,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_H263_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= (MFC_V5PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION,
 	},
 	{
@@ -101,7 +108,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_MPEG2_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= (MFC_V5PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION |
 				  V4L2_FMT_FLAG_CONTINUOUS_BYTESTREAM,
 	},
@@ -110,7 +117,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_MPEG2_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= (MFC_V5PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION |
 				  V4L2_FMT_FLAG_CONTINUOUS_BYTESTREAM,
 	},
@@ -119,7 +126,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_MPEG4_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= (MFC_V5PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION |
 				  V4L2_FMT_FLAG_CONTINUOUS_BYTESTREAM,
 	},
@@ -128,7 +135,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_MPEG4_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= (MFC_V5PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION,
 	},
 	{
@@ -136,7 +143,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_VC1_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= (MFC_V5PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION,
 	},
 	{
@@ -144,7 +151,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_VC1RCV_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= (MFC_V5PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION,
 	},
 	{
@@ -327,6 +334,7 @@ static int vidioc_enum_fmt(struct file *file, struct v4l2_fmtdesc *f,
 	if (i == ARRAY_SIZE(formats))
 		return -EINVAL;
 	f->pixelformat = formats[i].fourcc;
+	f->flags = formats[i].flags;
 	return 0;
 }
 
@@ -340,6 +348,36 @@ static int vidioc_enum_fmt_vid_out(struct file *file, void *priv,
 				   struct v4l2_fmtdesc *f)
 {
 	return vidioc_enum_fmt(file, f, true);
+}
+
+/*
+ * Coded sizes on MFC v15: up to H.264 level 5.2's largest frame. Without
+ * this, Chromium assumes 1920x1088 and decodes anything bigger in software.
+ */
+static int vidioc_enum_framesizes(struct file *file, void *priv,
+				  struct v4l2_frmsizeenum *fsize)
+{
+	struct s5p_mfc_dev *dev = video_drvdata(file);
+	const struct s5p_mfc_fmt *fmt;
+	struct v4l2_format f = {
+		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
+		.fmt.pix_mp.pixelformat = fsize->pixel_format,
+	};
+
+	if (!IS_MFCV15(dev) || fsize->index)
+		return -EINVAL;
+	fmt = find_format(&f, MFC_FMT_DEC);
+	if (!fmt || !(dev->variant->version_bit & fmt->versions))
+		return -EINVAL;
+
+	fsize->type = V4L2_FRMSIZE_TYPE_STEPWISE;
+	fsize->stepwise.min_width = 32;
+	fsize->stepwise.max_width = 4096;
+	fsize->stepwise.step_width = 2;
+	fsize->stepwise.min_height = 32;
+	fsize->stepwise.max_height = 2304;
+	fsize->stepwise.step_height = 2;
+	return 0;
 }
 
 /* Get format */
@@ -377,6 +415,9 @@ static int vidioc_g_fmt(struct file *file, void *priv, struct v4l2_format *f)
 		pix_mp->plane_fmt[0].sizeimage = ctx->luma_size;
 		pix_mp->plane_fmt[1].bytesperline = ctx->stride[1];
 		pix_mp->plane_fmt[1].sizeimage = ctx->chroma_size;
+		/* NV12 in one buffer: the chroma follows the luma */
+		if (ctx->dst_fmt->num_planes == 1)
+			pix_mp->plane_fmt[0].sizeimage = s5p_mfc_dec_nv12_size(ctx);
 		if (ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YUV420M || ctx->dst_fmt->fourcc ==
 				V4L2_PIX_FMT_YVU420M) {
 			pix_mp->plane_fmt[2].bytesperline = ctx->stride[2];
@@ -452,7 +493,13 @@ static int vidioc_s_fmt(struct file *file, void *priv, struct v4l2_format *f)
 	pix_mp = &f->fmt.pix_mp;
 	if (ret)
 		return ret;
-	if (vb2_is_streaming(&ctx->vq_src) || vb2_is_streaming(&ctx->vq_dst)) {
+	/*
+	 * Each queue's format is fixed only while that queue streams: the
+	 * stateful decoder interface has the client set the CAPTURE format
+	 * after the source change event, with OUTPUT still streaming.
+	 */
+	if (vb2_is_streaming(f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ?
+			     &ctx->vq_dst : &ctx->vq_src)) {
 		v4l2_err(&dev->v4l2_dev, "%s queue busy\n", __func__);
 		ret = -EBUSY;
 		goto out;
@@ -460,6 +507,13 @@ static int vidioc_s_fmt(struct file *file, void *priv, struct v4l2_format *f)
 	if (f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		/* dst_fmt is validated by call to vidioc_try_fmt */
 		ctx->dst_fmt = find_format(f, MFC_FMT_RAW);
+		/*
+		 * After the header was parsed the plane sizes were worked out
+		 * for the old format; NV12 in one buffer lays them out
+		 * differently, so work them out again.
+		 */
+		if (ctx->state == MFCINST_HEAD_PARSED)
+			s5p_mfc_hw_call(dev->mfc_ops, dec_calc_dpb_size, ctx);
 		ret = 0;
 		goto out;
 	} else if (f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
@@ -476,6 +530,7 @@ static int vidioc_s_fmt(struct file *file, void *priv, struct v4l2_format *f)
 			ctx->dec_src_buf_size = buf_size->cpb;
 		else
 			ctx->dec_src_buf_size = pix_mp->plane_fmt[0].sizeimage;
+		pix_mp->plane_fmt[0].sizeimage = ctx->dec_src_buf_size;
 		pix_mp->plane_fmt[0].bytesperline = 0;
 		ctx->state = MFCINST_INIT;
 		ret = 0;
@@ -913,6 +968,7 @@ static const struct v4l2_ioctl_ops s5p_mfc_dec_ioctl_ops = {
 	.vidioc_querycap = vidioc_querycap,
 	.vidioc_enum_fmt_vid_cap = vidioc_enum_fmt_vid_cap,
 	.vidioc_enum_fmt_vid_out = vidioc_enum_fmt_vid_out,
+	.vidioc_enum_framesizes = vidioc_enum_framesizes,
 	.vidioc_g_fmt_vid_cap_mplane = vidioc_g_fmt,
 	.vidioc_g_fmt_vid_out_mplane = vidioc_g_fmt,
 	.vidioc_try_fmt_vid_cap_mplane = vidioc_try_fmt,
@@ -961,12 +1017,13 @@ static int s5p_mfc_queue_setup(struct vb2_queue *vq,
 			mfc_err("invalid format\n");
 			return -EINVAL;
 		}
-		*plane_count = format->comp_planes;
+		*plane_count = format->mem_planes;
 
 		/* Setup buffer count */
 		if (*buf_count < ctx->pb_count)
 			*buf_count = ctx->pb_count;
-		if (*buf_count > ctx->pb_count + MFC_MAX_EXTRA_DPB)
+		if (!dev->dynamic_dpb &&
+		    *buf_count > ctx->pb_count + MFC_MAX_EXTRA_DPB)
 			*buf_count = ctx->pb_count + MFC_MAX_EXTRA_DPB;
 		if (*buf_count > MFC_MAX_BUFFERS)
 			*buf_count = MFC_MAX_BUFFERS;
@@ -981,6 +1038,8 @@ static int s5p_mfc_queue_setup(struct vb2_queue *vq,
 	    vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		psize[0] = ctx->luma_size;
 		psize[1] = ctx->chroma_size;
+		if (ctx->dst_fmt->num_planes == 1)
+			psize[0] = s5p_mfc_dec_nv12_size(ctx);
 		if (ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YUV420M || ctx->dst_fmt->fourcc ==
 				V4L2_PIX_FMT_YVU420M)
 			psize[2] = ctx->chroma_size_1;
@@ -1002,6 +1061,32 @@ static int s5p_mfc_queue_setup(struct vb2_queue *vq,
 	return 0;
 }
 
+/*
+ * MFCv15 firmware rejects any buffer below its own base address. The private
+ * buffers are allocated after it, but the vb2 buffers come from the generic
+ * DMA allocator and nothing guarantees their position unless the device has
+ * its own "memory-region". Warn so that a failure can be traced to this.
+ */
+static void s5p_mfc_check_buf_addr_v15(struct s5p_mfc_ctx *ctx,
+				       struct vb2_buffer *vb, unsigned int planes)
+{
+	struct s5p_mfc_dev *dev = ctx->dev;
+	dma_addr_t addr;
+	unsigned int i;
+
+	if (!IS_MFCV15(dev))
+		return;
+
+	for (i = 0; i < planes; i++) {
+		addr = vb2_dma_contig_plane_dma_addr(vb, i);
+		if (addr < dev->fw_buf.dma)
+			dev_warn(&dev->plat_dev->dev,
+				 "%s buffer %u plane %u at %pad is below the firmware base %pad, the MFC will reject it\n",
+				 V4L2_TYPE_IS_OUTPUT(vb->type) ? "OUTPUT" : "CAPTURE",
+				 vb->index, i, &addr, &dev->fw_buf.dma);
+	}
+}
+
 static int s5p_mfc_buf_init(struct vb2_buffer *vb)
 {
 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
@@ -1019,8 +1104,10 @@ static int s5p_mfc_buf_init(struct vb2_buffer *vb)
 				return -EINVAL;
 			}
 		}
-		if (vb2_plane_size(vb, 0) < ctx->luma_size ||
-			vb2_plane_size(vb, 1) < ctx->chroma_size) {
+		if (ctx->dst_fmt->num_planes == 1 ?
+		    vb2_plane_size(vb, 0) < s5p_mfc_dec_nv12_size(ctx) :
+		    vb2_plane_size(vb, 0) < ctx->luma_size ||
+		    vb2_plane_size(vb, 1) < ctx->chroma_size) {
 			mfc_err("Plane buffer (CAPTURE) is too small\n");
 			return -EINVAL;
 		}
@@ -1031,11 +1118,16 @@ static int s5p_mfc_buf_init(struct vb2_buffer *vb)
 				return -EINVAL;
 			}
 		}
+		s5p_mfc_check_buf_addr_v15(ctx, vb, ctx->dst_fmt->num_planes);
 		i = vb->index;
 		ctx->dst_bufs[i].b = vbuf;
 		ctx->dst_bufs[i].cookie.raw.luma =
 					vb2_dma_contig_plane_dma_addr(vb, 0);
-		ctx->dst_bufs[i].cookie.raw.chroma =
+		if (ctx->dst_fmt->num_planes == 1)
+			ctx->dst_bufs[i].cookie.raw.chroma =
+				ctx->dst_bufs[i].cookie.raw.luma + ctx->luma_size;
+		else
+			ctx->dst_bufs[i].cookie.raw.chroma =
 					vb2_dma_contig_plane_dma_addr(vb, 1);
 		if (ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YUV420M || ctx->dst_fmt->fourcc ==
 				V4L2_PIX_FMT_YVU420M) {
@@ -1054,6 +1146,7 @@ static int s5p_mfc_buf_init(struct vb2_buffer *vb)
 			return -EINVAL;
 		}
 
+		s5p_mfc_check_buf_addr_v15(ctx, vb, 1);
 		i = vb->index;
 		ctx->src_bufs[i].b = vbuf;
 		ctx->src_bufs[i].cookie.stream =
@@ -1094,6 +1187,14 @@ static void s5p_mfc_stop_streaming(struct vb2_queue *q)
 		ctx->state ==  MFCINST_RUNNING) &&
 		dev->curr_ctx == ctx->num && dev->hw_lock) {
 		ctx->state = MFCINST_ABORT;
+		/*
+		 * Take the context off the run queue. Otherwise the interrupt
+		 * handler of the frame being decoded picks it again in
+		 * try_run, which clears the context's interrupt flags before
+		 * finding nothing to run in MFCINST_ABORT, and the wait below
+		 * misses that FRAME_DONE and times out.
+		 */
+		clear_work_bit(ctx);
 		spin_unlock_irqrestore(&dev->irqlock, flags);
 		s5p_mfc_wait_for_done_ctx(ctx,
 					S5P_MFC_R2H_CMD_FRAME_DONE_RET, 0);
@@ -1106,6 +1207,7 @@ static void s5p_mfc_stop_streaming(struct vb2_queue *q)
 		ctx->dst_queue_cnt = 0;
 		ctx->dpb_flush_flag = 1;
 		ctx->dec_dst_flag = 0;
+		ctx->dpb_used = 0;
 		if (IS_MFCV6_PLUS(dev) && (ctx->state == MFCINST_RUNNING)) {
 			ctx->state = MFCINST_FLUSH;
 			set_work_bit_irqsave(ctx);
