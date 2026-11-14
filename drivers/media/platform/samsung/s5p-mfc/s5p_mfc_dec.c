@@ -476,6 +476,7 @@ static int vidioc_s_fmt(struct file *file, void *priv, struct v4l2_format *f)
 			ctx->dec_src_buf_size = buf_size->cpb;
 		else
 			ctx->dec_src_buf_size = pix_mp->plane_fmt[0].sizeimage;
+		pix_mp->plane_fmt[0].sizeimage = ctx->dec_src_buf_size;
 		pix_mp->plane_fmt[0].bytesperline = 0;
 		ctx->state = MFCINST_INIT;
 		ret = 0;
