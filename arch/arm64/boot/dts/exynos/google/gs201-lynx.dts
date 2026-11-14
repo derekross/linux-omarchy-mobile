@@ -68,6 +68,29 @@
 	};
 
 	/*
+	 * Panel rails: vci is S2MPG12 LDO27M and vddi is S2MPG13 BUCKA.
+	 * Neither PMIC has a regulator driver yet, so these stay as the
+	 * bootloader left them (always on, no control).
+	 */
+	panel_vddi: regulator-panel-vddi {
+		compatible = "regulator-fixed";
+		regulator-name = "panel-vddi";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	panel_vci: regulator-panel-vci {
+		compatible = "regulator-fixed";
+		regulator-name = "panel-vci";
+		regulator-min-microvolt = <3000000>;
+		regulator-max-microvolt = <3000000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	/*
 	 * ABL adds sec_dram, sec_pt and pkvm_guest_firmware to this tree
 	 * itself. Stock's tui, mfc_fw and famodel are pools the kernel
 	 * places at boot (size and alloc-ranges, no fixed address), so
@@ -90,6 +113,19 @@
 		cont_splash_mem: splash@fac00000 {
 			reg = <0x0 0xfac00000 (1080 * 2400 * 4)>;
 			no-map;
+		};
+
+		/*
+		 * Scanout buffers for gs-decon. Inside the c3080000-d80fffff
+		 * System RAM block from /proc/iomem on the phone; below 4 GiB
+		 * because DPP0 takes 32-bit addresses.
+		 */
+		display_pool: display-pool {
+			compatible = "shared-dma-pool";
+			reusable;
+			size = <0x5c00000>;
+			alignment = <0x0 0x200000>;
+			alloc-ranges = <0x0 0xc4000000 0x5c00000>;
 		};
 	};
 };
@@ -305,3 +341,27 @@
 &usi_apm1 {
 	status = "okay";
 };
+
+&dsi0 {
+	status = "okay";
+	panel: panel@0 {
+		compatible = "samsung,s6e3fc5";
+		reg = <0>;
+		reset-gpios = <&gpa7 1 GPIO_ACTIVE_LOW>;
+		vci-supply = <&panel_vci>;
+		vddi-supply = <&panel_vddi>;
+		width-mm = <64>;
+		height-mm = <141>;
+	};
+};
+
+&decon0 {
+	compatible = "google,gs201-decon-lynx";
+	memory-region = <&display_pool>, <&cont_splash_mem>;
+	memory-region-names = "pool", "boot-framebuffer";
+	status = "okay";
+};
+
+&cmu_dpu { status = "okay"; };
+&cmu_disp { status = "okay"; };
+&gpu { status = "okay"; };

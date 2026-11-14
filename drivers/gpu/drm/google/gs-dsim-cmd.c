@@ -17,10 +17,10 @@
  *
  * For the gs-decon KMS driver it also switches the refresh rate: the DSIM's
  * command-mode TE and underrun timers, and the panel through
- * drm_panel_set_refresh_rate(). It only does so on the link it has timer
+ * drm_panel_set_refresh_rate(). It only does so on the link it has time
  * values for (gs_dsim_rates[]), recognised from what the bootloader left.
  *
- * Register layout from Google's GPL display driver
+ * Register layout from Google's GPL display drive
  * (google-modules/display/samsung/cal_9845/regs-dsim.h), which gs201
  * shares with gs101.
  */
@@ -104,8 +104,8 @@ struct gs_dsim_rate {
  * One set per panel and link, found at probe from the timers the
  * bootloader left (its 60 Hz). Within a set, 120 Hz has half the TE
  * timeouts and the underrun of Google's dsim_calc_underrun(): the 60 Hz
- * value less the frame time saved (1e9 / 101 * (1/60 - 1/120) ns, te_var
- * 1) at the link's word clock, in units of 100 word clocks.
+ * value less the frame time saved (1e9 / 101 * (1/60 - 1/120) ns, TE
+ * variant 1) at the link's word clock, in units of 100 word clocks.
  */
 static const struct gs_dsim_rate gs_dsim_rates[][2] = {
 	/* Pixel 7 Pro, S6E3HC4 */
@@ -609,6 +609,16 @@ EXPORT_SYMBOL_GPL(gs_dsim_set_refresh_rate);
  *
  * Return: 0, or a negative error code with the panel left on.
  */
+int gs_dsim_panel_get_modes(struct gs_dsim *dsim,
+			    struct drm_connector *connector)
+{
+	if (!dsim->panel)
+		return 0;
+
+	return drm_panel_get_modes(dsim->panel, connector);
+}
+EXPORT_SYMBOL_GPL(gs_dsim_panel_get_modes);
+
 int gs_dsim_panel_sleep(struct gs_dsim *dsim)
 {
 	guard(mutex)(&dsim->panel_lock);
