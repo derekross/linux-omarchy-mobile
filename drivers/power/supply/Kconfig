@@ -679,6 +679,21 @@ config CHARGER_MAX77759
 
 	  If built as a module, it will be called max77759_charger.
 
+config CHARGER_MAX77759_KUNIT_TEST
+	bool "KUnit tests for the MAX77759 charger temperature guard" if !KUNIT_ALL_TESTS
+	depends on CHARGER_MAX77759 && KUNIT
+	depends on KUNIT=y || CHARGER_MAX77759=m
+	default KUNIT_ALL_TESTS
+	help
+	  KUnit tests for the step-charging tables of the MAX77759 charger
+	  driver's battery temperature guard: the temperature bands and
+	  their hysteresis, the voltage tiers, the limits from the battery
+	  description and the table of each board.
+
+	  The tests are built into the driver. They touch no hardware.
+
+	  If unsure, say N.
+
 config CHARGER_MAX77976
 	tristate "Maxim MAX77976 battery charger driver"
 	depends on I2C

@@ -16224,7 +16224,7 @@ MAXIM MAX77759 BATTERY CHARGER DRIVER
 M:	Amit Sunil Dhamne <amitsd@google.com>
 L:	linux-kernel@vger.kernel.org
 S:	Maintained
-F:	drivers/power/supply/max77759_charger.c
+F:	drivers/power/supply/max77759_charger*
 
 MAXIM MAX77779 FUEL GAUGE AND CHARGER DRIVERS
 M:	W4HO <87742609+W4HO-ham@users.noreply.github.com>
