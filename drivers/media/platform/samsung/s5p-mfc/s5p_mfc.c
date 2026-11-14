@@ -566,8 +566,15 @@ static void s5p_mfc_handle_seq_done(struct s5p_mfc_ctx *ctx,
 			v4l2_event_queue_fh(&ctx->fh, &ev_src_ch);
 		}
 
+		/*
+		 * The buffer the header came in may hold the first frame too.
+		 * Keep it for decoding unless the header used it up: on MFC
+		 * v15 for every codec, as the first HEVC IRAP picture and the
+		 * first VP8/VP9 key frame share the header's buffer.
+		 */
 		if ((ctx->codec_mode == S5P_MFC_CODEC_H264_DEC ||
-			ctx->codec_mode == S5P_MFC_CODEC_H264_MVC_DEC) &&
+			ctx->codec_mode == S5P_MFC_CODEC_H264_MVC_DEC ||
+			IS_MFCV15(dev)) &&
 				!list_empty(&ctx->src_queue)) {
 			struct s5p_mfc_buf *src_buf;
 
