@@ -1485,7 +1485,8 @@ static int vidioc_s_fmt(struct file *file, void *priv, struct v4l2_format *f)
 	ret = vidioc_try_fmt(file, priv, f);
 	if (ret)
 		return ret;
-	if (ctx->vq_src.streaming || ctx->vq_dst.streaming) {
+	if (f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ?
+	    ctx->vq_dst.streaming : ctx->vq_src.streaming) {
 		v4l2_err(&dev->v4l2_dev, "%s queue busy\n", __func__);
 		ret = -EBUSY;
 		goto out;
