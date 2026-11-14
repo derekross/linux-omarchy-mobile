@@ -453,7 +453,13 @@ static int vidioc_s_fmt(struct file *file, void *priv, struct v4l2_format *f)
 	pix_mp = &f->fmt.pix_mp;
 	if (ret)
 		return ret;
-	if (vb2_is_streaming(&ctx->vq_src) || vb2_is_streaming(&ctx->vq_dst)) {
+	/*
+	 * Each queue's format is fixed only while that queue streams: the
+	 * stateful decoder interface has the client set the CAPTURE format
+	 * after the source change event, with OUTPUT still streaming.
+	 */
+	if (vb2_is_streaming(f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ?
+			     &ctx->vq_dst : &ctx->vq_src)) {
 		v4l2_err(&dev->v4l2_dev, "%s queue busy\n", __func__);
 		ret = -EBUSY;
 		goto out;
