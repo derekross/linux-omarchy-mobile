@@ -1496,6 +1496,10 @@ static int vidioc_s_fmt(struct file *file, void *priv, struct v4l2_format *f)
 		ctx->dst_fmt = find_format(f, MFC_FMT_ENC);
 		ctx->state = MFCINST_INIT;
 		ctx->codec_mode = ctx->dst_fmt->codec_mode;
+		/* A client may leave the bitstream buffer's size to us */
+		if (!pix_fmt_mp->plane_fmt[0].sizeimage)
+			pix_fmt_mp->plane_fmt[0].sizeimage =
+				dev->variant->buf_size->cpb;
 		ctx->enc_dst_buf_size =	pix_fmt_mp->plane_fmt[0].sizeimage;
 		pix_fmt_mp->plane_fmt[0].bytesperline = 0;
 		ctx->dst_bufs_cnt = 0;
