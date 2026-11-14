@@ -2287,6 +2287,7 @@ static int vidioc_s_parm(struct file *file, void *priv,
 	struct s5p_mfc_ctx *ctx = file_to_ctx(file);
 
 	if (a->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+		a->parm.output.capability = V4L2_CAP_TIMEPERFRAME;
 		ctx->enc_params.rc_framerate_num =
 					a->parm.output.timeperframe.denominator;
 		ctx->enc_params.rc_framerate_denom =
@@ -2303,7 +2304,9 @@ static int vidioc_g_parm(struct file *file, void *priv,
 {
 	struct s5p_mfc_ctx *ctx = file_to_ctx(file);
 
-	if (a->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
+	if (a->type == V4L2_BUF_TYPE_VIDEO_OUTPUT ||
+	    a->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+		a->parm.output.capability = V4L2_CAP_TIMEPERFRAME;
 		a->parm.output.timeperframe.denominator =
 					ctx->enc_params.rc_framerate_num;
 		a->parm.output.timeperframe.numerator =
