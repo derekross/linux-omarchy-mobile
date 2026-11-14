@@ -84,7 +84,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_H264_MVC_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V6PLUS_BITS,
+		.versions	= (MFC_V6PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION |
 				  V4L2_FMT_FLAG_CONTINUOUS_BYTESTREAM,
 	},
@@ -93,7 +93,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_H263_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= (MFC_V5PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION,
 	},
 	{
@@ -101,7 +101,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_MPEG2_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= (MFC_V5PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION |
 				  V4L2_FMT_FLAG_CONTINUOUS_BYTESTREAM,
 	},
@@ -110,7 +110,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_MPEG2_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= (MFC_V5PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION |
 				  V4L2_FMT_FLAG_CONTINUOUS_BYTESTREAM,
 	},
@@ -119,7 +119,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_MPEG4_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= (MFC_V5PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION |
 				  V4L2_FMT_FLAG_CONTINUOUS_BYTESTREAM,
 	},
@@ -128,7 +128,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_MPEG4_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= (MFC_V5PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION,
 	},
 	{
@@ -136,7 +136,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_VC1_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= (MFC_V5PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION,
 	},
 	{
@@ -144,7 +144,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_VC1RCV_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= (MFC_V5PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION,
 	},
 	{
@@ -152,7 +152,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_VP8_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V6PLUS_BITS,
+		.versions	= (MFC_V6PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION,
 	},
 	{
@@ -160,7 +160,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_FIMV_CODEC_HEVC_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V10PLUS_BITS,
+		.versions	= (MFC_V10PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION |
 				  V4L2_FMT_FLAG_CONTINUOUS_BYTESTREAM,
 	},
@@ -169,7 +169,7 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_FIMV_CODEC_VP9_DEC,
 		.type		= MFC_FMT_DEC,
 		.num_planes	= 1,
-		.versions	= MFC_V10PLUS_BITS,
+		.versions	= (MFC_V10PLUS_BITS & ~MFC_V15_BIT),
 		.flags		= V4L2_FMT_FLAG_DYN_RESOLUTION,
 	},
 };
