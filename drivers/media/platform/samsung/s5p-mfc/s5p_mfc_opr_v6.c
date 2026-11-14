@@ -913,10 +913,17 @@ static int s5p_mfc_set_enc_params(struct s5p_mfc_ctx *ctx)
 
 	mfc_debug_enter();
 
-	/* width */
-	writel(ctx->img_width, mfc_regs->e_frame_width); /* 16 align */
-	/* height */
-	writel(ctx->img_height, mfc_regs->e_frame_height); /* 16 align */
+	/*
+	 * MFC v15 has no frame width and height registers: the encoder
+	 * takes the cropped size, and 0xF770/0xF774 are the decoder's
+	 * payload registers there (as in Google's exynos-mfc driver).
+	 */
+	if (!IS_MFCV15(dev)) {
+		/* width */
+		writel(ctx->img_width, mfc_regs->e_frame_width); /* 16 align */
+		/* height */
+		writel(ctx->img_height, mfc_regs->e_frame_height); /* 16 align */
+	}
 
 	/* cropped width */
 	writel(ctx->img_width, mfc_regs->e_cropped_frame_width);
@@ -1191,8 +1198,9 @@ static int s5p_mfc_set_enc_params_h264(struct s5p_mfc_ctx *ctx)
 
 	/* height */
 	if (p_h264->interlace) {
-		writel(ctx->img_height >> 1,
-				mfc_regs->e_frame_height); /* 32 align */
+		if (!IS_MFCV15(dev))
+			writel(ctx->img_height >> 1,
+			       mfc_regs->e_frame_height); /* 32 align */
 		/* cropped height */
 		writel(ctx->img_height >> 1,
 				mfc_regs->e_cropped_frame_height);
