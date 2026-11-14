@@ -1468,6 +1468,8 @@ static int vidioc_try_fmt(struct file *file, void *priv, struct v4l2_format *f)
 		else
 			v4l_bound_align_image(&pix_fmt_mp->width, 8, 1920, 1, &pix_fmt_mp
 					->height, 4, 1080, 1, 0);
+		pix_fmt_mp->field = V4L2_FIELD_NONE;
+		pix_fmt_mp->num_planes = fmt->num_planes;
 	} else {
 		mfc_err("invalid buf type\n");
 		return -EINVAL;
