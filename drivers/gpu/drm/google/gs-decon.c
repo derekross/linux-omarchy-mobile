@@ -4,13 +4,13 @@
  * bootloader left running.
  *
  * The bootloader brings up DECON0 -> DSIM0 -> the panel in DSI command
- * mode, with DSC, and scans out its framebuffer through DPP0. This drive
+ * mode, with DSC, and scans out its framebuffer through DPP0. This driver
  * keeps all of that configuration. It only:
  *
  *  - points DPP0's read DMA at a new buffer and requests a shadow update,
  *    which the hardware applies at the next frame start; the first one
  *    also switches DPP0 from the bootloader's ARGB8888 to XRGB8888;
- *  - counts frame start interrupts, which in command mode come once pe
+ *  - counts frame start interrupts, which in command mode come once per
  *    panel TE pulse while the hardware trigger is unmasked, and reports
  *    them as vblanks, and completes page flips once the shadow update has
  *    been taken;
@@ -26,7 +26,7 @@
  *
  *  0: log the DECON and DPP0 state, read only
  *  1: also enable the frame start/done interrupts and count them, to
- *     measure the refresh rate (sysfs "stats"); on G4, start its trigge
+ *     measure the refresh rate (sysfs "stats"); on G4, start its trigger
  *     and restore the saved trigger bits when the measurement is removed
  *  2: also register a DRM device that takes the display over from
  *     simpledrm (default)
@@ -274,6 +274,8 @@ struct gs_decon_soc_data {
 	bool hold_boot_fb;
 	/* a VT switch around system sleep only with the fbdev console */
 	bool vt_switch_fbdev_only;
+	/* the panel driver owns the modes, not this table */
+	bool panel_modes;
 };
 
 static const struct gs_decon_soc_data gs201_decon_data = {
@@ -348,6 +350,7 @@ static const struct gs_decon_soc_data gs201_lynx_decon_data = {
 	.padded_pitch = true,
 	.modes = gs201_lynx_decon_modes,
 	.num_modes = ARRAY_SIZE(gs201_lynx_decon_modes),
+	.panel_modes = true,
 	.image_size_reg = RDMA_IMG_SIZE,
 	.source_offset_reg = RDMA_SRC_OFFSET,
 	.shadow_update_mask = SHD_REG_UP_REQ_FLIP(SHD_REG_UP_REQ_ALL_WIN),
@@ -700,7 +703,7 @@ static void gs_decon_set_scanout_locked(struct gs_decon *dc, dma_addr_t addr,
 }
 
 /*
- * Scans out the boot framebuffer, cleared to black, so that no buffe
+ * Scans out the boot framebuffer, cleared to black, so that no buffer
  * DRM is about to free is still being read. Waits until DECON has taken
  * the new address, or two frames at 60 Hz.
  */
@@ -1161,12 +1164,12 @@ static int gs_decon_connector_get_modes(struct drm_connector *connector)
 	struct gs_decon *dc = drm_to_decon(connector->dev);
 	int i, count;
 
-	if (dc->dsim) {
+	if (dc->dsim && dc->soc->panel_modes) {
 		count = gs_dsim_panel_get_modes(dc->dsim, connector);
 		if (count > 0) {
 			struct drm_display_mode *mode;
 
-			mode = list_first_entry(&connector->modes,
+			mode = list_first_entry(&connector->probed_modes,
 						struct drm_display_mode, head);
 			connector->display_info.width_mm = mode->width_mm;
 			connector->display_info.height_mm = mode->height_mm;
@@ -1496,7 +1499,7 @@ static int gs_decon_probe(struct platform_device *pdev)
 
 	/*
 	 * Mapping the registers of an unpowered block and reading them hangs
-	 * the SoC. Nothing in Linux powers the display down (no gs201 powe
+	 * the SoC. Nothing in Linux powers the display down (no gs201 power
 	 * domain driver, pd_ignore_unused), and the bootloader leaves it on
 	 * and scanning out, which simpledrm relies on too.
 	 */

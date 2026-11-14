@@ -7,7 +7,7 @@
  * command mode and leaves the pipeline scanning out its framebuffer, which
  * simpledrm then uses. This driver does not touch that pipeline. It only
  * registers a MIPI DSI host on DSIM0, so the panel driver can bind and send
- * DCS commands (brightness, display on/off) through the DSIM packet heade
+ * DCS commands (brightness, display on/off) through the DSIM packet header
  * and payload FIFOs, which the hardware interleaves with frame transfers.
  * It also reads from the panel (its ID, say): the request goes out with a
  * bus turnaround, and the response is polled for and taken from the RX FIFO.
@@ -104,8 +104,8 @@ struct gs_dsim_rate {
  * One set per panel and link, found at probe from the timers the
  * bootloader left (its 60 Hz). Within a set, 120 Hz has half the TE
  * timeouts and the underrun of Google's dsim_calc_underrun(): the 60 Hz
- * value less the frame time saved (1e9 / 101 * (1/60 - 1/120) ns, te_va
- * 1) at the link's word clock, in units of 100 word clocks.
+ * value less the frame time saved (1e9 / 101 * (1/60 - 1/120) ns, TE
+ * variant 1) at the link's word clock, in units of 100 word clocks.
  */
 static const struct gs_dsim_rate gs_dsim_rates[][2] = {
 	/* Pixel 7 Pro, S6E3HC4 */
@@ -339,7 +339,7 @@ static ssize_t gs_dsim_read(struct gs_dsim *dsim, const struct mipi_dsi_msg *msg
 	/*
 	 * Stricter than the vendor driver: its dsim_reg_rx_err_handler() takes
 	 * an error report with no error bits set as a read of zero bytes, and
-	 * it accepts an EoTp packet. Here both fail the read, so a caller neve
+	 * it accepts an EoTp packet. Here both fail the read, so a caller never
 	 * takes a read that returned no data for one that did.
 	 */
 	case MIPI_DSI_RX_ACKNOWLEDGE_AND_ERROR_REPORT:
@@ -641,7 +641,7 @@ EXPORT_SYMBOL_GPL(gs_dsim_panel_sleep);
 /**
  * gs_dsim_panel_wake - reset and initialise the panel after a sleep
  * @dsim: the DSIM
- * @enable: false for the cold init only (drm_panel_prepare()), true fo
+ * @enable: false for the cold init only (drm_panel_prepare()), true for
  *	display on and the backlight (drm_panel_enable())
  *
  * The cold init leaves the panel at 60 Hz, so the link timers go back to

@@ -4,7 +4,7 @@
  *
  * Copyright (c) 2022 Google LLC
  *
- * Command sequences from Google's GPL panel drive
+ * Command sequences from Google's GPL panel driver
  * (google-modules/display/samsung/panel/panel-samsung-s6e3fc5.c),
  * restricted to the PVT and later panels that ship in phones.
  *
