@@ -338,8 +338,8 @@ static const struct drm_display_mode gs201_lynx_decon_modes[] = {
 		.vsync_start = 2400 + 12,
 		.vsync_end = 2400 + 12 + 4,
 		.vtotal = 2400 + 12 + 4 + 26,
-		.width_mm = 70,
-		.height_mm = 149,
+		.width_mm = 64,
+		.height_mm = 141,
 		.type = DRM_MODE_TYPE_DRIVER,
 	},
 };

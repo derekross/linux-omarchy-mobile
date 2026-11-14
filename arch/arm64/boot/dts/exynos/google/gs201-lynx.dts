@@ -348,10 +348,10 @@
 		compatible = "samsung,s6e3fc5";
 		reg = <0>;
 		reset-gpios = <&gpa7 1 GPIO_ACTIVE_LOW>;
-		vddio-supply = <&panel_vddi>;
-		avdd-supply = <&panel_vci>;
-		width-mm = <70>;
-		height-mm = <149>;
+		vci-supply = <&panel_vci>;
+		vddi-supply = <&panel_vddi>;
+		width-mm = <64>;
+		height-mm = <141>;
 	};
 };
 

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Samsung S6E3FC5 DSI command-mode AMOLED panel (Google Pixel 7 Pro)
+ * Samsung S6E3FC5 DSI command-mode AMOLED panel (Google Pixel 7a)
+ *
+ * Copyright (c) 2022 Google LLC
  *
  * Command sequences from Google's GPL panel drive
  * (google-modules/display/samsung/panel/panel-samsung-s6e3fc5.c),
@@ -75,8 +77,8 @@ struct s6e3fc5 {
 };
 
 static const struct regulator_bulk_data s6e3fc5_supplies[] = {
-	{ .supply = "vddio" },
-	{ .supply = "avdd" },
+	{ .supply = "vci" },
+	{ .supply = "vddi" },
 };
 
 static inline struct s6e3fc5 *to_s6e3fc5(struct drm_panel *panel)
@@ -181,7 +183,6 @@ static int s6e3fc5_prepare(struct drm_panel *panel)
 	s6e3fc5_dsc(&dsi_ctx);
 	s6e3fc5_init(&dsi_ctx);
 	s6e3fc5_unlock_lvl2(&dsi_ctx);
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xc3, 0x0c);	/* WQHD output */
 	s6e3fc5_lock_lvl2(&dsi_ctx);
 	/* the vendor driver cold-starts at 60 Hz */
 	s6e3fc5_write_rate(&dsi_ctx, 60);
@@ -282,8 +283,8 @@ static int s6e3fc5_set_refresh_rate(struct drm_panel *panel, unsigned int hz)
 	.vsync_start = 2400 + 12,					\
 	.vsync_end = 2400 + 12 + 4,					\
 	.vtotal = 2400 + 12 + 4 + 26,					\
-	.width_mm = 70,							\
-	.height_mm = 149,						\
+	.width_mm = 64,							\
+	.height_mm = 141,						\
 	.type = DRM_MODE_TYPE_DRIVER | (flags),				\
 }
 
@@ -340,7 +341,7 @@ static int s6e3fc5_set_lhbm(struct s6e3fc5 *ctx, bool on)
 					     0x39, 0x8a, 0x01);
 		/* centre position */
 		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x02, 0x24, 0x92);
-		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x92, 0x2d, 0x09, 0x39);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x92, 0x21, 0x0c, 0x39);
 		/* circle size */
 		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x02, 0x27, 0x92);
 		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x92, 0x78);

@@ -1099,9 +1099,12 @@ config DRM_PANEL_SAMSUNG_S6E3HC3
 
 config DRM_PANEL_SAMSUNG_S6E3FC5
 	tristate "Samsung S6E3FC5 DSI panel"
+	depends on GPIOLIB
 	depends on OF
 	depends on DRM_MIPI_DSI
 	depends on BACKLIGHT_CLASS_DEVICE
+	select DRM_DISPLAY_HELPER
+	select DRM_DISPLAY_DSC_HELPER
 	help
 	  Say Y here to enable support for the Samsung S6E3FC5 panel used
 	  on the Pixel 7a (lynx). It is a command-mode AMOLED panel with
