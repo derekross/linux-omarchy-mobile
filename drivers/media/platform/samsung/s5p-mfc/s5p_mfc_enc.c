@@ -92,14 +92,14 @@ static const struct s5p_mfc_fmt formats[] = {
 		.codec_mode	= S5P_MFC_CODEC_MPEG4_ENC,
 		.type		= MFC_FMT_ENC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= MFC_V5PLUS_BITS & ~MFC_V15_BIT,
 	},
 	{
 		.fourcc		= V4L2_PIX_FMT_H263,
 		.codec_mode	= S5P_MFC_CODEC_H263_ENC,
 		.type		= MFC_FMT_ENC,
 		.num_planes	= 1,
-		.versions	= MFC_V5PLUS_BITS,
+		.versions	= MFC_V5PLUS_BITS & ~MFC_V15_BIT,
 	},
 	{
 		.fourcc		= V4L2_PIX_FMT_VP8,
