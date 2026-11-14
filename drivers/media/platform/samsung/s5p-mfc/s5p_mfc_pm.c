@@ -84,6 +84,20 @@ int s5p_mfc_power_on(struct s5p_mfc_dev *dev)
 		}
 	}
 
+	/*
+	 * Run at the variant's rate while the MFC is in use. The bootloader
+	 * leaves the GS201 MFC at 100 MHz, a quarter of what 4K needs.
+	 */
+	if (dev->variant->active_clk_rate && dev->pm.clocks[0]) {
+		dev->pm.idle_clk_rate = clk_get_rate(dev->pm.clocks[0]);
+		ret = clk_set_rate(dev->pm.clocks[0],
+				   dev->variant->active_clk_rate);
+		if (ret)
+			mfc_err("Failed to set the MFC clock to %lu Hz: %d\n",
+				dev->variant->active_clk_rate, ret);
+		ret = 0;
+	}
+
 	/* prepare for software clock gating */
 	clk_disable(dev->pm.clock_gate);
 
@@ -101,6 +115,11 @@ int s5p_mfc_power_off(struct s5p_mfc_dev *dev)
 
 	/* finish software clock gating */
 	clk_enable(dev->pm.clock_gate);
+
+	if (dev->pm.idle_clk_rate) {
+		clk_set_rate(dev->pm.clocks[0], dev->pm.idle_clk_rate);
+		dev->pm.idle_clk_rate = 0;
+	}
 
 	for (i = 0; i < dev->pm.num_clocks; i++)
 		clk_disable_unprepare(dev->pm.clocks[i]);
