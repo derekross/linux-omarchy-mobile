@@ -226,6 +226,9 @@ struct s5p_mfc_buf_size {
 	const void *priv;
 };
 
+struct s5p_mfc_ctx;
+size_t s5p_mfc_dec_nv12_size(const struct s5p_mfc_ctx *ctx);
+
 struct s5p_mfc_variant {
 	unsigned int version;
 	unsigned int port_num;

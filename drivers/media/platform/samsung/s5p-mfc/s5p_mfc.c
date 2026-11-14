@@ -356,6 +356,10 @@ static void s5p_mfc_handle_frame_new(struct s5p_mfc_ctx *ctx, unsigned int err)
 						ctx->luma_size);
 			vb2_set_plane_payload(&dst_buf->b->vb2_buf, 1,
 						ctx->chroma_size);
+			/* NV12 in one buffer: plane 0 holds the whole frame */
+			if (ctx->dst_fmt->num_planes == 1)
+				vb2_set_plane_payload(&dst_buf->b->vb2_buf, 0,
+						      s5p_mfc_dec_nv12_size(ctx));
 			clear_bit(dst_buf->b->vb2_buf.index,
 							&ctx->dec_dst_flag);
 
