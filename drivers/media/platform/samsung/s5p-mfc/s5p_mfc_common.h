@@ -199,6 +199,7 @@ struct s5p_mfc_pm {
 	struct clk	*clocks[MFC_MAX_CLOCKS];
 	int		num_clocks;
 	bool		use_clock_gating;
+	unsigned long	idle_clk_rate;
 
 	struct device	*device;
 };
@@ -235,6 +236,7 @@ struct s5p_mfc_variant {
 	int		num_clocks;
 	bool		use_clock_gating;
 	bool		clocks_optional;
+	unsigned long	active_clk_rate;
 };
 
 /**
