@@ -603,6 +603,15 @@ static int s5p_mfc_set_dec_stream_buffer_v6(struct s5p_mfc_ctx *ctx,
 	return 0;
 }
 
+/* DPB plane sizes */
+static void s5p_mfc_set_dec_dpb_size(struct s5p_mfc_ctx *ctx)
+{
+	const struct s5p_mfc_regs *mfc_regs = ctx->dev->mfc_regs;
+
+	writel(ctx->luma_size, mfc_regs->d_first_plane_dpb_size);
+	writel(ctx->chroma_size, mfc_regs->d_second_plane_dpb_size);
+}
+
 /* Set decoding frame buffer */
 static int s5p_mfc_set_dec_frame_buffer_v6(struct s5p_mfc_ctx *ctx)
 {
@@ -622,8 +631,7 @@ static int s5p_mfc_set_dec_frame_buffer_v6(struct s5p_mfc_ctx *ctx)
 	mfc_debug(2, "Setting display delay to %d\n", ctx->display_delay);
 
 	writel(ctx->total_dpb_count, mfc_regs->d_num_dpb);
-	writel(ctx->luma_size, mfc_regs->d_first_plane_dpb_size);
-	writel(ctx->chroma_size, mfc_regs->d_second_plane_dpb_size);
+	s5p_mfc_set_dec_dpb_size(ctx);
 	if (ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YUV420M || ctx->dst_fmt->fourcc ==
 			V4L2_PIX_FMT_YVU420M)
 		writel(ctx->chroma_size_1, mfc_regs->d_third_plane_dpb_size);
@@ -1865,6 +1873,21 @@ static void s5p_mfc_set_dynamic_dpb_v15(struct s5p_mfc_ctx *ctx)
 	struct s5p_mfc_buf *buf;
 	u32 set = 0;
 	int i;
+
+	/*
+	 * The plane sizes and strides set at INIT_BUFFERS don't always last
+	 * until the next frame (under Chromium they read back as 0 at the
+	 * second one), and the firmware then fails the frame with
+	 * INSUFFICIENT_DPB_SIZE. Set them again for every frame.
+	 */
+	s5p_mfc_set_dec_dpb_size(ctx);
+	writel(ctx->stride[0], mfc_regs->d_first_plane_dpb_stride_size);
+	writel(ctx->stride[1], mfc_regs->d_second_plane_dpb_stride_size);
+	if (ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YUV420M ||
+	    ctx->dst_fmt->fourcc == V4L2_PIX_FMT_YVU420M) {
+		writel(ctx->chroma_size_1, mfc_regs->d_third_plane_dpb_size);
+		writel(ctx->stride[2], mfc_regs->d_third_plane_dpb_stride_size);
+	}
 
 	buf = s5p_mfc_search_dynamic_dpb_v15(ctx);
 	if (buf) {
