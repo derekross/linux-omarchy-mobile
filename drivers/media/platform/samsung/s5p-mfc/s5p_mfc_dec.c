@@ -350,6 +350,36 @@ static int vidioc_enum_fmt_vid_out(struct file *file, void *priv,
 	return vidioc_enum_fmt(file, f, true);
 }
 
+/*
+ * Coded sizes on MFC v15: up to H.264 level 5.2's largest frame. Without
+ * this, Chromium assumes 1920x1088 and decodes anything bigger in software.
+ */
+static int vidioc_enum_framesizes(struct file *file, void *priv,
+				  struct v4l2_frmsizeenum *fsize)
+{
+	struct s5p_mfc_dev *dev = video_drvdata(file);
+	const struct s5p_mfc_fmt *fmt;
+	struct v4l2_format f = {
+		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
+		.fmt.pix_mp.pixelformat = fsize->pixel_format,
+	};
+
+	if (!IS_MFCV15(dev) || fsize->index)
+		return -EINVAL;
+	fmt = find_format(&f, MFC_FMT_DEC);
+	if (!fmt || !(dev->variant->version_bit & fmt->versions))
+		return -EINVAL;
+
+	fsize->type = V4L2_FRMSIZE_TYPE_STEPWISE;
+	fsize->stepwise.min_width = 32;
+	fsize->stepwise.max_width = 4096;
+	fsize->stepwise.step_width = 2;
+	fsize->stepwise.min_height = 32;
+	fsize->stepwise.max_height = 2304;
+	fsize->stepwise.step_height = 2;
+	return 0;
+}
+
 /* Get format */
 static int vidioc_g_fmt(struct file *file, void *priv, struct v4l2_format *f)
 {
@@ -938,6 +968,7 @@ static const struct v4l2_ioctl_ops s5p_mfc_dec_ioctl_ops = {
 	.vidioc_querycap = vidioc_querycap,
 	.vidioc_enum_fmt_vid_cap = vidioc_enum_fmt_vid_cap,
 	.vidioc_enum_fmt_vid_out = vidioc_enum_fmt_vid_out,
+	.vidioc_enum_framesizes = vidioc_enum_framesizes,
 	.vidioc_g_fmt_vid_cap_mplane = vidioc_g_fmt,
 	.vidioc_g_fmt_vid_out_mplane = vidioc_g_fmt,
 	.vidioc_try_fmt_vid_cap_mplane = vidioc_try_fmt,
