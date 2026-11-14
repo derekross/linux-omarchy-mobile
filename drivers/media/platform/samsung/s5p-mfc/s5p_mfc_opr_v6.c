@@ -483,6 +483,12 @@ static int calc_plane(int width, int height)
 		(mbY * S5P_FIMV_NUM_PIXELS_IN_MB_ROW_V6);
 }
 
+/* Bytes of a one-buffer NV12 frame: both planes and the firmware's margin */
+size_t s5p_mfc_dec_nv12_size(const struct s5p_mfc_ctx *ctx)
+{
+	return ctx->luma_size + ctx->chroma_size + S5P_FIMV_D_ALIGN_PLANE_SIZE_V8;
+}
+
 static void s5p_mfc_dec_calc_dpb_size_v6(struct s5p_mfc_ctx *ctx)
 {
 	struct s5p_mfc_dev *dev = ctx->dev;
@@ -494,6 +500,18 @@ static void s5p_mfc_dec_calc_dpb_size_v6(struct s5p_mfc_ctx *ctx)
 			ctx->img_height, ctx->buf_width, ctx->buf_height);
 
 	switch (ctx->dst_fmt->fourcc) {
+	case V4L2_PIX_FMT_NV12:
+		/*
+		 * One buffer, laid out as V4L2 NV12: the chroma starts right
+		 * after the luma's bytesperline * height, so no padding goes
+		 * between the planes (as Google's NV12N: 64 byte stride,
+		 * height aligned to 16).
+		 */
+		ctx->stride[0] = ALIGN(ctx->img_width, 64);
+		ctx->stride[1] = ctx->stride[0];
+		ctx->luma_size = ctx->stride[0] * ctx->buf_height;
+		ctx->chroma_size = ctx->stride[1] * ctx->buf_height / 2;
+		break;
 	case V4L2_PIX_FMT_NV12M:
 	case V4L2_PIX_FMT_NV21M:
 		ctx->stride[0] = ALIGN(ctx->img_width, S5P_FIMV_NV12MT_HALIGN_V6);
@@ -512,7 +530,7 @@ static void s5p_mfc_dec_calc_dpb_size_v6(struct s5p_mfc_ctx *ctx)
 		break;
 	}
 
-	if (IS_MFCV8_PLUS(ctx->dev)) {
+	if (IS_MFCV8_PLUS(ctx->dev) && ctx->dst_fmt->num_planes > 1) {
 		/* MFCv8 needs additional 64 bytes for luma,chroma dpb*/
 		ctx->luma_size += S5P_FIMV_D_ALIGN_PLANE_SIZE_V8;
 		ctx->chroma_size += S5P_FIMV_D_ALIGN_PLANE_SIZE_V8;
@@ -603,13 +621,20 @@ static int s5p_mfc_set_dec_stream_buffer_v6(struct s5p_mfc_ctx *ctx,
 	return 0;
 }
 
-/* DPB plane sizes */
+/*
+ * DPB plane sizes. For NV12 in one buffer the firmware still wants its 64
+ * bytes after each plane: the chroma starts right after the luma, as V4L2
+ * NV12 has it, so the luma's margin is the chroma's first bytes, and the
+ * buffer ends with the chroma's margin.
+ */
 static void s5p_mfc_set_dec_dpb_size(struct s5p_mfc_ctx *ctx)
 {
 	const struct s5p_mfc_regs *mfc_regs = ctx->dev->mfc_regs;
+	unsigned int pad = ctx->dst_fmt->num_planes == 1 ?
+			   S5P_FIMV_D_ALIGN_PLANE_SIZE_V8 : 0;
 
-	writel(ctx->luma_size, mfc_regs->d_first_plane_dpb_size);
-	writel(ctx->chroma_size, mfc_regs->d_second_plane_dpb_size);
+	writel(ctx->luma_size + pad, mfc_regs->d_first_plane_dpb_size);
+	writel(ctx->chroma_size + pad, mfc_regs->d_second_plane_dpb_size);
 }
 
 /* Set decoding frame buffer */
