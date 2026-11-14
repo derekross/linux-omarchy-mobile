@@ -1172,7 +1172,13 @@ static int enc_post_seq_start(struct s5p_mfc_ctx *ctx)
 	struct s5p_mfc_enc_params *p = &ctx->enc_params;
 	struct s5p_mfc_buf *dst_mb;
 
-	if (p->seq_hdr_mode == V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE) {
+	/*
+	 * VP8 on v15 has no header (no IVF), so the stream size reads 0 here:
+	 * an empty buffer would look like the end of the stream.
+	 */
+	if (p->seq_hdr_mode == V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE &&
+	    (!IS_MFCV15(dev) ||
+	     s5p_mfc_hw_call(dev->mfc_ops, get_enc_strm_size, dev))) {
 		if (!list_empty(&ctx->dst_queue)) {
 			dst_mb = list_entry(ctx->dst_queue.next,
 					struct s5p_mfc_buf, list);
@@ -2782,11 +2788,21 @@ int s5p_mfc_enc_ctrls_setup(struct s5p_mfc_ctx *ctx)
 			if ((controls[i].type == V4L2_CTRL_TYPE_MENU) ||
 				(controls[i].type ==
 					V4L2_CTRL_TYPE_INTEGER_MENU)) {
+				s32 def = controls[i].default_value;
+
+				/*
+				 * On v15 the header comes with the first frame
+				 * by default: GStreamer expects one capture
+				 * buffer per frame and drops the extra one.
+				 */
+				if (controls[i].id ==
+				    V4L2_CID_MPEG_VIDEO_HEADER_MODE &&
+				    IS_MFCV15(ctx->dev))
+					def = V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME;
 				ctx->ctrls[i] = v4l2_ctrl_new_std_menu(
 					&ctx->ctrl_handler,
 					&s5p_mfc_enc_ctrl_ops, controls[i].id,
-					controls[i].maximum, 0,
-					controls[i].default_value);
+					controls[i].maximum, 0, def);
 			} else {
 				ctx->ctrls[i] = v4l2_ctrl_new_std(
 					&ctx->ctrl_handler,

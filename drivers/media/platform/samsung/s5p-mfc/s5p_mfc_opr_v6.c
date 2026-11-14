@@ -1650,6 +1650,12 @@ static int s5p_mfc_set_enc_params_vp8(struct s5p_mfc_ctx *ctx)
 	}
 	reg |= (val & 0xF) << 3;
 	reg |= (p_vp8->num_ref & 0x2);
+	/*
+	 * MFC v15 wraps VP8 in IVF (file and frame headers) unless bit 12 is
+	 * set; V4L2_PIX_FMT_VP8 is bare frames (Google's driver sets it too).
+	 */
+	if (IS_MFCV15(dev))
+		reg |= BIT(12);
 	writel(reg, mfc_regs->e_vp8_options);
 
 	mfc_debug_leave();
