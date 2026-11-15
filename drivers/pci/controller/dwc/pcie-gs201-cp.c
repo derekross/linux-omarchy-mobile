@@ -248,8 +248,8 @@ static const char * const cp_input_names[CP_NUM_INPUTS] = {
  * @sysreg_optional: without samsung,sysreg the link runs without I/O
  *	coherency
  * @sleep_guard: system sleep with the modem up has been tried on this SoC
- *	(gs201): the noirq sleep callbacks run, and the root port is kept out
- *	of the PCI core's D3 handling; elsewhere neither happens
+ *	(gs201, zumapro): the noirq sleep callbacks run, and the root port is
+ *	kept out of the PCI core's D3 handling; elsewhere neither happens
  */
 struct gs201_pcie_cp_data {
 	bool zuma_ctrl;
@@ -865,7 +865,7 @@ static int cp_bus(struct gs201_pcie_cp *cp)
 	 * read back all ones. Its windows are this driver's, restored at
 	 * every link up (cp_root_win_restore()).
 	 * All of this only where system sleep with the modem up has been
-	 * tried (sleep_guard, gs201).
+	 * tried (sleep_guard: gs201, zumapro).
 	 */
 	if (cp->data->sleep_guard) {
 		list_for_each_entry(rp, &cp->bridge->bus->devices, bus_list) {
@@ -2397,7 +2397,8 @@ static void gs201_pcie_cp_remove(struct platform_device *pdev)
 }
 
 /*
- * System sleep (s2idle) with the modem up, on gs201 only (sleep_guard).
+ * System sleep (s2idle) with the modem up, on gs201 and zumapro only
+ * (sleep_guard).
  * The modem stays powered; its driver lets the AP sleep only once
  * CP2AP_WAKEUP has dropped and the idle link has been powered down (cpif
  * holds a wake lock while the link is up, and its suspend refuses while
@@ -2470,6 +2471,7 @@ static const struct gs201_pcie_cp_data zumapro_pcie_cp_data = {
 	.phy_bypass_once = true,
 	.host_atu = true,
 	.sysreg_optional = true,
+	.sleep_guard = true,
 };
 
 static const struct of_device_id gs201_pcie_cp_of_match[] = {
