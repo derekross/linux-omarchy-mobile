@@ -434,7 +434,9 @@ struct fake_chip {
 	int nread;
 	int corrupt_reg;	/* reads of this register come back wrong */
 	int fail_writes;	/* this many writes fail with -EIO first */
+	int pass_writes;	/* ... after this many writes that work */
 	int fail_reads;		/* this many reads fail with -EIO first */
+	u8 vlog[32];		/* the value of each logged write */
 };
 
 static int fake_read(void *ctx, unsigned int reg, unsigned int *val)
@@ -456,13 +458,17 @@ static int fake_write(void *ctx, unsigned int reg, unsigned int val)
 {
 	struct fake_chip *c = ctx;
 
-	if (c->fail_writes) {
+	if (c->pass_writes) {
+		c->pass_writes--;
+	} else if (c->fail_writes) {
 		c->fail_writes--;
 		return -EIO;
 	}
 	c->regs[reg] = val;
-	if (c->nlog < ARRAY_SIZE(c->log))
+	if (c->nlog < ARRAY_SIZE(c->log)) {
+		c->vlog[c->nlog] = val;
 		c->log[c->nlog++] = reg;
+	}
 	return 0;
 }
 
@@ -493,6 +499,7 @@ static struct max77759_charger *fake_charger(struct kunit *test,
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, chg->regmap);
 	mutex_init(&chg->lock);
 	chg->end_threshold = 100;
+	chg->done_last = DONE_UNCHECKED;
 	return chg;
 }
 
@@ -594,6 +601,387 @@ static void stop_test_work_capacity(struct kunit *test)
 	stop_work(chg);
 	KUNIT_EXPECT_FALSE(test, chg->stop_inhibit);
 	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_CHG_BUCK_ON);
+}
+
+/* DONE in the last tier at 4450 mV: full from 4400 mV, restart below */
+static void done_test_full_rule(struct kunit *test)
+{
+	struct done_state st = { };
+
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4400000, 4450, 100, 0),
+			DONE_FULL);
+	KUNIT_EXPECT_TRUE(test, st.full);
+
+	st = (struct done_state){ };
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4399000, 4450, 100, 0),
+			DONE_RESTART);
+	/* Only a restart that ran is counted, by the caller */
+	KUNIT_EXPECT_EQ(test, st.restarts, 0);
+
+	/* Not done: nothing; capped below the last tier: the band's limit */
+	st = (struct done_state){ .full = true };
+	KUNIT_EXPECT_EQ(test, done_step(&st, false, true, true, 4000000, 4450, 50, 0),
+			DONE_NONE);
+	st.full = true;
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, false, false, 4000000, 4450, 50, 0),
+			DONE_LIMIT);
+	KUNIT_EXPECT_FALSE(test, st.full);
+	KUNIT_EXPECT_EQ(test, st.restarts, 0);
+}
+
+/* Once full, done stays full until 95 % or 250 mV below the float */
+static void done_test_recharge(struct kunit *test)
+{
+	struct done_state st = { };
+
+	done_step(&st, true, true, true, 4440000, 4450, 100, 0);
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4300000, 4450, 96, 10),
+			DONE_FULL);
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4200000, 4450, 96, 20),
+			DONE_FULL);
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4300000, 4450, 95, 30),
+			DONE_RESTART);
+	KUNIT_EXPECT_FALSE(test, st.full);
+
+	st = (struct done_state){ };
+	done_step(&st, true, true, true, 4440000, 4450, 100, 0);
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4199000, 4450, 99, 10),
+			DONE_RESTART);
+
+	/* Charging again clears full */
+	st = (struct done_state){ .full = true };
+	done_step(&st, false, true, true, 4300000, 4450, 99, 0);
+	KUNIT_EXPECT_FALSE(test, st.full);
+}
+
+/* At most once per 10 min, 5 per plug-in, the 6th refused */
+static void done_test_rate_limit(struct kunit *test)
+{
+	struct done_state st = { };
+	s64 t = 1000;
+	int i;
+
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4300000, 4450, 90, t),
+			DONE_RESTART);
+	done_restarted(&st, t);
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4300000, 4450, 90,
+					t + 599), DONE_NONE);
+	for (i = 1; i < DONE_RESTART_MAX; i++) {
+		t += 600;
+		KUNIT_EXPECT_EQ_MSG(test,
+				    done_step(&st, true, true, true, 4300000, 4450, 90, t),
+				    DONE_RESTART, "restart %d", i + 1);
+		done_restarted(&st, t);
+	}
+	KUNIT_EXPECT_EQ(test, st.restarts, DONE_RESTART_MAX);
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4300000, 4450, 90,
+					t + 6000), DONE_REFUSED);
+}
+
+/* A DONE accepted as full gives the restarts back */
+static void done_test_full_clears_count(struct kunit *test)
+{
+	struct done_state st = { };
+	s64 t = 1000;
+	int i;
+
+	for (i = 0; i < DONE_RESTART_MAX; i++, t += 600) {
+		KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4300000,
+						4450, 90, t), DONE_RESTART);
+		done_restarted(&st, t);
+	}
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4300000, 4450, 90,
+					t), DONE_REFUSED);
+
+	/* Full at 4.42 V: the count is cleared */
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4420000, 4450, 100,
+					t), DONE_FULL);
+	KUNIT_EXPECT_EQ(test, st.restarts, 0);
+
+	/* An early DONE on the next charge restarts again, not refused */
+	t += 6000;
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4150000, 4450, 90,
+					t), DONE_RESTART);
+	done_restarted(&st, t);
+
+	/* The 10 min gap still holds after a full */
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4420000, 4450, 100,
+					t + 30), DONE_FULL);
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4150000, 4450, 90,
+					t + 60), DONE_NONE);
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, true, 4150000, 4450, 90,
+					t + 600), DONE_RESTART);
+}
+
+/* A restart writes mode 0 then the charge mode, and never while inhibited */
+static void done_test_restart_writes(struct kunit *test)
+{
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+	u8 *mode = &c->regs[MAX77759_CHGR_REG_CHG_CNFG_00];
+
+	chg->mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	*mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	KUNIT_EXPECT_TRUE(test, charger_restart(chg));
+	KUNIT_ASSERT_EQ(test, c->nlog, 2);
+	KUNIT_EXPECT_EQ(test, c->log[0], MAX77759_CHGR_REG_CHG_CNFG_00);
+	KUNIT_EXPECT_EQ(test, c->vlog[0] & MAX77759_CHGR_REG_CHG_CNFG_00_MODE,
+			MAX77759_CHGR_MODE_OFF);
+	KUNIT_EXPECT_EQ(test, c->log[1], MAX77759_CHGR_REG_CHG_CNFG_00);
+	KUNIT_EXPECT_EQ(test, c->vlog[1] & MAX77759_CHGR_REG_CHG_CNFG_00_MODE,
+			MAX77759_CHGR_MODE_CHG_BUCK_ON);
+
+	/* Inhibited: no write, not run */
+	chg->stop_inhibit = true;
+	*mode = MAX77759_CHGR_MODE_BUCK_ON;
+	KUNIT_EXPECT_FALSE(test, charger_restart(chg));
+	KUNIT_EXPECT_EQ(test, c->nlog, 2);
+	chg->stop_inhibit = false;
+
+	/* The off write fails: not run */
+	*mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	c->fail_writes = 1;
+	KUNIT_EXPECT_FALSE(test, charger_restart(chg));
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_CHG_BUCK_ON);
+}
+
+/* The tier whose float is in force, at the 4.20 V node and at 4.45 V */
+static void done_test_tiers(struct kunit *test)
+{
+	const struct guard_table *tbl = &guard_table_husky;
+	bool band_last, last_tier;
+
+	/* 4.20 V: the first tier already has the float in force */
+	done_tiers(tbl, 2, 0, 4200, &band_last, &last_tier);
+	KUNIT_EXPECT_TRUE(test, band_last);
+	KUNIT_EXPECT_TRUE(test, last_tier);
+	done_tiers(tbl, 5, 0, 4200, &band_last, &last_tier);
+	KUNIT_EXPECT_TRUE(test, last_tier);
+
+	/* 4.45 V: only the 4.48 V tier, in a band that reaches it */
+	done_tiers(tbl, 2, 2, 4450, &band_last, &last_tier);
+	KUNIT_EXPECT_TRUE(test, band_last);
+	KUNIT_EXPECT_FALSE(test, last_tier);
+	done_tiers(tbl, 2, 3, 4450, &band_last, &last_tier);
+	KUNIT_EXPECT_TRUE(test, last_tier);
+	done_tiers(tbl, 4, 1, 4450, &band_last, &last_tier);
+	KUNIT_EXPECT_FALSE(test, band_last);
+	KUNIT_EXPECT_FALSE(test, last_tier);
+}
+
+/* A husky charger in band 20-42 C with the cable in, guard on */
+static struct max77759_charger *done_charger(struct kunit *test,
+					     struct fake_chip **c, u32 fv_mv)
+{
+	struct max77759_charger *chg = fake_charger(test, c);
+
+	chg->guard_table = &guard_table_husky;
+	chg->guard_band = -2;
+	chg->fv_max_mv = fv_mv;
+	chg->cc_max_ua = 1485000;
+	chg->design_uah = 4950000;
+	chg->mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	(*c)->regs[MAX77759_CHGR_REG_CHG_CNFG_00] =
+		MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	(*c)->regs[MAX77759_CHGR_REG_CHG_INT_OK] =
+		MAX77759_CHGR_REG_CHG_INT_CHGIN;
+	(*c)->regs[MAX77759_CHGR_REG_CHG_DETAILS_01] =
+		FIELD_PREP(MAX77759_CHGR_REG_CHG_DETAILS_01_CHG_DTLS,
+			   MAX77759_CHGR_CHG_DTLS_DONE);
+	return chg;
+}
+
+/* A guard run end to end: at the 4.20 V node a DONE at 4.19 V is full */
+static void done_test_guard_run_full(struct kunit *test)
+{
+	bool saved = temp_guard;
+	struct fake_chip *c;
+	struct max77759_charger *chg;
+
+	temp_guard = true;
+	chg = done_charger(test, &c, 4200);
+	/* Out of restarts and warned: a full gives both back */
+	chg->done.restarts = DONE_RESTART_MAX;
+	chg->done_warned = true;
+	guard_run(chg, true, 300, 4190000);
+	KUNIT_EXPECT_FALSE(test, chg->done_warned);
+	KUNIT_EXPECT_EQ(test, chg->done_last, DONE_FULL);
+	KUNIT_EXPECT_EQ(test, get_status(chg), POWER_SUPPLY_STATUS_FULL);
+	KUNIT_EXPECT_EQ(test, chg->done.restarts, 0);
+	temp_guard = saved;
+}
+
+/* One at 4.10 V restarts once, and a replug gives the count back */
+static void done_test_guard_run_restart(struct kunit *test)
+{
+	bool saved = temp_guard;
+	struct fake_chip *c;
+	struct max77759_charger *chg;
+
+	temp_guard = true;
+	chg = done_charger(test, &c, 4200);
+	guard_run(chg, true, 300, 4100000);
+	KUNIT_EXPECT_EQ(test, chg->done_last, DONE_RESTART);
+	KUNIT_EXPECT_EQ(test, chg->done.restarts, 1);
+	KUNIT_EXPECT_EQ(test, c->regs[MAX77759_CHGR_REG_CHG_CNFG_00],
+			MAX77759_CHGR_MODE_CHG_BUCK_ON);
+	KUNIT_EXPECT_EQ(test, get_status(chg),
+			POWER_SUPPLY_STATUS_NOT_CHARGING);
+
+	/* Unplugged: the count comes back */
+	c->regs[MAX77759_CHGR_REG_CHG_INT_OK] = 0;
+	c->regs[MAX77759_CHGR_REG_CHG_DETAILS_01] =
+		FIELD_PREP(MAX77759_CHGR_REG_CHG_DETAILS_01_CHG_DTLS,
+			   MAX77759_CHGR_CHG_DTLS_OFF);
+	guard_run(chg, true, 300, 4100000);
+	KUNIT_EXPECT_EQ(test, chg->done.restarts, 0);
+	temp_guard = saved;
+}
+
+/* No reading: inhibited, unchecked, and DONE is not Full */
+static void done_test_guard_run_no_reading(struct kunit *test)
+{
+	bool saved = temp_guard;
+	struct fake_chip *c;
+	struct max77759_charger *chg;
+
+	temp_guard = true;
+	chg = done_charger(test, &c, 4200);
+	guard_run(chg, false, 0, 0);
+	KUNIT_EXPECT_EQ(test, chg->done_last, DONE_UNCHECKED);
+	KUNIT_EXPECT_EQ(test, get_status(chg),
+			POWER_SUPPLY_STATUS_NOT_CHARGING);
+
+	temp_guard = saved;
+}
+
+/* The mode-on write fails three times: the next guard run writes it */
+static void done_test_mode_rewrite(struct kunit *test)
+{
+	bool saved = temp_guard;
+	struct fake_chip *c;
+	struct max77759_charger *chg;
+	u8 *mode;
+
+	temp_guard = true;
+	chg = done_charger(test, &c, 4200);
+	mode = &c->regs[MAX77759_CHGR_REG_CHG_CNFG_00];
+	c->pass_writes = 1;
+	c->fail_writes = DONE_RESTART_TRIES;
+	KUNIT_EXPECT_TRUE(test, charger_restart(chg));
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_OFF);
+	KUNIT_EXPECT_TRUE(test, chg->mode_rewrite);
+
+	c->regs[MAX77759_CHGR_REG_CHG_DETAILS_01] = 0;
+	guard_run(chg, true, 300, 4000000);
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_CHG_BUCK_ON);
+	KUNIT_EXPECT_FALSE(test, chg->mode_rewrite);
+	temp_guard = saved;
+}
+
+static void done_test_noop_work(struct work_struct *work)
+{
+}
+
+/* With temp_guard off, the guard work writes a mode left off again */
+static void done_test_mode_rewrite_guard_off(struct kunit *test)
+{
+	bool saved = temp_guard;
+	struct fake_chip *c;
+	struct max77759_charger *chg;
+	u8 *mode;
+
+	temp_guard = false;
+	chg = done_charger(test, &c, 4200);
+	INIT_DELAYED_WORK(&chg->guard_work, done_test_noop_work);
+	mode = &c->regs[MAX77759_CHGR_REG_CHG_CNFG_00];
+	*mode = MAX77759_CHGR_MODE_OFF;
+	chg->mode_rewrite = true;
+	guard_work_item(&chg->guard_work.work);
+	cancel_delayed_work_sync(&chg->guard_work);
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_CHG_BUCK_ON);
+	KUNIT_EXPECT_FALSE(test, chg->mode_rewrite);
+	temp_guard = saved;
+}
+
+/*
+ * A band that reaches the last tier, DONE in a lower tier: never full,
+ * even near the float, and full does not carry over; restart.
+ */
+static void done_test_below_last_tier(struct kunit *test)
+{
+	struct done_state st = { };
+
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, false, 4440000, 4450, 100, 0),
+			DONE_RESTART);
+	KUNIT_EXPECT_FALSE(test, st.full);
+
+	st = (struct done_state){ .full = true };
+	KUNIT_EXPECT_EQ(test, done_step(&st, true, true, false, 4440000, 4450, 99, 0),
+			DONE_RESTART);
+	KUNIT_EXPECT_FALSE(test, st.full);
+}
+
+/* Husky, guard on: CHGIN gone gives the restarts back, CHGIN there keeps them */
+static void done_test_plug_chgin(struct kunit *test)
+{
+	bool saved = temp_guard;
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+
+	chg->guard_table = &guard_table_husky;
+	temp_guard = true;
+
+	chg->done = (struct done_state){ .restarts = DONE_RESTART_MAX,
+					 .last_s = 100 };
+	chg->done_warned = true;
+	c->regs[MAX77759_CHGR_REG_CHG_INT_OK] = MAX77759_CHGR_REG_CHG_INT_CHGIN;
+	done_plug_check(chg);
+	KUNIT_EXPECT_EQ(test, chg->done.restarts, DONE_RESTART_MAX);
+	KUNIT_EXPECT_TRUE(test, chg->done_warned);
+
+	c->regs[MAX77759_CHGR_REG_CHG_INT_OK] = 0;
+	done_plug_check(chg);
+	KUNIT_EXPECT_EQ(test, chg->done.restarts, 0);
+	KUNIT_EXPECT_FALSE(test, chg->done_warned);
+
+	/* Other boards: no read */
+	chg->guard_table = &guard_table_default;
+	chg->done.restarts = 3;
+	c->nread = 0;
+	done_plug_check(chg);
+	KUNIT_EXPECT_EQ(test, c->nread, 0);
+	KUNIT_EXPECT_EQ(test, chg->done.restarts, 3);
+	temp_guard = saved;
+}
+
+/* While the check is in force, DONE reads Full only when it accepted it */
+static void done_test_status(struct kunit *test)
+{
+	static const int not_full[] = { DONE_NONE, DONE_RESTART, DONE_REFUSED,
+					DONE_LIMIT, DONE_UNCHECKED };
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+	int i;
+
+	c->regs[MAX77759_CHGR_REG_CHG_DETAILS_01] =
+		FIELD_PREP(MAX77759_CHGR_REG_CHG_DETAILS_01_CHG_DTLS,
+			   MAX77759_CHGR_CHG_DTLS_DONE);
+
+	/* No check in force (other boards, guard off): the chip's word */
+	for (i = 0; i < ARRAY_SIZE(not_full); i++) {
+		chg->done_last = not_full[i];
+		KUNIT_EXPECT_EQ(test, get_status(chg), POWER_SUPPLY_STATUS_FULL);
+	}
+	chg->done_active = true;
+	chg->done_last = DONE_FULL;
+	KUNIT_EXPECT_EQ(test, get_status(chg), POWER_SUPPLY_STATUS_FULL);
+	for (i = 0; i < ARRAY_SIZE(not_full); i++) {
+		chg->done_last = not_full[i];
+		KUNIT_EXPECT_EQ_MSG(test, get_status(chg),
+				    POWER_SUPPLY_STATUS_NOT_CHARGING,
+				    "action %d", not_full[i]);
+	}
 }
 
 /* Either inhibit puts the chip in buck-only mode; both must clear */
@@ -1103,6 +1491,20 @@ static struct kunit_case guard_test_cases[] = {
 	KUNIT_CASE(restore_test_readback_fail),
 	KUNIT_CASE(restore_test_read_fail),
 	KUNIT_CASE(restore_test_boot_float),
+	KUNIT_CASE(done_test_full_rule),
+	KUNIT_CASE(done_test_recharge),
+	KUNIT_CASE(done_test_rate_limit),
+	KUNIT_CASE(done_test_full_clears_count),
+	KUNIT_CASE(done_test_restart_writes),
+	KUNIT_CASE(done_test_below_last_tier),
+	KUNIT_CASE(done_test_plug_chgin),
+	KUNIT_CASE(done_test_status),
+	KUNIT_CASE(done_test_tiers),
+	KUNIT_CASE(done_test_mode_rewrite),
+	KUNIT_CASE(done_test_mode_rewrite_guard_off),
+	KUNIT_CASE(done_test_guard_run_full),
+	KUNIT_CASE(done_test_guard_run_restart),
+	KUNIT_CASE(done_test_guard_run_no_reading),
 	{ }
 };
 
