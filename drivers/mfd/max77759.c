@@ -154,6 +154,12 @@ static const struct regmap_range max77759_charger_ro_registers[] = {
 static const struct regmap_range max77759_charger_volatile_registers[] = {
 	regmap_reg_range(0xb0, 0xb1), /* INTx */
 	regmap_reg_range(0xb4, 0xb8),
+	/*
+	 * CNFG_00 to CNFG_04 (mode, current, float): the charger driver reads
+	 * them back to check what the chip really holds, which a cached
+	 * read would not tell.
+	 */
+	regmap_reg_range(0xb9, 0xbd),
 };
 
 static const struct regmap_access_table max77759_charger_wr_table = {
