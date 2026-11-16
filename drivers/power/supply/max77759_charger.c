@@ -375,16 +375,34 @@ static int get_fast_charge_current(struct max77759_charger *chg)
 	return ret ? ret : val;
 }
 
+/*
+ * The fast charge current step at or below @cc_ua, never one above it. A
+ * request below the lowest step or above the highest (4000190 uA) is
+ * -EINVAL, not clamped: a battery node without
+ * constant-charge-current-max-microamp leaves -EINVAL in the field, which
+ * must stay a failed probe and not become the top current.
+ */
+static int cc_selector(u32 cc_ua, u32 *sel)
+{
+	const struct linear_range *top =
+		&chgcc_limit_ranges[ARRAY_SIZE(chgcc_limit_ranges) - 1];
+	bool found;
+
+	if (cc_ua > linear_range_get_max_value(top) ||
+	    linear_range_get_selector_low_array(chgcc_limit_ranges,
+						ARRAY_SIZE(chgcc_limit_ranges),
+						cc_ua, sel, &found))
+		return -EINVAL;
+
+	return 0;
+}
+
 static int set_fast_charge_current_limit(struct max77759_charger *chg,
 					 u32 cc_max_ua)
 {
-	bool found;
 	u32 regval;
 
-	linear_range_get_selector_high_array(chgcc_limit_ranges,
-					     ARRAY_SIZE(chgcc_limit_ranges),
-					     cc_max_ua, &regval, &found);
-	if (!found)
+	if (cc_selector(cc_max_ua, &regval))
 		return -EINVAL;
 
 	return regmap_update_bits(chg->regmap, MAX77759_CHGR_REG_CHG_CNFG_02,
@@ -408,15 +426,31 @@ static int get_float_voltage(struct max77759_charger *chg)
 	return ret ? ret : val;
 }
 
+/*
+ * The float voltage step at or below @fv_mv, never one above it. Between
+ * the two ranges (3900 to 4000 mV) that is 3900 mV. A request below the
+ * lowest step or above the highest is -EINVAL.
+ */
+static int fv_selector(u32 fv_mv, u32 *sel)
+{
+	const struct linear_range *top =
+		&chg_cv_prm_ranges[ARRAY_SIZE(chg_cv_prm_ranges) - 1];
+	bool found;
+
+	if (fv_mv > linear_range_get_max_value(top) ||
+	    linear_range_get_selector_low_array(chg_cv_prm_ranges,
+						ARRAY_SIZE(chg_cv_prm_ranges),
+						fv_mv, sel, &found))
+		return -EINVAL;
+
+	return 0;
+}
+
 static int set_float_voltage_limit(struct max77759_charger *chg, u32 fv_mv)
 {
 	u32 regval;
-	bool found;
 
-	linear_range_get_selector_high_array(chg_cv_prm_ranges,
-					     ARRAY_SIZE(chg_cv_prm_ranges),
-					     fv_mv, &regval, &found);
-	if (!found)
+	if (fv_selector(fv_mv, &regval))
 		return -EINVAL;
 
 	return regmap_update_bits(chg->regmap, MAX77759_CHGR_REG_CHG_CNFG_04,

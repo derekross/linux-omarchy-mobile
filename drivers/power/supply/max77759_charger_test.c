@@ -296,6 +296,51 @@ static void guard_test_limits_capped(struct kunit *test)
 	}
 }
 
+/* The float is the step at or below the request, as stock rounds it */
+static void round_test_float(struct kunit *test)
+{
+	u32 sel, mv;
+
+	KUNIT_EXPECT_EQ(test, fv_selector(4200, &sel), 0);
+	KUNIT_EXPECT_EQ(test, sel, 0x14);
+	KUNIT_EXPECT_EQ(test, fv_selector(4209, &sel), 0);
+	KUNIT_EXPECT_EQ(test, sel, 0x14);
+	KUNIT_EXPECT_EQ(test, fv_selector(4450, &sel), 0);
+	KUNIT_EXPECT_EQ(test, sel, 0x2d);
+	KUNIT_EXPECT_EQ(test, fv_selector(4500, &sel), 0);
+	KUNIT_EXPECT_EQ(test, sel, 0x32);
+
+	/* Between the two ranges: the 3900 mV step below */
+	KUNIT_EXPECT_EQ(test, fv_selector(3950, &sel), 0);
+	KUNIT_EXPECT_EQ(test, linear_range_get_value_array(chg_cv_prm_ranges,
+							   ARRAY_SIZE(chg_cv_prm_ranges),
+							   sel, &mv), 0);
+	KUNIT_EXPECT_EQ(test, mv, 3900);
+
+	/* Out of range */
+	KUNIT_EXPECT_EQ(test, fv_selector(3799, &sel), -EINVAL);
+	KUNIT_EXPECT_EQ(test, fv_selector(4501, &sel), -EINVAL);
+}
+
+/*
+ * The current is the step at or below the request; above the top step
+ * (4000190 uA) is refused, not clamped, and so is the -EINVAL a battery
+ * node without constant-charge-current-max-microamp leaves in the u32
+ */
+static void round_test_current(struct kunit *test)
+{
+	u32 sel;
+
+	KUNIT_EXPECT_EQ(test, cc_selector(1485000, &sel), 0);
+	KUNIT_EXPECT_EQ(test, sel, 0x16);
+	KUNIT_EXPECT_EQ(test, cc_selector(4000190, &sel), 0);
+	KUNIT_EXPECT_EQ(test, sel, 0x3c);
+
+	KUNIT_EXPECT_EQ(test, cc_selector(4000191, &sel), -EINVAL);
+	KUNIT_EXPECT_EQ(test, cc_selector((u32)-EINVAL, &sel), -EINVAL);
+	KUNIT_EXPECT_EQ(test, cc_selector(133329, &sel), -EINVAL);
+}
+
 static struct kunit_case guard_test_cases[] = {
 	KUNIT_CASE(guard_test_band_edges),
 	KUNIT_CASE(guard_test_hysteresis),
@@ -307,6 +352,8 @@ static struct kunit_case guard_test_cases[] = {
 	KUNIT_CASE(guard_test_limits_default),
 	KUNIT_CASE(guard_test_limits_husky),
 	KUNIT_CASE(guard_test_limits_capped),
+	KUNIT_CASE(round_test_float),
+	KUNIT_CASE(round_test_current),
 	{ }
 };
 
