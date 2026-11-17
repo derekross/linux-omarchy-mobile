@@ -39,6 +39,7 @@ struct sec_pmic_acpm_platform_data {
 	const struct regmap_config *regmap_cfg_pmic;
 	const struct regmap_config *regmap_cfg_rtc;
 	const struct regmap_config *regmap_cfg_meter;
+	const struct regmap_config *regmap_cfg_mt_trim;
 	const struct regmap_config *regmap_cfg_gpio;
 
 	/* No interrupt line is wired up for this PMIC (yet). */
@@ -453,12 +454,20 @@ static const struct regmap_config s2mpg12_regmap_config_rtc = {
 	.cache_type = REGCACHE_NONE,
 };
 
+/*
+ * The interrupt registers, and for the power meter driver its controls and
+ * the latched accumulators. The accumulators are only cleared by ASYNC_RD
+ * in CTRL2, never by a read.
+ */
 static const struct regmap_range s2mpg12_meter_registers[] = {
 	regmap_reg_range(S2MPG12_METER_INT1, S2MPG12_METER_INT2M),
+	regmap_reg_range(S2MPG12_METER_CTRL1, S2MPG12_METER_MUXSEL11),
+	regmap_reg_range(S2MPG12_METER_ACC_DATA_CH0_1, S2MPG12_METER_ACC_COUNT_3),
 };
 
 static const struct regmap_range s2mpg12_meter_wr_registers[] = {
 	regmap_reg_range(S2MPG12_METER_INT1M, S2MPG12_METER_INT2M),
+	regmap_reg_range(S2MPG12_METER_CTRL1, S2MPG12_METER_MUXSEL11),
 };
 
 static const struct regmap_access_table s2mpg12_meter_wr_table = {
@@ -475,9 +484,32 @@ static const struct regmap_config s2mpg12_regmap_config_meter = {
 	.name = "meter",
 	.reg_bits = ACPM_ADDR_BITS,
 	.val_bits = 8,
-	.max_register = S2MPG12_METER_INT2M,
+	.max_register = S2MPG12_METER_ACC_COUNT_3,
 	.wr_table = &s2mpg12_meter_wr_table,
 	.rd_table = &s2mpg12_meter_rd_table,
+	.cache_type = REGCACHE_NONE,
+};
+
+/*
+ * The meter trim block: only the register with the meter's software reset
+ * bit, so the rest of the factory trim can be neither read nor written.
+ */
+static const struct regmap_range s2mpg12_mt_trim_registers[] = {
+	regmap_reg_range(S2MPG12_MT_TRIM_COMMON, S2MPG12_MT_TRIM_COMMON),
+};
+
+static const struct regmap_access_table s2mpg12_mt_trim_table = {
+	.yes_ranges = s2mpg12_mt_trim_registers,
+	.n_yes_ranges = ARRAY_SIZE(s2mpg12_mt_trim_registers),
+};
+
+static const struct regmap_config s2mpg12_regmap_config_mt_trim = {
+	.name = "mt-trim",
+	.reg_bits = ACPM_ADDR_BITS,
+	.val_bits = 8,
+	.max_register = S2MPG12_MT_TRIM_COMMON,
+	.wr_table = &s2mpg12_mt_trim_table,
+	.rd_table = &s2mpg12_mt_trim_table,
 	.cache_type = REGCACHE_NONE,
 };
 
@@ -563,6 +595,59 @@ static const struct regmap_config s2mpg13_regmap_config_gpio = {
 	.max_register = S2MPG13_GPIO_7_MONSEL,
 	.wr_table = &s2mpg13_gpio_wr_table,
 	.rd_table = &s2mpg13_gpio_rd_table,
+	.cache_type = REGCACHE_NONE,
+};
+
+/* The power meter: its controls and the latched accumulators */
+static const struct regmap_range s2mpg13_meter_rd_registers[] = {
+	regmap_reg_range(S2MPG13_METER_CTRL1, S2MPG13_METER_MUXSEL11),
+	regmap_reg_range(S2MPG13_METER_ACC_DATA_CH0_1, S2MPG13_METER_ACC_COUNT_3),
+};
+
+static const struct regmap_range s2mpg13_meter_wr_registers[] = {
+	regmap_reg_range(S2MPG13_METER_CTRL1, S2MPG13_METER_MUXSEL11),
+};
+
+static const struct regmap_access_table s2mpg13_meter_rd_table = {
+	.yes_ranges = s2mpg13_meter_rd_registers,
+	.n_yes_ranges = ARRAY_SIZE(s2mpg13_meter_rd_registers),
+};
+
+static const struct regmap_access_table s2mpg13_meter_wr_table = {
+	.yes_ranges = s2mpg13_meter_wr_registers,
+	.n_yes_ranges = ARRAY_SIZE(s2mpg13_meter_wr_registers),
+};
+
+static const struct regmap_config s2mpg13_regmap_config_meter = {
+	.name = "meter",
+	.reg_bits = ACPM_ADDR_BITS,
+	.val_bits = 8,
+	.max_register = S2MPG13_METER_ACC_COUNT_3,
+	.wr_table = &s2mpg13_meter_wr_table,
+	.rd_table = &s2mpg13_meter_rd_table,
+	.cache_type = REGCACHE_NONE,
+};
+
+/*
+ * The meter trim block: only the register with the meter's software reset
+ * bit, so the rest of the factory trim can be neither read nor written.
+ */
+static const struct regmap_range s2mpg13_mt_trim_registers[] = {
+	regmap_reg_range(S2MPG13_MT_TRIM_COMMON2, S2MPG13_MT_TRIM_COMMON2),
+};
+
+static const struct regmap_access_table s2mpg13_mt_trim_table = {
+	.yes_ranges = s2mpg13_mt_trim_registers,
+	.n_yes_ranges = ARRAY_SIZE(s2mpg13_mt_trim_registers),
+};
+
+static const struct regmap_config s2mpg13_regmap_config_mt_trim = {
+	.name = "mt-trim",
+	.reg_bits = ACPM_ADDR_BITS,
+	.val_bits = 8,
+	.max_register = S2MPG13_MT_TRIM_COMMON2,
+	.wr_table = &s2mpg13_mt_trim_table,
+	.rd_table = &s2mpg13_mt_trim_table,
 	.cache_type = REGCACHE_NONE,
 };
 
@@ -742,6 +827,7 @@ enum sec_pmic_acpm_accesstype {
 	SEC_PMIC_ACPM_ACCESSTYPE_METER = 0x0a,
 	SEC_PMIC_ACPM_ACCESSTYPE_WLWP = 0x0b,
 	SEC_PMIC_ACPM_ACCESSTYPE_GPIO = 0x0c,
+	SEC_PMIC_ACPM_ACCESSTYPE_MT_TRIM = 0x0e,
 	SEC_PMIC_ACPM_ACCESSTYPE_TRIM = 0x0f,
 };
 
@@ -902,6 +988,14 @@ static int sec_pmic_acpm_probe(struct platform_device *pdev)
 			return PTR_ERR(regmap);
 	}
 
+	if (pdata->regmap_cfg_mt_trim) {
+		regmap = sec_pmic_acpm_regmap_init(dev, shared_ctx,
+						   SEC_PMIC_ACPM_ACCESSTYPE_MT_TRIM,
+						   pdata->regmap_cfg_mt_trim, true);
+		if (IS_ERR(regmap))
+			return PTR_ERR(regmap);
+	}
+
 	if (pdata->regmap_cfg_gpio) {
 		regmap = sec_pmic_acpm_regmap_init(dev, shared_ctx, SEC_PMIC_ACPM_ACCESSTYPE_GPIO,
 						   pdata->regmap_cfg_gpio, true);
@@ -951,6 +1045,7 @@ static const struct sec_pmic_acpm_platform_data s2mpg12_data = {
 	.regmap_cfg_pmic = &s2mpg12_regmap_config_pmic,
 	.regmap_cfg_rtc = &s2mpg12_regmap_config_rtc,
 	.regmap_cfg_meter = &s2mpg12_regmap_config_meter,
+	.regmap_cfg_mt_trim = &s2mpg12_regmap_config_mt_trim,
 };
 
 static const struct sec_pmic_acpm_platform_data s2mpg13_data = {
@@ -959,6 +1054,8 @@ static const struct sec_pmic_acpm_platform_data s2mpg13_data = {
 	.speedy_channel = 1,
 	.regmap_cfg_common = &s2mpg13_regmap_config_common,
 	.regmap_cfg_pmic = &s2mpg13_regmap_config_pmic,
+	.regmap_cfg_meter = &s2mpg13_regmap_config_meter,
+	.regmap_cfg_mt_trim = &s2mpg13_regmap_config_mt_trim,
 	.regmap_cfg_gpio = &s2mpg13_regmap_config_gpio,
 	.no_irq = true,
 };

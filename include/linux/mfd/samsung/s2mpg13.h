@@ -101,6 +101,18 @@ enum s2mpg13_gpio_reg {
 #define S2MPG13_GPIO_SET_OUT		BIT(5)
 #define S2MPG13_GPIO_SET_OUT_EN		BIT(6)
 
+/* Meter registers (type 0xa00), the same layout as S2MPG12's */
+enum s2mpg13_meter_reg {
+	S2MPG13_METER_CTRL1 = 0x08,
+	S2MPG13_METER_MUXSEL11 = 0x1c,
+	S2MPG13_METER_ACC_DATA_CH0_1 = 0x63,
+	S2MPG13_METER_ACC_COUNT_3 = 0xad,
+};
+
+/* Meter trim register (type 0xe00) holding the meter's reset bit */
+#define S2MPG13_MT_TRIM_COMMON2		0x34
+#define S2MPG13_MT_TRIM_METER_RST	BIT(7)
+
 /* LDO regulators */
 enum s2mpg13_regulators {
 	S2MPG13_LDO1,
