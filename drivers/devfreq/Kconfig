@@ -90,6 +90,17 @@ config ARM_EXYNOS_BUS_DEVFREQ
 	  and adjusts the operating frequencies and voltages with OPP support.
 	  This does not yet operate with optimal voltages.
 
+config ARM_GS201_MIF_DEVFREQ
+	tristate "Google gs201 memory interface DEVFREQ Driver"
+	depends on ARCH_EXYNOS || COMPILE_TEST
+	depends on COMMON_CLK && CPU_FREQ
+	help
+	  This adds a DEVFREQ driver that scales the memory interface (MIF)
+	  clock of the Google gs201 SoC (Tensor G2) through its ACPM DVFS
+	  domain. The rate follows the CPU clusters and the GPU: a busy
+	  cluster asks for the MIF rate that goes with its frequency, and the
+	  GPU for the one that goes with its clock while it is powered.
+
 config ARM_HISI_UNCORE_DEVFREQ
 	tristate "HiSilicon uncore DEVFREQ Driver"
 	depends on ACPI && ACPI_PPTT && PCC
