@@ -3,7 +3,7 @@
  * Copyright (c) 2026 Omarchy Mobile contributors
  *
  * AUO FT8756 1080x2300 DSI video-mode panel, as fitted to the Motorola
- * Moto G Power (XT2041-4) (sofia).
+ * Moto G Power (2020) (sofia).
  *
  * The timing and the command sequences come from Motorola's own device tree
  * (arch/arm64/boot/dts/qcom/dsi-panel-mot-auo-ft8756-fhd-video.dtsi in

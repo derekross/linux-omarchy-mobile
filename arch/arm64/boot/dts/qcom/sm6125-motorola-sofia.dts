@@ -1,0 +1,555 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Copyright (c) 2026 Omarchy Mobile contributors
+ *
+ * Motorola Moto G Power (2020) (sofia) on the SM6125 ("trinket").
+ *
+ * The SoC is upstream's qcom,sm6125. The board details come from Motorola's
+ * own device tree (arch/arm64/boot/dts/qcom/trinket-sofia-*.dts* in
+ * MotorolaMobilityLLC/kernel-msm, tag MMI-QPE30.79-41); the display and
+ * GPU wiring follow upstream's tree for the same SoC, the Xiaomi Redmi
+ * Note 8 (sm6125-xiaomi-ginkgo).
+ *
+ * The display is a DSI video-mode AUO FT8756, 1080x2300. The touchscreen is a
+ * FocalTech FT8756 on the QUPv3 SE2 SPI controller (spi2, at 0x4a88000).
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/clock/qcom,gcc-sm6125.h>
+#include <dt-bindings/clock/qcom,sm6125-gpucc.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+
+#include "sm6125.dtsi"
+#include "pm6125.dtsi"
+#include "pmi632.dtsi"
+
+/ {
+	model = "Motorola Moto G Power (2020)";
+	compatible = "motorola,sofia", "qcom,sm6125";
+
+	/*
+	 * The identity this bootloader matches on. It resolves the hardware
+	 * to a product name with a board-ID table of its own and then looks
+	 * for a dtbo entry whose root model is that name and whose root
+	 * qcom,board-id is the highest revision not newer than the device's.
+	 * For this phone that is "sofia" at 0x46 0xc000.
+	 */
+	qcom,msm-id = <0x18a 0x10000>;
+	qcom,msm-name = "trinket";
+	qcom,pmic-name = "pm6125 + pmi632";
+	qcom,board-id = <0x46 0xc000>;
+
+	/*
+	 * The console UART. The stock tree puts its console on the QUPv3
+	 * SE4 UART at 0x4a90000, which is where upstream's uart4 is, so
+	 * stdout-path points there.
+	 */
+	aliases {
+		serial0 = &uart4;
+	};
+
+	chosen {
+		bootargs = "androidboot.hardware=qcom androidboot.console=ttyMSM0,115200n8 earlycon=msm_geni,0x4a90000 panic=10";
+		stdout-path = "serial0:115200n8";
+
+		/*
+		 * The console for the first-light bring-up. The bootloader
+		 * leaves its splash in the cont_splash region, so a
+		 * simple-framebuffer over that memory gives the initramfs
+		 * somewhere to write; without it the kernel has no console
+		 * and the bring-up is blind.
+		 */
+		framebuffer: framebuffer@5c000000 {
+			compatible = "simple-framebuffer";
+			memory-region = <&cont_splash_mem>;
+			width = <1080>;
+			height = <2300>;
+			stride = <(1080 * 4)>;
+			format = "a8r8g8b8";
+		};
+	};
+
+	/*
+	 * The memory map. The bootloader fills this in, and it looks the node
+	 * up **by the name "memory"**, with no unit address: the stock tree
+	 * has a node named exactly that, and the live tree shows it patched
+	 * with the real RAM map. A node called memory@0 or memory@40000000
+	 * is not found, the kernel then sees no memory at all, and it dies
+	 * before the console comes up.
+	 */
+	memory {
+		device_type = "memory";
+		reg = <0x0 0x0 0x0 0x0>;
+	};
+
+	/*
+	 * The SoC dtsi carries a placeholder of its own, for bootloaders
+	 * that fill in a memory node the SoC file names. This one does not,
+	 * and two memory nodes would leave the kernel with the wrong map.
+	 */
+	/delete-node/ memory@40000000;
+
+};
+
+/* --- GPU --------------------------------------------------------------- */
+
+/*
+ * The SM6125's Adreno 610 needs the GPU clock controller, the GMU wrapper
+ * and its own SMMU; upstream's sm6125.dtsi carries none of them, so they
+ * are described here.
+ */
+&soc {
+	/*
+	 * The hardware watchdog. The bootloader arms it before it hands over
+	 * to the kernel, with a 9360 ms pet time (Motorola's own tree:
+	 * trinket.dtsi, "qcom,msm-watchdog" at 0xf017000, bark 11000 ms,
+	 * pet 9360 ms), and a kernel that does not take it over is reset
+	 * 9360 ms into the boot. The block and its registers are the ones
+	 * upstream's qcom-wdt driver expects, the same as on the sm6115.
+	 */
+	watchdog@f017000 {
+		compatible = "qcom,apss-wdt-sm6125", "qcom,kpss-wdt";
+		reg = <0x0 0x0f017000 0x0 0x1000>;
+		clocks = <&sleep_clk>;
+		interrupts = <GIC_SPI 3 IRQ_TYPE_EDGE_RISING>;
+	};
+
+	gpucc: clock-controller@5990000 {
+		compatible = "qcom,sm6125-gpucc";
+		status = "disabled";
+		reg = <0x0 0x5990000 0x0 0x9000>;
+		clocks = <&rpmcc RPM_SMD_XO_CLK_SRC>,
+			 <&gcc GCC_GPU_GPLL0_DIV_CLK_SRC>;
+		#clock-cells = <1>;
+		#power-domain-cells = <1>;
+	};
+
+	gmu_wrapper: gmu@596a000 {
+		compatible = "qcom,adreno-gmu-wrapper";
+		status = "disabled";
+		reg = <0x0 0x596a000 0x0 0x30000>;
+		reg-names = "gmu";
+		power-domains = <&gpucc GPU_CX_GDSC>, <&gpucc GPU_GX_GDSC>;
+		power-domain-names = "cx", "gx";
+	};
+
+	adreno_smmu: iommu@59a0000 {
+		compatible = "qcom,sm6125-smmu-500", "qcom,adreno-smmu",
+			     "qcom,smmu-500", "arm,mmu-500";
+		reg = <0x0 0x59a0000 0x0 0x10000>;
+		interrupts = <GIC_SPI 163 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 167 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 168 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 169 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 170 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 171 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 172 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 173 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&gcc GCC_GPU_MEMNOC_GFX_CLK>,
+			 <&gcc GCC_GPU_SNOC_DVM_GFX_CLK>,
+			 <&gpucc GPU_CC_AHB_CLK>;
+		clock-names = "mem", "hlos", "iface";
+		power-domains = <&gpucc GPU_CX_GDSC>;
+		#global-interrupts = <1>;
+		#iommu-cells = <2>;
+	};
+
+	gpu: gpu@5900000 {
+		compatible = "qcom,adreno-610.0", "qcom,adreno";
+		status = "disabled";
+		reg = <0x0 0x5900000 0x0 0x40000>,
+		      <0x0 0x599e000 0x0 0x1000>,
+		      <0x0 0x5961000 0x0 0x800>;
+		reg-names = "kgsl_3d0_reg_memory",
+			    "cx_mem",
+			    "cx_dbgc";
+
+		clocks = <&gpucc GPU_CC_GX_GFX3D_CLK>,
+			 <&gpucc GPU_CC_AHB_CLK>,
+			 <&gcc GCC_BIMC_GPU_AXI_CLK>,
+			 <&gcc GCC_GPU_MEMNOC_GFX_CLK>,
+			 <&gpucc GPU_CC_CX_GMU_CLK>,
+			 <&gpucc GPU_CC_CXO_CLK>;
+		clock-names = "core",
+			      "iface",
+			      "mem_iface",
+			      "alt_mem_iface",
+			      "gmu",
+			      "xo";
+
+		interrupts = <GIC_SPI 177 IRQ_TYPE_LEVEL_HIGH>;
+
+		iommus = <&adreno_smmu 0 1>;
+		operating-points-v2 = <&gpu_opp_table>;
+		power-domains = <&gpucc GPU_CX_GDSC>;
+		qcom,gmu = <&gmu_wrapper>;
+
+		#cooling-cells = <2>;
+
+		gpu_zap_shader: zap-shader {
+			memory-region = <&gpu_mem>;
+		};
+
+		gpu_opp_table: opp-table {
+			compatible = "operating-points-v2";
+
+			opp-320000000 {
+				opp-hz = /bits/ 64 <320000000>;
+				required-opps = <&rpmpd_opp_low_svs>;
+			};
+
+			opp-465000000 {
+				opp-hz = /bits/ 64 <465000000>;
+				required-opps = <&rpmpd_opp_svs>;
+			};
+
+			opp-600000000 {
+				opp-hz = /bits/ 64 <600000000>;
+				required-opps = <&rpmpd_opp_svs>;
+			};
+
+			opp-745000000 {
+				opp-hz = /bits/ 64 <745000000>;
+				required-opps = <&rpmpd_opp_nom>;
+			};
+
+			opp-820000000 {
+				opp-hz = /bits/ 64 <820000000>;
+				required-opps = <&rpmpd_opp_turbo>;
+			};
+		};
+	};
+};
+
+/*
+ * Ramoops, at the address and size the vendor's own tree uses
+ * (0xaf000000, 0xbf800), with the vendor's own split of it: a kmsg area,
+ * then a console area at 0x3f800, then a pmsg area at 0x7f800.
+ *
+ * The sizes have to give the same split, because the driver takes the kmsg
+ * area as mem_size minus the console and pmsg areas, and the console area
+ * is where the pstore console writes the kernel's messages as they
+ * happen. With the same split, the phone's own kernel reads this kernel's
+ * log back from /sys/fs/pstore/console-ramoops-0 after a reboot.
+ */
+&reserved_memory {
+	ramoops@af000000 {
+		compatible = "ramoops";
+		reg = <0x0 0xaf000000 0x0 0xbf800>;
+		record-size = <0x10000>;
+		console-size = <0x40000>;
+		ftrace-size = <0>;
+		pmsg-size = <0x40000>;
+	};
+};
+
+/* --- Regulators --------------------------------------------------------- */
+&rpm_requests {
+	/*
+	 * The PM6125's rails, with the voltages Motorola's own tree gives
+	 * them (trinket-regulator.dtsi) and that upstream's tree for the
+	 * same PM6125 agrees with (sm6125-xiaomi-ginkgo-common.dtsi). The
+	 * names are the RPM's: l7, l10 and l15 are the USB PHY's, l11 and
+	 * l24 the eMMC's.
+	 */
+	regulators-0 {
+		compatible = "qcom,rpm-pm6125-regulators";
+
+		vreg_s6: s6 {
+			regulator-min-microvolt = <936000>;
+			regulator-max-microvolt = <1422000>;
+		};
+
+		vreg_l1: l1 {
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1256000>;
+		};
+
+		vreg_l2: l2 {
+			regulator-min-microvolt = <1000000>;
+			regulator-max-microvolt = <1056000>;
+		};
+
+		vreg_l3: l3 {
+			regulator-min-microvolt = <1000000>;
+			regulator-max-microvolt = <1064000>;
+		};
+
+		vreg_l4: l4 {
+			regulator-min-microvolt = <872000>;
+			regulator-max-microvolt = <976000>;
+			regulator-allow-set-load;
+		};
+
+		vreg_l5: l5 {
+			regulator-min-microvolt = <1648000>;
+			regulator-max-microvolt = <2950000>;
+			regulator-allow-set-load;
+		};
+
+		vreg_l6: l6 {
+			regulator-min-microvolt = <576000>;
+			regulator-max-microvolt = <656000>;
+		};
+
+		vreg_l7: l7 {
+			regulator-min-microvolt = <872000>;
+			regulator-max-microvolt = <976000>;
+		};
+
+		vreg_l8: l8 {
+			regulator-min-microvolt = <400000>;
+			regulator-max-microvolt = <728000>;
+		};
+
+		vreg_l9: l9 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1896000>;
+		};
+
+		vreg_l10: l10 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1896000>;
+			regulator-allow-set-load;
+		};
+
+		vreg_l11: l11 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1952000>;
+			regulator-allow-set-load;
+		};
+
+		vreg_l12: l12 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1996000>;
+		};
+
+		vreg_l13: l13 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1832000>;
+		};
+
+		vreg_l14: l14 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1904000>;
+		};
+
+		vreg_l15: l15 {
+			regulator-min-microvolt = <3104000>;
+			regulator-max-microvolt = <3232000>;
+		};
+
+		vreg_l16: l16 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1904000>;
+		};
+
+		vreg_l17: l17 {
+			regulator-min-microvolt = <1248000>;
+			regulator-max-microvolt = <1304000>;
+		};
+
+		vreg_l18: l18 {
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1264000>;
+			regulator-allow-set-load;
+		};
+
+		vreg_l19: l19 {
+			regulator-min-microvolt = <1648000>;
+			regulator-max-microvolt = <2952000>;
+		};
+
+		vreg_l20: l20 {
+			regulator-min-microvolt = <1648000>;
+			regulator-max-microvolt = <2952000>;
+		};
+
+		vreg_l21: l21 {
+			regulator-min-microvolt = <2600000>;
+			regulator-max-microvolt = <2856000>;
+		};
+
+		vreg_l22: l22 {
+			regulator-min-microvolt = <2944000>;
+			regulator-max-microvolt = <2950000>;
+			regulator-allow-set-load;
+		};
+
+		vreg_l23: l23 {
+			regulator-min-microvolt = <3000000>;
+			regulator-max-microvolt = <3400000>;
+		};
+
+		vreg_l24: l24 {
+			regulator-min-microvolt = <2944000>;
+			regulator-max-microvolt = <2950000>;
+			regulator-allow-set-load;
+		};
+
+	};
+};
+
+/* --- USB ---------------------------------------------------------------- */
+
+/*
+ * The vendor tree sets dr_mode = "otg" with a USB role switch on the PMI632.
+ * We start in peripheral mode: the phone is a USB device on the host side,
+ * which is what the initramfs' gadget networking needs.
+ */
+&usb3 {
+	status = "okay";
+};
+
+/*
+ * The QUSB2 PHY. The driver gets its three rails with a bulk regulator
+ * get, which fails outright when a supply is missing, so they have to be
+ * named here: the PM6125's L7, L10 and L15, which is what the vendor tree
+ * gives this PHY (as pm6125_l7, pm6125_l10 and pm6125_l15).
+ */
+&hsusb_phy1 {
+	vdd-supply = <&vreg_l7>;
+	vdda-pll-supply = <&vreg_l10>;
+	vdda-phy-dpdm-supply = <&vreg_l15>;
+	status = "okay";
+};
+
+&usb3_dwc3 {
+	dr_mode = "peripheral";
+};
+
+/* --- Bus controllers ---------------------------------------------------- */
+
+/*
+ * The SPMI arbiter. The PM6125 and the PMI632 are both on it: without it
+ * neither of them probes, and none of the PMIC's rails or GPIOs are there.
+ */
+&spmi_bus {
+	status = "okay";
+};
+
+/*
+ * The QUPv3 wrappers. The console UART (uart4, 0x4a90000) and the SPI
+ * controller the touchscreen is on (spi2, 0x4a88000) are both inside the
+ * first of them, and a node below a disabled wrapper never probes.
+ */
+&qupv3_id_0 {
+	status = "okay";
+};
+
+&qupv3_id_1 {
+	status = "okay";
+};
+
+/* The DMA controller the QUPv3 SPI transfers need. */
+&gpi_dma1 {
+	status = "okay";
+};
+
+/* --- Storage ------------------------------------------------------------ */
+
+/*
+ * The eMMC is sdhc_1, at 0x4744000: the stock kernel's command line says
+ * "androidboot.bootdevice=4744000.sdhci", and Motorola's own tree has
+ * sdhc_1 there too. There is no second SD controller on this phone.
+ *
+ * The rails are the PM6125's L24 (VMMMC) and L11 (VQMMVC), the same two
+ * upstream's tree for this PM6125 gives the eMMC on the Redmi Note 8.
+ */
+&sdhc_1 {
+	vmmc-supply = <&vreg_l24>;
+	vqmmc-supply = <&vreg_l11>;
+	status = "disabled";
+};
+
+/* --- Console ------------------------------------------------------------ */
+
+/*
+ * The console UART. The stock tree puts its console on the QUPv3 SE4 UART
+ * at 0x4a90000, which is where upstream's uart4 is, and the bootloader
+ * overrides the command line with "console=null", so the earlycon in
+ * /chosen/bootargs is the only console the kernel gets.
+ */
+&uart4 {
+	status = "okay";
+};
+
+/* --- Display ------------------------------------------------------------ */
+
+&mdss {
+	status = "disabled";
+};
+
+&mdss_mdp {
+	status = "disabled";
+};
+
+&mdss_dsi0 {
+	status = "disabled";
+
+	panel@0 {
+		compatible = "auo,ft8756";
+		reg = <0>;
+		status = "disabled";
+
+		/*
+		 * The panel's reset line. The vendor tree drives it from
+		 * TLMM 90 with the sequence <1 4>, <0 1>, <1 11>: line
+		 * levels with the delays in milliseconds, so release,
+		 * assert, release on this active-low line.
+		 */
+		reset-gpios = <&tlmm 90 GPIO_ACTIVE_LOW>;
+
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&mdss_dsi0_out>;
+			};
+		};
+	};
+
+	ports {
+		port@1 {
+			reg = <1>;
+
+			mdss_dsi0_out: endpoint {
+				remote-endpoint = <&panel_in>;
+				data-lanes = <0 1 2 3>;
+			};
+		};
+	};
+};
+
+&mdss_dsi0_phy {
+	status = "disabled";
+};
+
+/* --- Touchscreen -------------------------------------------------------- */
+
+/*
+ * The FocalTech FT8756 sits on the QUPv3 SE2 SPI controller. The vendor tree
+ * declares it as "focaltech,fts", the generic name it uses for the whole
+ * family, with the interrupt on TLMM 88 and the reset on TLMM 87.
+ *
+ * It stays disabled until it has passed on the phone: the overlay that
+ * turns it on lives with the rest of this phone's bring-up.
+ */
+&spi2 {
+	status = "disabled";
+
+	focaltech@0 {
+		compatible = "focaltech,ft8756";
+		reg = <0>;
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <88 IRQ_TYPE_LEVEL_LOW>;
+
+		spi-max-frequency = <8000000>;
+
+		reset-gpios = <&tlmm 87 GPIO_ACTIVE_LOW>;
+
+		touchscreen-size-x = <1080>;
+		touchscreen-size-y = <2300>;
+	};
+};

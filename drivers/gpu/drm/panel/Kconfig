@@ -63,7 +63,7 @@ config DRM_PANEL_AUO_FT8756
 	help
 	  Say Y here if you want to enable support for the AUO FT8756
 	  1080x2300 video mode panel, as fitted to the Motorola Moto G
-	  Power (XT2041-4). It provides a MIPI DSI interface to the host.
+	  Power (2020). It provides a MIPI DSI interface to the host.
 
 config DRM_PANEL_BOE_BF060Y8M_AJ0
 	tristate "Boe BF060Y8M-AJ0 panel"
