@@ -97,6 +97,21 @@
 /* DBI port logic registers used by Samsung's setup */
 #define GS201_DBI_AUX_CLK_FREQ		0xb40
 #define GS201_DBI_AUX_CLK_FREQ_26MHZ	26
+#define GS201_DBI_L1SUB_CONTROL		0xb44
+#define GS201_DBI_L1SUB_T_POWER_OFF	GENMASK(1, 0)
+#define GS201_DBI_L1SUB_T_L1_2		GENMASK(5, 2)
+#define GS201_DBI_L1SUB_T_PCLKACK	GENMASK(7, 6)
+
+/*
+ * L1 PM Substates timings of the root port, the values Google's driver uses
+ * with the Broadcom Wi-Fi on this controller (exynos_pcie_rc_set_l1ss()):
+ * T_POWER_ON 200 us, as in the 6.1 driver (the 5.10 one wrote 130 us), and
+ * an effective Common_Mode_Restore_Time of 42 us (Google ORs 0x20 into a
+ * Control 1 register whose reset value holds 0x0a).
+ */
+#define GS201_L1SS_T_POWER_ON_SCALE	1	/* 10 us units */
+#define GS201_L1SS_T_POWER_ON_VALUE	20	/* 200 us */
+#define GS201_L1SS_CM_RESTORE_US	42
 
 /* SYSREG_HSI2 shareability control for this controller */
 #define GS201_SYSREG_SHARABLE_MASK	GENMASK(1, 0)
@@ -214,6 +229,7 @@ struct gs201_pcie {
 	bool coherent;
 	bool phy_inited;
 	bool phy_on;
+	bool l1ss_reported;
 	int irq;
 	struct irq_domain *intx_domain;
 	raw_spinlock_t lock;
@@ -389,6 +405,56 @@ static void gs201_pcie_setup_elbi(struct gs201_pcie *gp)
 		       GS201_ELBI_HISTORY_ENABLE);
 }
 
+/*
+ * With CLKREQ# wired (supports-clkreq), let the root port advertise L1.1 and
+ * L1.2. The PHY side (ERIO clock gating and the L1.2 entry delay) and the
+ * I/A sequencer that re-locks the CDR on L1.2 exit are already set up; what
+ * is left is the root port's L1 PM Substates capability, which the PCI core
+ * reads to program both ends, and the controller's L1.2 entry timings.
+ * Called with DBI read-only writes enabled.
+ */
+static void gs201_pcie_setup_l1ss(struct gs201_pcie *gp)
+{
+	struct dw_pcie *pci = &gp->pci;
+	u16 l1ss;
+	u32 val;
+
+	l1ss = dw_pcie_find_ext_capability(pci, PCI_EXT_CAP_ID_L1SS);
+	if (!l1ss) {
+		dev_warn(pci->dev, "no L1 PM Substates capability in DBI\n");
+		pci->l1ss_support = false;
+		return;
+	}
+
+	val = dw_pcie_readl_dbi(pci, l1ss + PCI_L1SS_CAP);
+	val &= ~(PCI_L1SS_CAP_CM_RESTORE_TIME | PCI_L1SS_CAP_P_PWR_ON_SCALE |
+		 PCI_L1SS_CAP_P_PWR_ON_VALUE);
+	val |= FIELD_PREP(PCI_L1SS_CAP_CM_RESTORE_TIME, GS201_L1SS_CM_RESTORE_US) |
+	       FIELD_PREP(PCI_L1SS_CAP_P_PWR_ON_SCALE, GS201_L1SS_T_POWER_ON_SCALE) |
+	       FIELD_PREP(PCI_L1SS_CAP_P_PWR_ON_VALUE, GS201_L1SS_T_POWER_ON_VALUE);
+	val |= PCI_L1SS_CAP_PCIPM_L1_1 | PCI_L1SS_CAP_PCIPM_L1_2 |
+	       PCI_L1SS_CAP_ASPM_L1_1 | PCI_L1SS_CAP_ASPM_L1_2 |
+	       PCI_L1SS_CAP_L1_PM_SS;
+	dw_pcie_writel_dbi(pci, l1ss + PCI_L1SS_CAP, val);
+
+	/* Google's L1.2 entry timings, written once at link setup */
+	dw_pcie_writel_dbi(pci, GS201_DBI_L1SUB_CONTROL,
+			   FIELD_PREP(GS201_DBI_L1SUB_T_POWER_OFF, 2) |
+			   FIELD_PREP(GS201_DBI_L1SUB_T_L1_2, 10) |
+			   FIELD_PREP(GS201_DBI_L1SUB_T_PCLKACK, 3));
+
+	if (gp->l1ss_reported) {
+		dev_dbg(pci->dev, "L1 PM Substates advertised (cap %#010x, L1SUB %#x)\n",
+			dw_pcie_readl_dbi(pci, l1ss + PCI_L1SS_CAP),
+			dw_pcie_readl_dbi(pci, GS201_DBI_L1SUB_CONTROL));
+		return;
+	}
+	gp->l1ss_reported = true;
+	dev_info(pci->dev, "L1 PM Substates advertised (cap %#010x, L1SUB %#x)\n",
+		 dw_pcie_readl_dbi(pci, l1ss + PCI_L1SS_CAP),
+		 dw_pcie_readl_dbi(pci, GS201_DBI_L1SUB_CONTROL));
+}
+
 static void gs201_pcie_setup_dbi(struct gs201_pcie *gp)
 {
 	struct dw_pcie *pci = &gp->pci;
@@ -431,6 +497,9 @@ static void gs201_pcie_setup_dbi(struct gs201_pcie *gp)
 	} else {
 		dev_warn(pci->dev, "no PCIe capability in DBI\n");
 	}
+
+	if (pci->l1ss_support)
+		gs201_pcie_setup_l1ss(gp);
 
 	dw_pcie_dbi_ro_wr_dis(pci);
 }
@@ -1279,6 +1348,9 @@ static int gs201_pcie_probe(struct platform_device *pdev)
 	/* The DWC core reads num-lanes in host_init; stages need it earlier */
 	if (of_property_read_u32(np, "num-lanes", &pci->num_lanes))
 		pci->num_lanes = 1;
+
+	/* L1 PM Substates need CLKREQ# between the root port and the device */
+	pci->l1ss_support = of_property_read_bool(np, "supports-clkreq");
 
 	platform_set_drvdata(pdev, gp);
 
