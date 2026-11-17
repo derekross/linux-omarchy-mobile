@@ -11193,6 +11193,7 @@ F:	drivers/clk/samsung/clk-zuma.c
 F:	drivers/clk/samsung/clk-zumapro.c
 F:	drivers/phy/phy-google-usb.c
 F:	drivers/soc/samsung/gs101-pmu.c
+F:	drivers/soc/samsung/gs201-bcl.c
 F:	drivers/phy/samsung/phy-gs101-ufs.c
 F:	drivers/phy/samsung/phy-zuma-pcie.c
 F:	drivers/phy/samsung/phy-zumapro-ufs.c
