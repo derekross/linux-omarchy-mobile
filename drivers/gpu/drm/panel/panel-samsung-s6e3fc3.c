@@ -4,21 +4,31 @@
  *
  * Command sequences from Google's GPL panel driver
  * (google-modules/display/samsung/panel/panel-samsung-s6e3fc3-p10.c),
- * restricted to the EVT1 and later panels that ship in phones. Local HBM,
- * low-power (AOD) modes and the panel revision reads are left out.
+ * restricted to the EVT1 and later panels that ship in phones. Low-power
+ * (AOD) modes and the panel revision reads are left out.
  *
  * The bootloader powers the panel on and leaves it running. When the
  * reset line is released at probe, the driver takes the panel over as it
  * is: it sends nothing until the brightness or the power state changes.
+ *
+ * Local high brightness mode (LHBM) lights a bright circle over the
+ * under-display fingerprint sensor. It is controlled through the backlight
+ * device's local_hbm_mode attribute, named as in Google's driver, and
+ * switches itself off after local_hbm_max_timeout milliseconds.
  */
 
 #include <linux/backlight.h>
 #include <linux/delay.h>
+#include <linux/devm-helpers.h>
+#include <linux/device.h>
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/mod_devicetable.h>
 #include <linux/mutex.h>
 #include <linux/regulator/consumer.h>
+#include <linux/string.h>
+#include <linux/sysfs.h>
+#include <linux/workqueue.h>
 
 #include <video/mipi_display.h>
 
@@ -37,6 +47,18 @@
 #define S6E3FC3_DEFAULT_BRIGHTNESS	1023
 
 #define S6E3FC3_WRCTRLD_BCTRL		0x20
+#define S6E3FC3_WRCTRLD_LOCAL_HBM	0x10
+
+/* Google's LOCAL_HBM_MAX_TIMEOUT_MS */
+#define S6E3FC3_LHBM_TIMEOUT_MS		3000
+
+/* the HS LHBM gamma: five bytes after the 0x65 write command */
+#define S6E3FC3_LHBM_GAMMA_LEN		5
+
+static bool allow_lhbm;
+module_param(allow_lhbm, bool, 0644);
+MODULE_PARM_DESC(allow_lhbm,
+		 "Allow local high brightness mode for the fingerprint sensor");
 
 struct s6e3fc3 {
 	struct drm_panel panel;
@@ -44,11 +66,25 @@ struct s6e3fc3 {
 	struct gpio_desc *reset_gpio;
 	struct regulator_bulk_data *supplies;
 	struct drm_dsc_config dsc;
-	/* keeps multi-command sequences (0xb0 offsets) from interleaving */
+	struct backlight_device *bl;
+	/*
+	 * Keeps multi-command sequences (0xb0 offsets) from interleaving and
+	 * guards the panel state below.
+	 */
 	struct mutex lock;
+	struct delayed_work lhbm_off_work;
+	unsigned int lhbm_timeout_ms;
+	/* 0x65 and the factory LHBM gamma, read once from 0xd8 */
+	u8 lhbm_gamma[1 + S6E3FC3_LHBM_GAMMA_LEN];
+	bool lhbm_gamma_read;
 	/* out of reset and sleep: commands reach the panel */
 	bool prepared;
 	bool display_off;
+	bool lhbm;
+	/* when the LHBM in force times out (each on or re-enable moves it) */
+	unsigned long lhbm_deadline;
+	/* set in remove(): no LHBM from then on */
+	bool removing;
 };
 
 static const struct regulator_bulk_data s6e3fc3_supplies[] = {
@@ -75,10 +111,16 @@ static inline struct s6e3fc3 *to_s6e3fc3(struct drm_panel *panel)
 	return container_of(panel, struct s6e3fc3, panel);
 }
 
+static void s6e3fc3_lhbm_stop(struct s6e3fc3 *ctx);
+
 #define s6e3fc3_unlock_lvl2(ctx) \
 	mipi_dsi_dcs_write_seq_multi(ctx, 0xf0, 0x5a, 0x5a)
 #define s6e3fc3_lock_lvl2(ctx) \
 	mipi_dsi_dcs_write_seq_multi(ctx, 0xf0, 0xa5, 0xa5)
+#define s6e3fc3_unlock_lvl3(ctx) \
+	mipi_dsi_dcs_write_seq_multi(ctx, 0xf1, 0x5a, 0x5a)
+#define s6e3fc3_lock_lvl3(ctx) \
+	mipi_dsi_dcs_write_seq_multi(ctx, 0xf1, 0xa5, 0xa5)
 #define s6e3fc3_freq_update(ctx) \
 	mipi_dsi_dcs_write_seq_multi(ctx, 0xf7, 0x0f)
 
@@ -233,6 +275,7 @@ static int s6e3fc3_disable(struct drm_panel *panel)
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 
 	guard(mutex)(&ctx->lock);
+	s6e3fc3_lhbm_stop(ctx);
 	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
 	if (!dsi_ctx.accum_err)
 		ctx->display_off = true;
@@ -246,6 +289,7 @@ static int s6e3fc3_unprepare(struct drm_panel *panel)
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 
 	guard(mutex)(&ctx->lock);
+	s6e3fc3_lhbm_stop(ctx);
 	/* the vendor off set: display off, then sleep in and 120 ms */
 	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
 	mipi_dsi_msleep(&dsi_ctx, 120);
@@ -289,6 +333,247 @@ static const struct drm_panel_funcs s6e3fc3_panel_funcs = {
 };
 
 /*
+ * Google's s6e3fc3_p10_lhbm_gamma_read(), for the HS mode only: the factory
+ * LHBM gamma sits at 0xd8 offset 0x22, read with 10-bit offsets (0xf2
+ * 0xcc). A failed read leaves the panel's own gamma, as the vendor driver
+ * does. Called once, with ctx->lock held, on a prepared panel.
+ */
+static int s6e3fc3_lhbm_gamma_read(struct s6e3fc3 *ctx)
+{
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+	u8 *gamma = &ctx->lhbm_gamma[1];
+	ssize_t ret;
+
+	s6e3fc3_unlock_lvl2(&dsi_ctx);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x28, 0xf2);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf2, 0xcc);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x00, 0x22, 0xd8);
+	if (!dsi_ctx.accum_err) {
+		/* outside dsi_ctx: a failed read still restores 8 bits */
+		ret = mipi_dsi_dcs_read(ctx->dsi, 0xd8, gamma,
+					S6E3FC3_LHBM_GAMMA_LEN);
+		if (ret == S6E3FC3_LHBM_GAMMA_LEN) {
+			ctx->lhbm_gamma[0] = 0x65;
+			dev_info(&ctx->dsi->dev, "LHBM gamma %*phN\n",
+				 S6E3FC3_LHBM_GAMMA_LEN, gamma);
+		} else {
+			dev_err(&ctx->dsi->dev,
+				"failed to read the LHBM gamma: %zd\n", ret);
+		}
+	}
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x00, 0x28, 0xf2);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf2, 0xc4);
+	s6e3fc3_lock_lvl2(&dsi_ctx);
+	if (!dsi_ctx.accum_err)
+		ctx->lhbm_gamma_read = true;
+
+	return dsi_ctx.accum_err;
+}
+
+/*
+ * Local HBM: Google's s6e3fc3_p10_lhbm_gamma_write() (the HS gamma, then
+ * the DVT1+ fix for an LHBM too bright with HBM, which every phone panel
+ * gets) and s6e3fc3_p10_send_lhbm_location_cmds(), then WRCTRLD with the
+ * LHBM bit. The circle is centred on the sensor (x 0x21c, y 0x6b1 in
+ * panel pixels) with size 0x63. The vendor driver sends the gamma and
+ * the location at each cold init; here they go with each LHBM on, which
+ * also covers a panel taken over from the bootloader. Off is WRCTRLD
+ * back to normal. Called with ctx->lock held, on a prepared panel.
+ */
+static int s6e3fc3_set_lhbm(struct s6e3fc3 *ctx, bool on)
+{
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+	int ret;
+
+	if (on && !ctx->lhbm_gamma_read) {
+		ret = s6e3fc3_lhbm_gamma_read(ctx);
+		if (ret)
+			return ret;
+	}
+
+	if (on) {
+		s6e3fc3_unlock_lvl2(&dsi_ctx);
+		if (ctx->lhbm_gamma[0]) {
+			/* 10-bit offsets */
+			mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x28, 0xf2);
+			mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf2, 0xcc);
+			/* HS gamma */
+			mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x03, 0xcd, 0x65);
+			mipi_dsi_dcs_write_buffer_multi(&dsi_ctx, ctx->lhbm_gamma,
+							sizeof(ctx->lhbm_gamma));
+			/* LHBM brightness with HBM */
+			mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x01, 0x6c, 0x66);
+			mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x66, 0x39, 0x39, 0x39,
+						     0x3c, 0x3c, 0x3c);
+			mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x01, 0x90, 0x66);
+			mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x66, 0x2c, 0x2c, 0x2c,
+						     0x32, 0x32, 0x32);
+			mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x01, 0xb4, 0x66);
+			mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x66, 0x1e, 0x1e, 0x1e,
+						     0x15, 0x15, 0x15);
+			/* 8-bit offsets */
+			mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x00, 0x28, 0xf2);
+			mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf2, 0xc4);
+		}
+		s6e3fc3_unlock_lvl3(&dsi_ctx);
+		/* 10-bit offsets */
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x28, 0xf2);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf2, 0xcc);
+		/* box location */
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x01, 0x33, 0x68);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x68, 0xcc);
+		/* centre position and size */
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x01, 0x34, 0x68);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x68, 0x21, 0xc6, 0xb1, 0x63);
+		/* 8-bit offsets */
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x00, 0x28, 0xf2);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf2, 0xc4);
+		s6e3fc3_lock_lvl3(&dsi_ctx);
+		s6e3fc3_lock_lvl2(&dsi_ctx);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_WRITE_CONTROL_DISPLAY,
+					     S6E3FC3_WRCTRLD_BCTRL |
+					     S6E3FC3_WRCTRLD_LOCAL_HBM);
+	} else {
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_WRITE_CONTROL_DISPLAY,
+					     S6E3FC3_WRCTRLD_BCTRL);
+	}
+	if (!dsi_ctx.accum_err)
+		ctx->lhbm = on;
+
+	return dsi_ctx.accum_err;
+}
+
+/*
+ * Turn LHBM off before the panel blanks or sleeps. Called with ctx->lock
+ * held. If the off command fails the state is dropped anyway: display off
+ * and sleep both end the circle.
+ */
+static void s6e3fc3_lhbm_stop(struct s6e3fc3 *ctx)
+{
+	if (!ctx->lhbm)
+		return;
+	cancel_delayed_work(&ctx->lhbm_off_work);
+	if (ctx->prepared)
+		s6e3fc3_set_lhbm(ctx, false);
+	ctx->lhbm = false;
+	if (ctx->bl)
+		sysfs_notify(&ctx->bl->dev.kobj, NULL, "local_hbm_mode");
+}
+
+static void s6e3fc3_lhbm_off_work(struct work_struct *work)
+{
+	struct s6e3fc3 *ctx = container_of(to_delayed_work(work),
+					   struct s6e3fc3, lhbm_off_work);
+
+	guard(mutex)(&ctx->lock);
+	/*
+	 * A run that waited for the lock while LHBM went off and on again, or
+	 * was re-enabled, isn't this session's timeout: the session queued its
+	 * own.
+	 */
+	if (ctx->lhbm && time_after_eq(jiffies, ctx->lhbm_deadline)) {
+		dev_info(&ctx->dsi->dev, "local HBM timed out\n");
+		s6e3fc3_lhbm_stop(ctx);
+	}
+}
+
+static ssize_t local_hbm_mode_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct s6e3fc3 *ctx = bl_get_data(to_backlight_device(dev));
+
+	return sysfs_emit(buf, "%d\n", ctx->lhbm);
+}
+
+static ssize_t local_hbm_mode_store(struct device *dev,
+				    struct device_attribute *attr,
+				    const char *buf, size_t count)
+{
+	struct backlight_device *bl = to_backlight_device(dev);
+	struct s6e3fc3 *ctx = bl_get_data(bl);
+	bool on;
+	int ret;
+
+	ret = kstrtobool(buf, &on);
+	if (ret)
+		return ret;
+	if (on && !allow_lhbm)
+		return -EPERM;
+
+	guard(mutex)(&ctx->lock);
+	if (!on) {
+		s6e3fc3_lhbm_stop(ctx);
+		return count;
+	}
+	if (ctx->removing)
+		return -ENODEV;
+	/* as Google's driver: only on a lit panel */
+	if (!ctx->prepared || ctx->display_off ||
+	    backlight_is_blank(bl) || !backlight_get_brightness(bl))
+		return -EPERM;
+	if (ctx->lhbm) {
+		/* re-enabling restarts the timeout */
+		ctx->lhbm_deadline = jiffies +
+				     msecs_to_jiffies(ctx->lhbm_timeout_ms);
+		mod_delayed_work(system_wq, &ctx->lhbm_off_work,
+				 msecs_to_jiffies(ctx->lhbm_timeout_ms));
+		return count;
+	}
+
+	ret = s6e3fc3_set_lhbm(ctx, true);
+	if (ret)
+		return ret;
+	ctx->lhbm_deadline = jiffies + msecs_to_jiffies(ctx->lhbm_timeout_ms);
+	queue_delayed_work(system_wq, &ctx->lhbm_off_work,
+			   msecs_to_jiffies(ctx->lhbm_timeout_ms));
+	dev_dbg(dev, "local HBM on\n");
+
+	return count;
+}
+static DEVICE_ATTR_RW(local_hbm_mode);
+
+static ssize_t local_hbm_max_timeout_show(struct device *dev,
+					  struct device_attribute *attr,
+					  char *buf)
+{
+	struct s6e3fc3 *ctx = bl_get_data(to_backlight_device(dev));
+
+	return sysfs_emit(buf, "%u\n", ctx->lhbm_timeout_ms);
+}
+
+static ssize_t local_hbm_max_timeout_store(struct device *dev,
+					   struct device_attribute *attr,
+					   const char *buf, size_t count)
+{
+	struct s6e3fc3 *ctx = bl_get_data(to_backlight_device(dev));
+	unsigned int ms;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &ms);
+	if (ret)
+		return ret;
+	/* never unbounded: the circle is far above normal brightness */
+	if (!ms || ms > S6E3FC3_LHBM_TIMEOUT_MS)
+		return -EINVAL;
+
+	guard(mutex)(&ctx->lock);
+	ctx->lhbm_timeout_ms = ms;
+
+	return count;
+}
+static DEVICE_ATTR_RW(local_hbm_max_timeout);
+
+static struct attribute *s6e3fc3_bl_attrs[] = {
+	&dev_attr_local_hbm_mode.attr,
+	&dev_attr_local_hbm_max_timeout.attr,
+	NULL
+};
+
+static const struct attribute_group s6e3fc3_bl_group = {
+	.attrs = s6e3fc3_bl_attrs,
+};
+
+/*
  * Levels below the vendor driver's lowest are raised to it. A blanked
  * backlight (bl_power) turns the display off, which keeps the panel out of
  * sleep with its registers intact, and unblanking turns it back on.
@@ -306,6 +591,9 @@ static int s6e3fc3_bl_update_status(struct backlight_device *bl)
 	 */
 	if (!ctx->prepared)
 		return 0;
+
+	if (backlight_is_blank(bl) || !brightness)
+		s6e3fc3_lhbm_stop(ctx);
 
 	if (backlight_is_blank(bl)) {
 		if (!ctx->display_off) {
@@ -420,7 +708,17 @@ static int s6e3fc3_probe(struct mipi_dsi_device *dsi)
 	if (IS_ERR(bl))
 		return dev_err_probe(dev, PTR_ERR(bl),
 				     "failed to register backlight\n");
+	ctx->bl = bl;
 	ctx->panel.backlight = bl;
+	/* after the backlight, so the timer is cancelled before it goes away */
+	ctx->lhbm_timeout_ms = S6E3FC3_LHBM_TIMEOUT_MS;
+	ret = devm_delayed_work_autocancel(dev, &ctx->lhbm_off_work,
+					   s6e3fc3_lhbm_off_work);
+	if (ret)
+		return ret;
+	ret = devm_device_add_group(&bl->dev, &s6e3fc3_bl_group);
+	if (ret)
+		return ret;
 
 	drm_panel_add(&ctx->panel);
 
@@ -440,6 +738,16 @@ static void s6e3fc3_remove(struct mipi_dsi_device *dsi)
 {
 	struct s6e3fc3 *ctx = mipi_dsi_get_drvdata(dsi);
 	int ret;
+
+	/*
+	 * devres cancels the timeout before the backlight and its attributes
+	 * go: turn LHBM off now and refuse it from here, so no write in
+	 * between can light a circle nothing would turn off.
+	 */
+	scoped_guard(mutex, &ctx->lock) {
+		ctx->removing = true;
+		s6e3fc3_lhbm_stop(ctx);
+	}
 
 	ret = mipi_dsi_detach(dsi);
 	if (ret < 0)
