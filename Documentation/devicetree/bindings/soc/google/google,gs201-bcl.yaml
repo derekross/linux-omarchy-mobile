@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/soc/google/google,gs201-bcl.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Google gs201 battery current limiter
+
+maintainers:
+  - Ángel René <17342133+angelrenefm@users.noreply.github.com>
+
+description:
+  On Google Tensor G2 (gs201) phones the charger PMIC (MAX77759) and the main
+  PMIC (S2MPG12) raise lines when the battery voltage droops or its current
+  goes over the limit. While a line is asserted the CPU clusters and the GPU
+  are capped, so a load peak doesn't take the battery under the level where
+  the phone shuts down.
+
+properties:
+  compatible:
+    const: google,gs201-bcl
+
+  smpl-warn-gpios:
+    maxItems: 1
+    description: The S2MPG12's SMPL_WARN, asserted when the battery falls
+      under its warning voltage.
+
+  vdroop1-gpios:
+    maxItems: 1
+    description: The MAX77759's SYS_UVLO1, the first system voltage level.
+
+  vdroop2-gpios:
+    maxItems: 1
+    description: The MAX77759's SYS_UVLO2 or BAT_OILO, which share one pin,
+      the second system voltage level or battery over-current.
+
+  google,gpu:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: The GPU, whose maximum frequency is capped with the CPUs'.
+
+required:
+  - compatible
+
+anyOf:
+  - required: [smpl-warn-gpios]
+  - required: [vdroop1-gpios]
+  - required: [vdroop2-gpios]
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/gpio/gpio.h>
+
+    battery-current-limiter {
+        compatible = "google,gs201-bcl";
+        smpl-warn-gpios = <&gpa5 0 GPIO_ACTIVE_LOW>;
+        vdroop1-gpios = <&gpa5 5 GPIO_ACTIVE_HIGH>;
+        vdroop2-gpios = <&gpa5 6 GPIO_ACTIVE_HIGH>;
+        google,gpu = <&gpu>;
+    };
