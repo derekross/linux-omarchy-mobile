@@ -299,6 +299,34 @@ static void guard_test_limits_capped(struct kunit *test)
 	}
 }
 
+/*
+ * The husky table carries its own float cap, so its guard raises the
+ * float above the battery node's 4.20 V, to 4.45 V and no further; the
+ * default table has none and keeps the node's.
+ */
+static void guard_test_fv_cap(struct kunit *test)
+{
+	const struct guard_table *tbl = &guard_table_husky;
+	u32 fv, cc;
+
+	KUNIT_EXPECT_EQ(test, guard_table_husky.fv_max_mv, 4450);
+	KUNIT_EXPECT_EQ(test, guard_table_default.fv_max_mv, 0);
+
+	guard_limits(tbl, 2, 3, 4950000, guard_fv_cap(tbl, 4200), 1485000, &fv, &cc);
+	KUNIT_EXPECT_EQ(test, fv, 4450);
+	guard_limits(tbl, 2, 2, 4950000, guard_fv_cap(tbl, 4200), 1485000, &fv, &cc);
+	KUNIT_EXPECT_EQ(test, fv, 4450);
+	/* Bands capped below the last tier keep their own float */
+	guard_limits(tbl, 4, 0, 4950000, guard_fv_cap(tbl, 4200), 1485000, &fv, &cc);
+	KUNIT_EXPECT_EQ(test, fv, 4300);
+	guard_limits(tbl, 5, 0, 4950000, guard_fv_cap(tbl, 4200), 1485000, &fv, &cc);
+	KUNIT_EXPECT_EQ(test, fv, 4200);
+
+	/* What the guard run passes: the table's cap, else the node's */
+	KUNIT_EXPECT_EQ(test, guard_fv_cap(&guard_table_husky, 4200), 4450);
+	KUNIT_EXPECT_EQ(test, guard_fv_cap(&guard_table_default, 4200), 4200);
+}
+
 /* The float is the step at or below the request, as stock rounds it */
 static void round_test_float(struct kunit *test)
 {
@@ -791,7 +819,10 @@ static struct max77759_charger *done_charger(struct kunit *test,
 	return chg;
 }
 
-/* A guard run end to end: at the 4.20 V node a DONE at 4.19 V is full */
+/*
+ * A guard run end to end: with the 4.20 V node the husky guard raises
+ * the float to 4.45 V, and a DONE at 4.42 V in the last tier is full
+ */
 static void done_test_guard_run_full(struct kunit *test)
 {
 	bool saved = temp_guard;
@@ -803,8 +834,10 @@ static void done_test_guard_run_full(struct kunit *test)
 	/* Out of restarts and warned: a full gives both back */
 	chg->done.restarts = DONE_RESTART_MAX;
 	chg->done_warned = true;
-	guard_run(chg, true, 300, 4190000);
+	guard_run(chg, true, 300, 4420000);
 	KUNIT_EXPECT_FALSE(test, chg->done_warned);
+	KUNIT_EXPECT_EQ(test, get_float_voltage(chg), 4450);
+	KUNIT_EXPECT_EQ(test, chg->guard_tier, 3);
 	KUNIT_EXPECT_EQ(test, chg->done_last, DONE_FULL);
 	KUNIT_EXPECT_EQ(test, get_status(chg), POWER_SUPPLY_STATUS_FULL);
 	KUNIT_EXPECT_EQ(test, chg->done.restarts, 0);
@@ -982,6 +1015,136 @@ static void done_test_status(struct kunit *test)
 				    POWER_SUPPLY_STATUS_NOT_CHARGING,
 				    "action %d", not_full[i]);
 	}
+}
+
+/*
+ * Before sleep the raised float goes back to the node's 4.20 V and the
+ * next guard run raises it again; a float at or under it is left alone.
+ */
+static void guard_test_sleep_float(struct kunit *test)
+{
+	bool saved = temp_guard;
+	struct fake_chip *c;
+	struct max77759_charger *chg;
+
+	temp_guard = true;
+	chg = done_charger(test, &c, 4200);
+	c->regs[MAX77759_CHGR_REG_CHG_DETAILS_01] = 0;
+	guard_run(chg, true, 300, 4000000);
+	KUNIT_ASSERT_EQ(test, get_float_voltage(chg), 4450);
+
+	KUNIT_EXPECT_EQ(test, guard_sleep_float(chg), 0);
+	KUNIT_EXPECT_EQ(test, get_float_voltage(chg), 4200);
+	KUNIT_EXPECT_FALSE(test, chg->inhibit);
+
+	c->nlog = 0;
+	KUNIT_EXPECT_EQ(test, guard_sleep_float(chg), 0);
+	KUNIT_EXPECT_EQ(test, c->nlog, 0);
+
+	guard_run(chg, true, 300, 4000000);
+	KUNIT_EXPECT_EQ(test, get_float_voltage(chg), 4450);
+
+	/* The chip does not take it: charging inhibited, sleep allowed */
+	c->fail_writes = 1;
+	KUNIT_EXPECT_EQ(test, guard_sleep_float(chg), 0);
+	KUNIT_EXPECT_TRUE(test, chg->inhibit);
+	KUNIT_EXPECT_EQ(test, c->regs[MAX77759_CHGR_REG_CHG_CNFG_00],
+			MAX77759_CHGR_MODE_BUCK_ON);
+	temp_guard = saved;
+}
+
+static int guard_test_work_runs;
+
+static void guard_test_count_work(struct work_struct *work)
+{
+	guard_test_work_runs++;
+}
+
+/*
+ * The hooks: suspend lowers the raised float; when neither the float
+ * nor the inhibit write works it refuses the sleep; resume runs the
+ * guard work again.
+ */
+static void guard_test_suspend_hooks(struct kunit *test)
+{
+	bool saved = temp_guard;
+	struct fake_chip *c;
+	struct max77759_charger *chg;
+
+	temp_guard = true;
+	chg = done_charger(test, &c, 4200);
+	INIT_DELAYED_WORK(&chg->guard_work, guard_test_count_work);
+	guard_test_work_runs = 0;
+	dev_set_drvdata(chg->dev, chg);
+	c->regs[MAX77759_CHGR_REG_CHG_DETAILS_01] = 0;
+	guard_run(chg, true, 300, 4000000);
+	KUNIT_ASSERT_EQ(test, get_float_voltage(chg), 4450);
+
+	KUNIT_EXPECT_EQ(test, max77759_charger_suspend(chg->dev), 0);
+	KUNIT_EXPECT_EQ(test, get_float_voltage(chg), 4200);
+	/* Disabled while asleep: a queue attempt does nothing */
+	KUNIT_EXPECT_FALSE(test, schedule_delayed_work(&chg->guard_work, 0));
+	KUNIT_EXPECT_EQ(test, max77759_charger_resume(chg->dev), 0);
+	flush_delayed_work(&chg->guard_work);
+	KUNIT_EXPECT_EQ(test, guard_test_work_runs, 1);
+
+	guard_run(chg, true, 300, 4000000);
+	KUNIT_ASSERT_EQ(test, get_float_voltage(chg), 4450);
+	c->fail_writes = 2;
+	KUNIT_EXPECT_LT(test, max77759_charger_suspend(chg->dev), 0);
+	KUNIT_EXPECT_FALSE(test, chg->inhibit);
+	/* Refused: the work is enabled and queued again */
+	flush_delayed_work(&chg->guard_work);
+	KUNIT_EXPECT_EQ(test, guard_test_work_runs, 2);
+	KUNIT_EXPECT_TRUE(test, schedule_delayed_work(&chg->guard_work, 0));
+	flush_delayed_work(&chg->guard_work);
+	KUNIT_EXPECT_EQ(test, guard_test_work_runs, 3);
+	temp_guard = saved;
+}
+
+/*
+ * A table with no cap of its own (every board but husky): the hooks do
+ * nothing, so suspend leaves the guard work enabled and resume does not
+ * queue a run.
+ */
+static void guard_test_suspend_hooks_other_boards(struct kunit *test)
+{
+	struct fake_chip *c;
+	struct max77759_charger *chg;
+
+	chg = done_charger(test, &c, 4200);
+	chg->guard_table = &guard_table_default;
+	INIT_DELAYED_WORK(&chg->guard_work, guard_test_count_work);
+	guard_test_work_runs = 0;
+	dev_set_drvdata(chg->dev, chg);
+
+	KUNIT_EXPECT_EQ(test, max77759_charger_suspend(chg->dev), 0);
+	/* Not disabled: a queue attempt works, and flushing runs it */
+	KUNIT_EXPECT_TRUE(test, schedule_delayed_work(&chg->guard_work, 0));
+	flush_delayed_work(&chg->guard_work);
+	KUNIT_EXPECT_EQ(test, guard_test_work_runs, 1);
+	KUNIT_EXPECT_EQ(test, max77759_charger_resume(chg->dev), 0);
+	flush_delayed_work(&chg->guard_work);
+	KUNIT_EXPECT_EQ(test, guard_test_work_runs, 1);
+}
+
+/*
+ * 46-48 C with the 4.20 V node: the band stops at 4.30 V, under the
+ * husky cap, so its DONE is the band's limit. With the node's 4.20 V as
+ * the cap it would count as full.
+ */
+static void done_test_guard_run_limit(struct kunit *test)
+{
+	bool saved = temp_guard;
+	struct fake_chip *c;
+	struct max77759_charger *chg;
+
+	temp_guard = true;
+	chg = done_charger(test, &c, 4200);
+	guard_run(chg, true, 470, 4290000);
+	KUNIT_EXPECT_EQ(test, get_float_voltage(chg), 4300);
+	KUNIT_EXPECT_EQ(test, chg->done_last, DONE_LIMIT);
+	temp_guard = saved;
 }
 
 /* Either inhibit puts the chip in buck-only mode; both must clear */
@@ -1464,6 +1627,11 @@ static struct kunit_case guard_test_cases[] = {
 	KUNIT_CASE(guard_test_limits_default),
 	KUNIT_CASE(guard_test_limits_husky),
 	KUNIT_CASE(guard_test_limits_capped),
+	KUNIT_CASE(guard_test_fv_cap),
+	KUNIT_CASE(guard_test_sleep_float),
+	KUNIT_CASE(guard_test_suspend_hooks),
+	KUNIT_CASE(guard_test_suspend_hooks_other_boards),
+	KUNIT_CASE(done_test_guard_run_limit),
 	KUNIT_CASE(round_test_float),
 	KUNIT_CASE(round_test_current),
 	KUNIT_CASE(stop_test_set_threshold),

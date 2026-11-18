@@ -140,9 +140,13 @@ static const int guard_temp_decic[GUARD_NBANDS + 1] = {
  * @cv_mv: tier j charges up to cv_mv[j]
  * @cc_pct: charge current per band and tier, in percent of the design
  *	    capacity; 0 means the band does not charge in that tier
+ * @fv_max_mv: when set, the guard's float cap in place of the battery
+ *	       description's, so the float goes above that only while the
+ *	       guard runs
  */
 struct guard_table {
 	int ntiers;
+	u32 fv_max_mv;
 	u32 cv_mv[GUARD_MAX_TIERS];
 	u8 cc_pct[GUARD_NBANDS][GUARD_MAX_TIERS];
 };
@@ -166,9 +170,18 @@ static const struct guard_table guard_table_default = {
  * kernel/devices/google/shusky, branch android-gs-shusky-6.1-android16:
  * temperature and voltage limits from dts/zuma-shusky-battery.dtsi,
  * the 4950 mAh and the six rows from dts/zuma-husky-battery.dtsi.
+ *
+ * The battery node keeps the float at 4.20 V, so a kernel booted without
+ * the guard never charges higher. While the guard runs it caps the
+ * table at 4.45 V instead: under the board's google,fv-max-uv of 4.48 V
+ * (dts/zuma-shusky-charging.dtsi), which google,aafv-ref-cycles and
+ * google,aafv-ref-offset (dts/zuma-husky-battery.dtsi) lower by 20 mV
+ * per 200 cycles, to 4.38 V from 1000 cycles. 4.45 V is a choice, not
+ * from that schedule.
  */
 static const struct guard_table guard_table_husky = {
 	.ntiers = 4,
+	.fv_max_mv = 4450,
 	.cv_mv = { 4200, 4300, 4350, 4480 },
 	.cc_pct = {
 		{  50,  30,   0,  0 },	/*  0-10 C */
@@ -1252,6 +1265,12 @@ static void guard_limits(const struct guard_table *tbl, int band, int tier,
 	*cc_ua = min(cc, cc_max_ua);
 }
 
+/* The guard's float cap: the table's own, else the battery description's */
+static u32 guard_fv_cap(const struct guard_table *tbl, u32 fv_max_mv)
+{
+	return tbl->fv_max_mv ?: fv_max_mv;
+}
+
 static const struct guard_table *guard_select_table(void)
 {
 	if (of_machine_is_compatible("google,zuma-husky"))
@@ -1543,7 +1562,8 @@ static int done_work(struct max77759_charger *chg, int band, int tier, int uv,
 	if (regmap_read(chg->regmap, MAX77759_CHGR_REG_CHG_DETAILS_01, &val))
 		return DONE_UNCHECKED;
 
-	done_tiers(tbl, band, tier, chg->fv_max_mv, &band_last, &last_tier);
+	done_tiers(tbl, band, tier, guard_fv_cap(tbl, chg->fv_max_mv),
+		   &band_last, &last_tier);
 	if (chg->done.full)
 		stop_read_soc(chg, &soc);
 
@@ -1692,7 +1712,8 @@ static unsigned int guard_run(struct max77759_charger *chg, bool read_ok,
 	if (band != chg->guard_band)
 		chg->guard_tier = 0;
 	tier = guard_next_tier(tbl, band, chg->guard_tier, uv);
-	guard_limits(tbl, band, tier, chg->design_uah, chg->fv_max_mv,
+	guard_limits(tbl, band, tier, chg->design_uah,
+		     guard_fv_cap(tbl, chg->fv_max_mv),
 		     chg->cc_max_ua, &fv, &cc);
 
 	if (guard_apply(chg, fv, cc))
@@ -1952,6 +1973,78 @@ static int max77759_charger_probe(struct platform_device *pdev)
 	return 0;
 }
 
+/*
+ * Before sleep: no guard runs while asleep, so a float the guard raised
+ * above the battery description's would hold for as long as the phone
+ * sleeps on the cable, whatever the temperature does. Put the
+ * description's float back; the first guard run after resume raises it
+ * again if the band allows. If the chip does not take it, inhibit
+ * charging instead; that run clears the inhibit once it applies its
+ * limits. Returns 0 when the float is down or charging is inhibited,
+ * else an error: then the phone must not sleep.
+ */
+static int guard_sleep_float(struct max77759_charger *chg)
+{
+	int cur = get_float_voltage(chg);
+	u32 want;
+	int ret;
+
+	if (cur >= 0 && cur <= (int)chg->fv_max_mv)
+		return 0;
+	ret = cur < 0 ? cur : fv_quantize(chg->fv_max_mv, &want);
+	if (!ret)
+		ret = set_float_voltage_limit(chg, chg->fv_max_mv);
+	if (!ret && get_float_voltage(chg) != (int)want)
+		ret = -EIO;
+	if (!ret)
+		return 0;
+	guard_set_inhibit(chg, true);
+	if (!chg->inhibit) {
+		dev_err(chg->dev, "could not lower the float or stop charging for sleep (%d): sleep refused\n",
+			ret);
+		return -EIO;
+	}
+	dev_err(chg->dev, "could not lower the float for sleep (%d): charging inhibited\n",
+		ret);
+	return 0;
+}
+
+static int max77759_charger_suspend(struct device *dev)
+{
+	struct max77759_charger *chg = dev_get_drvdata(dev);
+
+	int ret = 0;
+
+	/* Other boards: the table has no cap of its own, nothing to pair */
+	if (!chg->guard_table->fv_max_mv)
+		return 0;
+
+	disable_delayed_work_sync(&chg->guard_work);
+	if (chg->guard_active)
+		ret = guard_sleep_float(chg);
+	if (ret) {
+		enable_delayed_work(&chg->guard_work);
+		schedule_delayed_work(&chg->guard_work, 0);
+	}
+	return ret;
+}
+
+static int max77759_charger_resume(struct device *dev)
+{
+	struct max77759_charger *chg = dev_get_drvdata(dev);
+
+	/* Paired with the early return in suspend */
+	if (!chg->guard_table->fv_max_mv)
+		return 0;
+
+	enable_delayed_work(&chg->guard_work);
+	schedule_delayed_work(&chg->guard_work, 0);
+	return 0;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(max77759_charger_pm, max77759_charger_suspend,
+				max77759_charger_resume);
+
 static void max77759_charger_shutdown(struct platform_device *pdev)
 {
 	struct max77759_charger *chg = platform_get_drvdata(pdev);
@@ -1975,6 +2068,7 @@ static struct platform_driver max77759_charger_driver = {
 	.driver = {
 		.name = "max77759-charger",
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
+		.pm = pm_sleep_ptr(&max77759_charger_pm),
 	},
 	.probe = max77759_charger_probe,
 	.shutdown = max77759_charger_shutdown,
