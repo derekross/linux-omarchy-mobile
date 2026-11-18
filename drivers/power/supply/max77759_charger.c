@@ -176,6 +176,7 @@ struct max77759_charger {
 	/* Charge thresholds, in percent, run by the guard work */
 	int end_threshold;
 	int start_threshold;
+	bool apply_failed;	/* the chip did not hold the guard's limits */
 
 	/* Temperature guard */
 	struct delayed_work guard_work;
@@ -510,6 +511,74 @@ static int set_input_current_limit(struct max77759_charger *chg, int ilim_ua)
 	return regmap_update_bits(chg->regmap, MAX77759_CHGR_REG_CHG_CNFG_09,
 				  MAX77759_CHGR_REG_CHG_CNFG_09_CHGIN_ILIM,
 				  regval);
+}
+
+/* The float voltage the chip gets for a request, as fv_selector() picks it */
+static int fv_quantize(u32 fv_mv, u32 *out_mv)
+{
+	u32 sel;
+
+	if (fv_selector(fv_mv, &sel))
+		return -EINVAL;
+	return linear_range_get_value_array(chg_cv_prm_ranges,
+					    ARRAY_SIZE(chg_cv_prm_ranges),
+					    sel, out_mv);
+}
+
+/*
+ * The fast charge current the chip gets for a request: the step at or
+ * below it, as cc_selector() picks it
+ */
+static int cc_quantize(u32 cc_ua, u32 *out_ua)
+{
+	u32 sel;
+
+	if (cc_selector(cc_ua, &sel))
+		return -EINVAL;
+	return linear_range_get_value_array(chgcc_limit_ranges,
+					    ARRAY_SIZE(chgcc_limit_ranges),
+					    sel, out_ua);
+}
+
+/*
+ * Write the float voltage, then the fast charge current, and read both
+ * back from the chip (the registers are volatile, so this is no cached
+ * value). -EIO when the chip does not hold what was written. *@held_fv and
+ * *@held_cc are what it holds, each -1 when it was not read back.
+ */
+static int charger_apply_limits(struct max77759_charger *chg, u32 fv_mv,
+				u32 cc_ua, int *held_fv, int *held_cc)
+{
+	u32 want_fv, want_cc;
+	int ret, got_fv, got_cc;
+
+	*held_fv = -1;
+	*held_cc = -1;
+
+	ret = fv_quantize(fv_mv, &want_fv);
+	if (!ret)
+		ret = cc_quantize(cc_ua, &want_cc);
+	if (!ret)
+		ret = set_float_voltage_limit(chg, fv_mv);
+	if (!ret)
+		ret = set_fast_charge_current_limit(chg, cc_ua);
+	if (ret)
+		return ret;
+
+	got_fv = get_float_voltage(chg);
+	got_cc = get_fast_charge_current(chg);
+	if (got_fv >= 0)
+		*held_fv = got_fv;
+	if (got_cc >= 0)
+		*held_cc = got_cc;
+	if (got_fv < 0)
+		return got_fv;
+	if (got_cc < 0)
+		return got_cc;
+	if (got_fv != (int)want_fv || got_cc != (int)want_cc)
+		return -EIO;
+
+	return 0;
 }
 
 static const enum power_supply_property max77759_charger_props[] = {
@@ -1104,12 +1173,32 @@ static void guard_set_inhibit(struct max77759_charger *chg, bool inhibit)
 	charger_set_inhibit(chg, &chg->inhibit, inhibit);
 }
 
-/* Back to the limits from the battery description, charging allowed */
+/*
+ * Charging only on limits the chip is seen to hold: inhibit when it does
+ * not take them. Returns 0 when it does.
+ */
+static int guard_apply(struct max77759_charger *chg, u32 fv_mv, u32 cc_ua)
+{
+	int held_fv, held_cc;
+	int ret = charger_apply_limits(chg, fv_mv, cc_ua, &held_fv, &held_cc);
+
+	if (ret && !chg->apply_failed)
+		dev_err(chg->dev,
+			"chip did not take float %u mV, charge %u uA (%d), it holds %d mV, %d uA: charging inhibited\n",
+			fv_mv, cc_ua, ret, held_fv, held_cc);
+	chg->apply_failed = ret;
+	guard_set_inhibit(chg, ret);
+	return ret;
+}
+
+/*
+ * Back to the limits from the battery description, charging allowed. If
+ * the chip does not take them, stay inhibited and try again next run.
+ */
 static void guard_release(struct max77759_charger *chg)
 {
-	set_float_voltage_limit(chg, chg->fv_max_mv);
-	set_fast_charge_current_limit(chg, chg->cc_max_ua);
-	guard_set_inhibit(chg, false);
+	if (guard_apply(chg, chg->fv_max_mv, chg->cc_max_ua))
+		return;
 	chg->guard_active = false;
 	chg->guard_band = -2;
 	dev_info(chg->dev, "temperature guard off\n");
@@ -1232,6 +1321,9 @@ static void guard_work_item(struct work_struct *work)
 	guard_limits(tbl, band, tier, chg->design_uah, chg->fv_max_mv,
 		     chg->cc_max_ua, &fv, &cc);
 
+	if (guard_apply(chg, fv, cc))
+		goto out;
+
 	if (band != chg->guard_band || tier != chg->guard_tier)
 		dev_info(chg->dev,
 			 "battery %s%d.%d C, %d mV: band %d-%d C, float %u mV, charge %u uA\n",
@@ -1239,10 +1331,6 @@ static void guard_work_item(struct work_struct *work)
 			 uv / 1000,
 			 guard_temp_decic[band] / 10, guard_temp_decic[band + 1] / 10,
 			 fv, cc);
-
-	set_float_voltage_limit(chg, fv);
-	set_fast_charge_current_limit(chg, cc);
-	guard_set_inhibit(chg, false);
 	chg->guard_band = band;
 	chg->guard_tier = tier;
 out:
