@@ -50,11 +50,13 @@ MODULE_PARM_DESC(default_ilim_ua,
 static bool temp_guard;
 module_param(temp_guard, bool, 0644);
 MODULE_PARM_DESC(temp_guard,
-		 "Limit charging by battery temperature as the stock phone does: no charge below 0 or from 55 C, lower float voltage and current outside 10-46 C. Reads the battery power supply named by guard_psy every 30 s. Default off.");
+		 "Limit charging by battery temperature as the stock phone does: no charge below 0 or from 55 C, lower float voltage and current outside 10-46 C. Reads the battery power supply named by guard_psy every 30 s while awake: s2idle stops the guard, and the charge thresholds with it. Default off.");
 
 static char guard_psy[32] = "max170xx_battery";
 module_param_string(guard_psy, guard_psy, sizeof(guard_psy), 0444);
 MODULE_PARM_DESC(guard_psy, "Battery power supply whose temp and voltage_now the guard reads");
+
+#define STOP_RESUME_GAP			5	/* resume at end - 5 when start is 0 */
 
 #define GUARD_PERIOD_MS			30000
 #define GUARD_RETRY_MS			2000	/* while there is no reading */
@@ -168,6 +170,12 @@ struct max77759_charger {
 	struct mutex lock; /* protects the state below */
 	enum max77759_chgr_mode mode;
 	bool inhibit;	/* charge suspended by the temperature guard */
+	bool stop_inhibit;	/* charge suspended at the end threshold */
+	const char *bat_psy;	/* capacity source, NULL: guard_psy */
+
+	/* Charge thresholds, in percent, run by the guard work */
+	int end_threshold;
+	int start_threshold;
 
 	/* Temperature guard */
 	struct delayed_work guard_work;
@@ -247,6 +255,19 @@ static int get_status(struct max77759_charger *chg)
 	case MAX77759_CHGR_CHG_DTLS_SUSP_JEITA:
 		return POWER_SUPPLY_STATUS_NOT_CHARGING;
 	case MAX77759_CHGR_CHG_DTLS_OFF:
+		/*
+		 * Buck only with the cable in, while the temperature guard or
+		 * a charge threshold holds the charge: not charging, the
+		 * battery is not what feeds the phone. With the cable out it
+		 * is discharging, whatever the flags say.
+		 */
+		if (charger_input_valid(chg) <= 0)
+			return POWER_SUPPLY_STATUS_DISCHARGING;
+		scoped_guard(mutex, &chg->lock) {
+			if (chg->mode == MAX77759_CHGR_MODE_CHG_BUCK_ON &&
+			    (chg->inhibit || chg->stop_inhibit))
+				return POWER_SUPPLY_STATUS_NOT_CHARGING;
+		}
 		return POWER_SUPPLY_STATUS_DISCHARGING;
 	default:
 		break;
@@ -500,7 +521,18 @@ static const enum power_supply_property max77759_charger_props[] = {
 	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
 	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX,
 	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
+	POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD,
+	POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD,
 };
+
+/*
+ * The charge at which a threshold stop resumes: the start threshold, or
+ * end - STOP_RESUME_GAP when start is 0 or not below the end.
+ */
+static int stop_resume(int end, int start)
+{
+	return start && start < end ? start : max(end - STOP_RESUME_GAP, 0);
+}
 
 static int max77759_charger_get_property(struct power_supply *psy,
 					 enum power_supply_property psp,
@@ -534,6 +566,17 @@ static int max77759_charger_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
 		ret = get_input_current_limit(chg);
 		break;
+	case POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD:
+		/* The value in force: 75 for an end of 80 and a start of 0 */
+		scoped_guard(mutex, &chg->lock)
+			ret = chg->end_threshold >= 100 ? chg->start_threshold :
+			      stop_resume(chg->end_threshold,
+					  chg->start_threshold);
+		break;
+	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
+		scoped_guard(mutex, &chg->lock)
+			ret = chg->end_threshold;
+		break;
 	default:
 		ret = -EINVAL;
 	}
@@ -542,19 +585,69 @@ static int max77759_charger_get_property(struct power_supply *psy,
 	return ret < 0 ? ret : 0;
 }
 
+/*
+ * A write of one threshold, in percent. Each is checked on its own so the
+ * order of two writes does not matter: an end at or below the start takes
+ * the start back to 0, and a start at or above the end is kept but
+ * stop_resume() then resumes at end - STOP_RESUME_GAP.
+ */
+static int stop_set_threshold(bool is_end, int val, int *end, int *start)
+{
+	if (is_end) {
+		if (val < 1 || val > 100)
+			return -EINVAL;
+		*end = val;
+		if (*start >= val)
+			*start = 0;
+	} else {
+		if (val < 0 || val >= 100)
+			return -EINVAL;
+		*start = val;
+	}
+	return 0;
+}
+
+static int max77759_charger_set_property(struct power_supply *psy,
+					 enum power_supply_property psp,
+					 const union power_supply_propval *pval)
+{
+	struct max77759_charger *chg = power_supply_get_drvdata(psy);
+
+	if (psp != POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD &&
+	    psp != POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD)
+		return -EINVAL;
+
+	guard(mutex)(&chg->lock);
+
+	/* The guard work takes them at its next run */
+	return stop_set_threshold(psp == POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD,
+				  pval->intval, &chg->end_threshold,
+				  &chg->start_threshold);
+}
+
+static int max77759_charger_property_is_writeable(struct power_supply *psy,
+						  enum power_supply_property psp)
+{
+	return psp == POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD ||
+	       psp == POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD;
+}
+
 static const struct power_supply_desc max77759_charger_desc = {
 	.name = "max77759-charger",
 	.type = POWER_SUPPLY_TYPE_USB,
 	.properties = max77759_charger_props,
 	.num_properties = ARRAY_SIZE(max77759_charger_props),
 	.get_property = max77759_charger_get_property,
+	.set_property = max77759_charger_set_property,
+	.property_is_writeable = max77759_charger_property_is_writeable,
 };
 
-/* The mode the hardware gets: buck only while the guard inhibits charging */
+/* The mode the hardware gets: buck only while either inhibit holds */
 static int charger_write_mode(struct max77759_charger *chg,
 			      enum max77759_chgr_mode mode)
 {
-	if (mode == MAX77759_CHGR_MODE_CHG_BUCK_ON && chg->inhibit)
+	if (mode == MAX77759_CHGR_MODE_CHG_BUCK_ON &&
+	    (chg->inhibit || chg->stop_inhibit))
 		mode = MAX77759_CHGR_MODE_BUCK_ON;
 
 	return regmap_update_bits(chg->regmap, MAX77759_CHGR_REG_CHG_CNFG_00,
@@ -988,15 +1081,27 @@ static int guard_read(int *decic, int *uv)
 	return ret;
 }
 
-static void guard_set_inhibit(struct max77759_charger *chg, bool inhibit)
+/* Set one of the two inhibit flags; the mode follows the two together */
+static void charger_set_inhibit(struct max77759_charger *chg, bool *flag,
+				bool inhibit)
 {
+	bool was, old;
+
 	guard(mutex)(&chg->lock);
 
-	if (chg->inhibit == inhibit)
-		return;
-	chg->inhibit = inhibit;
-	if (chg->mode == MAX77759_CHGR_MODE_CHG_BUCK_ON)
-		charger_write_mode(chg, chg->mode);
+	was = chg->inhibit || chg->stop_inhibit;
+	old = *flag;
+	*flag = inhibit;
+	/* A failed write keeps the old flag, so the next call tries again */
+	if (was != (chg->inhibit || chg->stop_inhibit) &&
+	    chg->mode == MAX77759_CHGR_MODE_CHG_BUCK_ON &&
+	    charger_write_mode(chg, chg->mode))
+		*flag = old;
+}
+
+static void guard_set_inhibit(struct max77759_charger *chg, bool inhibit)
+{
+	charger_set_inhibit(chg, &chg->inhibit, inhibit);
 }
 
 /* Back to the limits from the battery description, charging allowed */
@@ -1010,6 +1115,63 @@ static void guard_release(struct max77759_charger *chg)
 	dev_info(chg->dev, "temperature guard off\n");
 }
 
+/*
+ * Whether charging stays stopped: stop at @soc >= @end, resume at
+ * @soc <= stop_resume(). An end of 100 never stops.
+ */
+static bool stop_next(bool stopped, int soc, int end, int start)
+{
+	if (end >= 100)
+		return false;
+	if (!stopped)
+		return soc >= end;
+	return soc > stop_resume(end, start);
+}
+
+static int stop_read_soc(struct max77759_charger *chg, int *soc)
+{
+	union power_supply_propval val;
+	struct power_supply *psy;
+	int ret;
+
+	psy = power_supply_get_by_name(chg->bat_psy ?: guard_psy);
+	if (!psy)
+		return -ENODEV;
+	ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_CAPACITY, &val);
+	power_supply_put(psy);
+	if (!ret)
+		*soc = val.intval;
+	return ret;
+}
+
+/*
+ * The charge thresholds. At 100 / 0 this reads nothing and writes
+ * nothing.
+ */
+static void stop_work(struct max77759_charger *chg)
+{
+	int end, start, soc = -1;
+	bool stopped;
+
+	scoped_guard(mutex, &chg->lock) {
+		end = chg->end_threshold;
+		start = chg->start_threshold;
+	}
+
+	stopped = chg->stop_inhibit;
+	if (end >= 100)
+		stopped = false;
+	else if (!stop_read_soc(chg, &soc))
+		stopped = stop_next(stopped, soc, end, start);
+
+	if (stopped != chg->stop_inhibit && soc >= 0)
+		dev_info(chg->dev, "charge %s at %d %%\n",
+			 stopped ? "stopped" : "resumed", soc);
+	else if (stopped != chg->stop_inhibit)
+		dev_info(chg->dev, "charge resumed: no limit\n");
+	charger_set_inhibit(chg, &chg->stop_inhibit, stopped);
+}
+
 static void guard_work_item(struct work_struct *work)
 {
 	struct max77759_charger *chg =
@@ -1019,6 +1181,12 @@ static void guard_work_item(struct work_struct *work)
 	unsigned int next_ms = GUARD_PERIOD_MS;
 	bool read_ok;
 	u32 fv, cc;
+
+	/*
+	 * The charge thresholds first: a stop they call for is in place
+	 * before the guard below can clear its own inhibit.
+	 */
+	stop_work(chg);
 
 	if (!temp_guard) {
 		WRITE_ONCE(chg->guard_no_reading, false);
@@ -1096,6 +1264,14 @@ static void max77759_charger_log_state(struct max77759_charger *chg,
 		 fv, cc, ilim);
 }
 
+/* On unbind, no charge threshold holds charging off any more */
+static void max77759_charger_clear_stop(void *data)
+{
+	struct max77759_charger *chg = data;
+
+	charger_set_inhibit(chg, &chg->stop_inhibit, false);
+}
+
 static int max77759_charger_probe(struct platform_device *pdev)
 {
 	struct regulator_config chgin_otg_reg_cfg = { };
@@ -1111,6 +1287,7 @@ static int max77759_charger_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, chg);
 	chg->dev = dev;
+	chg->end_threshold = 100;	/* 100 / 0: no charge limit */
 	chg->regmap = dev_get_regmap(dev->parent, "charger");
 	if (!chg->regmap)
 		return dev_err_probe(dev, -ENODEV, "Missing regmap\n");
@@ -1157,6 +1334,15 @@ static int max77759_charger_probe(struct platform_device *pdev)
 			return dev_err_probe(dev, ret,
 					     "Failed to start charging\n");
 	}
+
+	/*
+	 * devm undoes in reverse: on unbind the guard work is cancelled,
+	 * then a threshold stop is cleared, and only then is charging
+	 * left on.
+	 */
+	ret = devm_add_action_or_reset(dev, max77759_charger_clear_stop, chg);
+	if (ret)
+		return ret;
 
 	chgin_otg_reg_cfg.dev = dev;
 	chgin_otg_reg_cfg.driver_data = chg;
