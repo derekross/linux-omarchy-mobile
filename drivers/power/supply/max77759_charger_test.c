@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * KUnit tests for the battery temperature guard of the MAX77759 charger
- * driver: bands, hysteresis, tiers, limits and the tables themselves.
+ * driver: bands, hysteresis, tiers, limits and the tables themselves; the
+ * charge thresholds.
  *
  * This file is included by max77759_charger.c and can not be built alone.
  */
 
+#include <kunit/device.h>
 #include <kunit/test.h>
 
 /* Temperatures are in 0.1 C, as the power supply class reports them */
@@ -341,6 +343,393 @@ static void round_test_current(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, cc_selector(133329, &sel), -EINVAL);
 }
 
+static void stop_test_set_threshold(struct kunit *test)
+{
+	int end = 100, start = 0;
+
+	/* End first, then start */
+	KUNIT_EXPECT_EQ(test, stop_set_threshold(true, 80, &end, &start), 0);
+	KUNIT_EXPECT_EQ(test, stop_set_threshold(false, 70, &end, &start), 0);
+	KUNIT_EXPECT_EQ(test, end, 80);
+	KUNIT_EXPECT_EQ(test, start, 70);
+
+	/* Start first, then end: the same pair */
+	end = 100;
+	start = 0;
+	KUNIT_EXPECT_EQ(test, stop_set_threshold(false, 70, &end, &start), 0);
+	KUNIT_EXPECT_EQ(test, stop_set_threshold(true, 80, &end, &start), 0);
+	KUNIT_EXPECT_EQ(test, end, 80);
+	KUNIT_EXPECT_EQ(test, start, 70);
+
+	/* Lowering end to 60 then start to 50, from 80 / 70 */
+	KUNIT_EXPECT_EQ(test, stop_set_threshold(true, 60, &end, &start), 0);
+	KUNIT_EXPECT_EQ(test, start, 0);
+	KUNIT_EXPECT_EQ(test, stop_set_threshold(false, 50, &end, &start), 0);
+	KUNIT_EXPECT_EQ(test, end, 60);
+	KUNIT_EXPECT_EQ(test, start, 50);
+
+	/* Raising start to 90 then end to 95, from 60 / 50 */
+	KUNIT_EXPECT_EQ(test, stop_set_threshold(false, 90, &end, &start), 0);
+	KUNIT_EXPECT_EQ(test, stop_set_threshold(true, 95, &end, &start), 0);
+	KUNIT_EXPECT_EQ(test, end, 95);
+	KUNIT_EXPECT_EQ(test, start, 90);
+
+	/* Out of range: nothing changes */
+	KUNIT_EXPECT_EQ(test, stop_set_threshold(true, 0, &end, &start), -EINVAL);
+	KUNIT_EXPECT_EQ(test, stop_set_threshold(true, 101, &end, &start), -EINVAL);
+	KUNIT_EXPECT_EQ(test, stop_set_threshold(false, -1, &end, &start), -EINVAL);
+	KUNIT_EXPECT_EQ(test, stop_set_threshold(false, 100, &end, &start), -EINVAL);
+	KUNIT_EXPECT_EQ(test, end, 95);
+	KUNIT_EXPECT_EQ(test, start, 90);
+}
+
+/* 100 / 0, the default, never stops charging, whatever the charge */
+static void stop_test_default_inert(struct kunit *test)
+{
+	int soc;
+
+	for (soc = 0; soc <= 100; soc++) {
+		KUNIT_EXPECT_FALSE_MSG(test, stop_next(false, soc, 100, 0),
+				       "soc %d", soc);
+		KUNIT_EXPECT_FALSE_MSG(test, stop_next(true, soc, 100, 0),
+				       "soc %d", soc);
+	}
+}
+
+static void stop_test_end_80(struct kunit *test)
+{
+	/* Start 0: resume at 75 */
+	KUNIT_EXPECT_FALSE(test, stop_next(false, 79, 80, 0));
+	KUNIT_EXPECT_TRUE(test, stop_next(false, 80, 80, 0));
+	KUNIT_EXPECT_TRUE(test, stop_next(true, 79, 80, 0));
+	KUNIT_EXPECT_TRUE(test, stop_next(true, 76, 80, 0));
+	KUNIT_EXPECT_FALSE(test, stop_next(true, 75, 80, 0));
+	KUNIT_EXPECT_FALSE(test, stop_next(false, 76, 80, 0));
+
+	/* Start 70: resume at 70 */
+	KUNIT_EXPECT_TRUE(test, stop_next(true, 71, 80, 70));
+	KUNIT_EXPECT_FALSE(test, stop_next(true, 70, 80, 70));
+
+	/* Start one below the end: resume at 79 */
+	KUNIT_EXPECT_TRUE(test, stop_next(false, 80, 80, 79));
+	KUNIT_EXPECT_TRUE(test, stop_next(true, 80, 80, 79));
+	KUNIT_EXPECT_FALSE(test, stop_next(true, 79, 80, 79));
+
+	/* A start not below the end resumes at end - 5 */
+	KUNIT_EXPECT_TRUE(test, stop_next(true, 76, 80, 90));
+	KUNIT_EXPECT_FALSE(test, stop_next(true, 75, 80, 90));
+	KUNIT_EXPECT_FALSE(test, stop_next(true, 75, 80, 80));
+
+	/* An end below the gap resumes at 0 */
+	KUNIT_EXPECT_TRUE(test, stop_next(true, 1, 3, 0));
+	KUNIT_EXPECT_FALSE(test, stop_next(true, 0, 3, 0));
+}
+
+/* A charger regmap backed by an array, logging the writes */
+struct fake_chip {
+	u8 regs[256];
+	u8 log[32];
+	int nlog;
+	int nread;
+	int corrupt_reg;	/* reads of this register come back wrong */
+	int fail_writes;	/* this many writes fail with -EIO first */
+};
+
+static int fake_read(void *ctx, unsigned int reg, unsigned int *val)
+{
+	struct fake_chip *c = ctx;
+
+	c->nread++;
+	*val = c->regs[reg];
+	if (reg == c->corrupt_reg)
+		*val ^= 0x01;
+	return 0;
+}
+
+static int fake_write(void *ctx, unsigned int reg, unsigned int val)
+{
+	struct fake_chip *c = ctx;
+
+	if (c->fail_writes) {
+		c->fail_writes--;
+		return -EIO;
+	}
+	c->regs[reg] = val;
+	if (c->nlog < ARRAY_SIZE(c->log))
+		c->log[c->nlog++] = reg;
+	return 0;
+}
+
+static const struct regmap_config fake_regmap_config = {
+	.reg_bits = 8,
+	.val_bits = 8,
+	.max_register = 0xcc,
+	.reg_read = fake_read,
+	.reg_write = fake_write,
+	.cache_type = REGCACHE_NONE,
+};
+
+static struct max77759_charger *fake_charger(struct kunit *test,
+					     struct fake_chip **chip)
+{
+	struct max77759_charger *chg;
+	struct device *dev;
+
+	dev = kunit_device_register(test, "max77759-chg-test");
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dev);
+	*chip = kunit_kzalloc(test, sizeof(**chip), GFP_KERNEL);
+	chg = kunit_kzalloc(test, sizeof(*chg), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, *chip);
+	KUNIT_ASSERT_NOT_NULL(test, chg);
+	(*chip)->corrupt_reg = -1;
+	chg->dev = dev;
+	chg->regmap = devm_regmap_init(dev, NULL, *chip, &fake_regmap_config);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, chg->regmap);
+	mutex_init(&chg->lock);
+	chg->end_threshold = 100;
+	return chg;
+}
+
+/* Entering charge mode with a threshold stop held gives buck only */
+static void inhibit_test_set_mode(struct kunit *test)
+{
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+	u8 *mode = &c->regs[MAX77759_CHGR_REG_CHG_CNFG_00];
+
+	chg->mode = MAX77759_CHGR_MODE_OFF;
+	chg->stop_inhibit = true;
+	KUNIT_EXPECT_EQ(test, charger_set_mode(chg, MAX77759_CHGR_MODE_CHG_BUCK_ON), 0);
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_BUCK_ON);
+	KUNIT_EXPECT_EQ(test, chg->mode, MAX77759_CHGR_MODE_CHG_BUCK_ON);
+
+	/* The unbind action clears it */
+	max77759_charger_clear_stop(chg);
+	KUNIT_EXPECT_FALSE(test, chg->stop_inhibit);
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_CHG_BUCK_ON);
+}
+
+/* A mode write that fails is tried again at the next call */
+static void inhibit_test_write_retry(struct kunit *test)
+{
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+	u8 *mode = &c->regs[MAX77759_CHGR_REG_CHG_CNFG_00];
+
+	chg->mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	*mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+
+	c->fail_writes = 1;
+	charger_set_inhibit(chg, &chg->stop_inhibit, true);
+	KUNIT_EXPECT_FALSE(test, chg->stop_inhibit);
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_CHG_BUCK_ON);
+
+	charger_set_inhibit(chg, &chg->stop_inhibit, true);
+	KUNIT_EXPECT_TRUE(test, chg->stop_inhibit);
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_BUCK_ON);
+}
+
+/* A fake battery power supply for stop_work() to read the capacity of */
+static int fake_bat_capacity;
+
+static int fake_bat_get(struct power_supply *psy,
+			enum power_supply_property psp,
+			union power_supply_propval *val)
+{
+	if (psp != POWER_SUPPLY_PROP_CAPACITY)
+		return -EINVAL;
+	val->intval = fake_bat_capacity;
+	return 0;
+}
+
+static const enum power_supply_property fake_bat_props[] = {
+	POWER_SUPPLY_PROP_CAPACITY,
+};
+
+static const struct power_supply_desc fake_bat_desc = {
+	.name = "max77759-test-bat",
+	.type = POWER_SUPPLY_TYPE_BATTERY,
+	.properties = fake_bat_props,
+	.num_properties = ARRAY_SIZE(fake_bat_props),
+	.get_property = fake_bat_get,
+};
+
+/* stop_work() stops at the end threshold and resumes at the start one */
+static void stop_test_work_capacity(struct kunit *test)
+{
+	struct power_supply_config cfg = { };
+	struct power_supply *bat;
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+	u8 *mode = &c->regs[MAX77759_CHGR_REG_CHG_CNFG_00];
+
+	bat = devm_power_supply_register(chg->dev, &fake_bat_desc, &cfg);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, bat);
+	/* Not guard_psy: the module's own driver may be reading that */
+	chg->bat_psy = fake_bat_desc.name;
+
+	chg->guard_table = &guard_table_default;
+	chg->mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	*mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	chg->end_threshold = 80;
+	chg->start_threshold = 70;
+
+	fake_bat_capacity = 79;
+	stop_work(chg);
+	KUNIT_EXPECT_FALSE(test, chg->stop_inhibit);
+	fake_bat_capacity = 80;
+	stop_work(chg);
+	KUNIT_EXPECT_TRUE(test, chg->stop_inhibit);
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_BUCK_ON);
+	fake_bat_capacity = 71;
+	stop_work(chg);
+	KUNIT_EXPECT_TRUE(test, chg->stop_inhibit);
+	fake_bat_capacity = 70;
+	stop_work(chg);
+	KUNIT_EXPECT_FALSE(test, chg->stop_inhibit);
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_CHG_BUCK_ON);
+}
+
+/* Either inhibit puts the chip in buck-only mode; both must clear */
+static void inhibit_test_two_flags(struct kunit *test)
+{
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+	u8 *mode = &c->regs[MAX77759_CHGR_REG_CHG_CNFG_00];
+
+	chg->mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	*mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+
+	guard_set_inhibit(chg, true);
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_BUCK_ON);
+	charger_set_inhibit(chg, &chg->stop_inhibit, true);
+	guard_set_inhibit(chg, false);
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_BUCK_ON);
+	charger_set_inhibit(chg, &chg->stop_inhibit, false);
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_CHG_BUCK_ON);
+	/* One write to inhibit, one to resume */
+	KUNIT_EXPECT_EQ(test, c->nlog, 2);
+}
+
+/* At 100 / 0: no i2c at all */
+static void stop_test_inert_no_io(struct kunit *test)
+{
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+
+	chg->mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	chg->guard_table = &guard_table_default;
+
+	stop_work(chg);
+
+	KUNIT_EXPECT_EQ(test, c->nread, 0);
+	KUNIT_EXPECT_EQ(test, c->nlog, 0);
+	KUNIT_EXPECT_FALSE(test, chg->stop_inhibit);
+}
+
+/*
+ * Buck only with the cable in and an inhibit held reads Not charging; with
+ * the cable out it reads Discharging, inhibit or not.
+ */
+static void inhibit_test_status(struct kunit *test)
+{
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+	u8 *int_ok = &c->regs[MAX77759_CHGR_REG_CHG_INT_OK];
+
+	c->regs[MAX77759_CHGR_REG_CHG_DETAILS_01] =
+		FIELD_PREP(MAX77759_CHGR_REG_CHG_DETAILS_01_CHG_DTLS,
+			   MAX77759_CHGR_CHG_DTLS_OFF);
+	*int_ok = MAX77759_CHGR_REG_CHG_INT_CHGIN;
+
+	chg->mode = MAX77759_CHGR_MODE_OFF;
+	KUNIT_EXPECT_EQ(test, get_status(chg), POWER_SUPPLY_STATUS_DISCHARGING);
+
+	chg->mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	KUNIT_EXPECT_EQ(test, get_status(chg), POWER_SUPPLY_STATUS_DISCHARGING);
+	chg->stop_inhibit = true;
+	KUNIT_EXPECT_EQ(test, get_status(chg), POWER_SUPPLY_STATUS_NOT_CHARGING);
+	chg->stop_inhibit = false;
+	chg->inhibit = true;
+	KUNIT_EXPECT_EQ(test, get_status(chg), POWER_SUPPLY_STATUS_NOT_CHARGING);
+}
+
+/* An inhibit held with no input: the battery feeds the phone */
+static void inhibit_test_status_unplugged(struct kunit *test)
+{
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+
+	c->regs[MAX77759_CHGR_REG_CHG_DETAILS_01] =
+		FIELD_PREP(MAX77759_CHGR_REG_CHG_DETAILS_01_CHG_DTLS,
+			   MAX77759_CHGR_CHG_DTLS_OFF);
+	c->regs[MAX77759_CHGR_REG_CHG_INT_OK] = 0;
+
+	/* The mode stays as it was: the psy work may not have run */
+	chg->mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	chg->stop_inhibit = true;
+	KUNIT_EXPECT_EQ(test, get_status(chg), POWER_SUPPLY_STATUS_DISCHARGING);
+	chg->stop_inhibit = false;
+	chg->inhibit = true;
+	KUNIT_EXPECT_EQ(test, get_status(chg), POWER_SUPPLY_STATUS_DISCHARGING);
+}
+
+static int chg_prop_get(struct power_supply *psy,
+			enum power_supply_property psp)
+{
+	union power_supply_propval val;
+	int ret = power_supply_get_property(psy, psp, &val);
+
+	return ret ? ret : val.intval;
+}
+
+static int chg_prop_set(struct power_supply *psy,
+			enum power_supply_property psp, int v)
+{
+	union power_supply_propval val = { .intval = v };
+
+	return power_supply_set_property(psy, psp, &val);
+}
+
+/* charge_control_start_threshold reads the value in force */
+static void stop_test_start_readback(struct kunit *test)
+{
+	const enum power_supply_property end =
+		POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD;
+	const enum power_supply_property start =
+		POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD;
+	struct power_supply_config cfg = { };
+	struct power_supply_desc *desc;
+	struct power_supply *psy;
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+
+	/* The charger's own ops, under a name no real supply has */
+	desc = devm_kmemdup(chg->dev, &max77759_charger_desc, sizeof(*desc),
+			    GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, desc);
+	desc->name = "max77759-chg-test";
+	cfg.drv_data = chg;
+	psy = devm_power_supply_register(chg->dev, desc, &cfg);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, psy);
+
+	/* 100 / 0: no limit, start reads 0 */
+	KUNIT_EXPECT_EQ(test, chg_prop_get(psy, start), 0);
+
+	/* End 80, start 0: resumes at 75, and says so */
+	KUNIT_ASSERT_EQ(test, chg_prop_set(psy, end, 80), 0);
+	KUNIT_EXPECT_EQ(test, chg_prop_get(psy, start), 75);
+	KUNIT_EXPECT_EQ(test, chg_prop_get(psy, end), 80);
+
+	/* Start 70 */
+	KUNIT_ASSERT_EQ(test, chg_prop_set(psy, start, 70), 0);
+	KUNIT_EXPECT_EQ(test, chg_prop_get(psy, start), 70);
+
+	/* A start at or above the end resumes at end - 5 */
+	KUNIT_ASSERT_EQ(test, chg_prop_set(psy, start, 90), 0);
+	KUNIT_EXPECT_EQ(test, chg_prop_get(psy, start), 75);
+}
+
 static struct kunit_case guard_test_cases[] = {
 	KUNIT_CASE(guard_test_band_edges),
 	KUNIT_CASE(guard_test_hysteresis),
@@ -354,6 +743,17 @@ static struct kunit_case guard_test_cases[] = {
 	KUNIT_CASE(guard_test_limits_capped),
 	KUNIT_CASE(round_test_float),
 	KUNIT_CASE(round_test_current),
+	KUNIT_CASE(stop_test_set_threshold),
+	KUNIT_CASE(stop_test_default_inert),
+	KUNIT_CASE(stop_test_end_80),
+	KUNIT_CASE(inhibit_test_two_flags),
+	KUNIT_CASE(stop_test_inert_no_io),
+	KUNIT_CASE(inhibit_test_set_mode),
+	KUNIT_CASE(inhibit_test_write_retry),
+	KUNIT_CASE(stop_test_work_capacity),
+	KUNIT_CASE(inhibit_test_status),
+	KUNIT_CASE(inhibit_test_status_unplugged),
+	KUNIT_CASE(stop_test_start_readback),
 	{ }
 };
 
