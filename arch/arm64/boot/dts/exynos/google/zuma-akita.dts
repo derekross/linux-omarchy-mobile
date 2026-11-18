@@ -192,6 +192,75 @@
 };
 
 /*
+ * The CPU levels are zuma.dtsi's, the same as stock's on this phone, but
+ * the Pixel 8a's battery current limiter caps all three clusters lower
+ * than the Pixel 8 Pro's: 1475, 1549 and 2147 MHz on every droop and
+ * SMPL event (Google's zuma-akita-bcl.dtsi). There is no BCL driver here,
+ * so the levels above those caps are turbo-mode as well, off until boost
+ * is enabled: 1548 and 1704 MHz on the little cluster, 1572 to 1945 MHz
+ * on the mid one and 2294 MHz on the big one, on top of the 8 Pro's marks.
+ */
+&cpu0 {
+	operating-points-v2 = <&cpucl0_opp>;
+};
+
+&cpu1 {
+	operating-points-v2 = <&cpucl0_opp>;
+};
+
+&cpu2 {
+	operating-points-v2 = <&cpucl0_opp>;
+};
+
+&cpu3 {
+	operating-points-v2 = <&cpucl0_opp>;
+};
+
+&cpu4 {
+	operating-points-v2 = <&cpucl1_opp>;
+};
+
+&cpu5 {
+	operating-points-v2 = <&cpucl1_opp>;
+};
+
+&cpu6 {
+	operating-points-v2 = <&cpucl1_opp>;
+};
+
+&cpu7 {
+	operating-points-v2 = <&cpucl1_opp>;
+};
+
+&cpu8 {
+	operating-points-v2 = <&cpucl2_opp>;
+};
+
+&{/opp-table-cpucl0/opp-1548000000} {
+	turbo-mode;
+};
+
+&{/opp-table-cpucl0/opp-1704000000} {
+	turbo-mode;
+};
+
+&{/opp-table-cpucl1/opp-1572000000} {
+	turbo-mode;
+};
+
+&{/opp-table-cpucl1/opp-1836000000} {
+	turbo-mode;
+};
+
+&{/opp-table-cpucl1/opp-1945000000} {
+	turbo-mode;
+};
+
+&{/opp-table-cpucl2/opp-2294000000} {
+	turbo-mode;
+};
+
+/*
  * The battery pack's EEPROM, as on the Pixel 8 Pro: an at,24c08 at 0x50
  * (Google's zuma-akita-battery.dtsi, pack_bee). Byte 0x17 is the battery
  * ID that picks the fuel gauge's model. Read-only; the bus stays off

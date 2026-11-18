@@ -194,8 +194,8 @@
 	 * (/sys/devices/system/cpu/cpufreq/boost).
 	 *
 	 * Those turbo-mode marks are the Pixel 8 Pro's caps, so the CPUs get
-	 * operating-points-v2 in the board file. A board whose BCL caps are
-	 * lower needs tables of its own.
+	 * operating-points-v2 in the board file. A board whose caps are lower
+	 * marks its extra levels turbo-mode by path, as zuma-akita.dts does.
 	 */
 	cpucl0_opp: opp-table-cpucl0 {
 		compatible = "operating-points-v2";
