@@ -187,6 +187,10 @@
 	};
 };
 
+&cmu_g3d {
+	status = "okay";
+};
+
 &cmu_peric1 {
 	status = "okay";
 };
@@ -258,6 +262,30 @@
 
 &{/opp-table-cpucl2/opp-2294000000} {
 	turbo-mode;
+};
+
+/*
+ * The GPU's levels are zuma.dtsi's, the same shader rates as stock's on
+ * this phone, but the Pixel 8a's BCL caps the GPU at 649 (batoilo), 723
+ * (vdroop1), 580 (vdroop2) and 649 MHz (smpl_gm), below the 8 Pro's 890.
+ * With no BCL driver nothing runs above stock's caps, so the levels above
+ * the highest of them, vdroop1's 723 MHz, are deleted here.
+ */
+/delete-node/ &{/opp-table-gpu/opp-807000000};
+/delete-node/ &{/opp-table-gpu/opp-850000000};
+/delete-node/ &{/opp-table-gpu/opp-890000000};
+
+/*
+ * The GPU's core clock is ACPM's paired "gpu" clock, which sets the shader
+ * (G3D) and L2 (G3DL2) domains together; coregroup and stacks stay on
+ * CMU_G3D's gates, as on the Pixel 8 Pro.
+ */
+&gpu {
+	clocks = <&acpm_ipc ZUMA_CLK_ACPM_GPU>,
+		 <&cmu_g3d CLK_GOUT_G3D_COREGROUP>,
+		 <&cmu_g3d CLK_GOUT_G3D_STACKS>;
+	operating-points-v2 = <&gpu_opp>;
+	status = "okay";
 };
 
 /*
