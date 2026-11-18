@@ -716,17 +716,19 @@ static int s5m_rtc_restart_s2mpg10(struct sys_off_data *data)
  * The PMIC's warm-reset (WTSR, with its cold-reset follow-up) and sudden
  * power loss (SMPL) restarts stay armed in the always-on RTC block across
  * boots. Left on, the PMIC answers the AP's power-off by powering it back
- * up, so power off turns into a restart. Google's S2MPG12 RTC driver turns
- * all three off in its shutdown callback before every power off, and arms
- * them again only for a restart (rtc-s2mpg12.c, s2m_rtc_shutdown()).
- * Restarts are left alone here: they never needed it on gs201.
+ * up, so power off turns into a restart. Google's S2MPG12 and S2MPG14 RTC
+ * drivers turn all three off in their shutdown callbacks before every power
+ * off, and arm them again only for a restart (rtc-s2mpg12.c and
+ * rtc-s2mpg14.c, s2m_rtc_shutdown()). The S2MPG14's RTC has the same
+ * registers and bits. Restarts are left alone here: they never needed it
+ * on gs201.
  */
 static void s5m_rtc_shutdown(struct platform_device *pdev)
 {
 	struct s5m_rtc_info *info = platform_get_drvdata(pdev);
 	int ret;
 
-	if (info->device_type != S2MPG12)
+	if (info->device_type != S2MPG12 && info->device_type != S2MPG14)
 		return;
 
 	if (system_state != SYSTEM_POWER_OFF && system_state != SYSTEM_HALT)
