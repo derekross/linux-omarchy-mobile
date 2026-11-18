@@ -2,7 +2,7 @@
 /*
  * KUnit tests for the battery temperature guard of the MAX77759 charger
  * driver: bands, hysteresis, tiers, limits and the tables themselves; the
- * charge thresholds.
+ * charge thresholds and the read-back of the limits.
  *
  * This file is included by max77759_charger.c and can not be built alone.
  */
@@ -730,6 +730,82 @@ static void stop_test_start_readback(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, chg_prop_get(psy, start), 75);
 }
 
+static void readback_test_apply(struct kunit *test)
+{
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+	int hf, hc;
+
+	/* Float first, then current, as before the read-back */
+	KUNIT_EXPECT_EQ(test, charger_apply_limits(chg, 4200, 1485000, &hf, &hc), 0);
+	KUNIT_ASSERT_EQ(test, c->nlog, 2);
+	KUNIT_EXPECT_EQ(test, c->log[0], MAX77759_CHGR_REG_CHG_CNFG_04);
+	KUNIT_EXPECT_EQ(test, c->log[1], MAX77759_CHGR_REG_CHG_CNFG_02);
+	KUNIT_EXPECT_EQ(test, c->regs[MAX77759_CHGR_REG_CHG_CNFG_04], 0x14);
+	/*
+	 * The current is the step at or below the request: 1485000 uA is
+	 * written as 1466730 uA, selector 0x16, never above it.
+	 */
+	KUNIT_EXPECT_EQ(test, c->regs[MAX77759_CHGR_REG_CHG_CNFG_02], 0x16);
+	KUNIT_EXPECT_EQ(test, get_fast_charge_current(chg), 1466730);
+
+	/* An exact step stays as it is (cheetah, raven) */
+	KUNIT_EXPECT_EQ(test, charger_apply_limits(chg, 4450, 1466730, &hf, &hc), 0);
+	KUNIT_EXPECT_EQ(test, get_fast_charge_current(chg), 1466730);
+	/* akita's 1320000 uA */
+	KUNIT_EXPECT_EQ(test, charger_apply_limits(chg, 4450, 1320000, &hf, &hc), 0);
+	KUNIT_EXPECT_EQ(test, get_fast_charge_current(chg), 1266720);
+
+	/* A float between two steps reads back as the step below */
+	KUNIT_EXPECT_EQ(test, charger_apply_limits(chg, 4205, 1466730, &hf, &hc), 0);
+	KUNIT_EXPECT_EQ(test, c->regs[MAX77759_CHGR_REG_CHG_CNFG_04], 0x14);
+}
+
+static void readback_test_mismatch(struct kunit *test)
+{
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+	int hf, hc;
+
+	/* -EIO, and what the chip holds comes back for the one dev_err */
+	c->corrupt_reg = MAX77759_CHGR_REG_CHG_CNFG_04;
+	KUNIT_EXPECT_EQ(test, charger_apply_limits(chg, 4200, 1485000, &hf, &hc), -EIO);
+	KUNIT_EXPECT_NE(test, hf, 4200);
+	KUNIT_EXPECT_EQ(test, hc, 1466730);
+
+	c->corrupt_reg = MAX77759_CHGR_REG_CHG_CNFG_02;
+	KUNIT_EXPECT_EQ(test, charger_apply_limits(chg, 4300, 1000000, &hf, &hc), -EIO);
+	KUNIT_EXPECT_EQ(test, hf, 4300);
+	KUNIT_EXPECT_NE(test, hc, 933370);
+
+	/* A request refused before any write reads nothing back */
+	KUNIT_EXPECT_EQ(test, charger_apply_limits(chg, 4501, 1466730, &hf, &hc), -EINVAL);
+	KUNIT_EXPECT_EQ(test, hf, -1);
+	KUNIT_EXPECT_EQ(test, hc, -1);
+	KUNIT_EXPECT_EQ(test, charger_apply_limits(chg, 4200, 4000191, &hf, &hc), -EINVAL);
+	KUNIT_EXPECT_EQ(test, charger_apply_limits(chg, 4200, (u32)-EINVAL, &hf, &hc), -EINVAL);
+}
+
+/* A limit the chip does not hold inhibits charging, a good one resumes it */
+static void readback_test_inhibit(struct kunit *test)
+{
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+	u8 *mode = &c->regs[MAX77759_CHGR_REG_CHG_CNFG_00];
+
+	chg->mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	*mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+
+	c->corrupt_reg = MAX77759_CHGR_REG_CHG_CNFG_04;
+	KUNIT_EXPECT_EQ(test, guard_apply(chg, 4200, 1485000), -EIO);
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_BUCK_ON);
+	KUNIT_EXPECT_EQ(test, c->log[c->nlog - 1], MAX77759_CHGR_REG_CHG_CNFG_00);
+
+	c->corrupt_reg = -1;
+	KUNIT_EXPECT_EQ(test, guard_apply(chg, 4200, 1485000), 0);
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_CHG_BUCK_ON);
+}
+
 static struct kunit_case guard_test_cases[] = {
 	KUNIT_CASE(guard_test_band_edges),
 	KUNIT_CASE(guard_test_hysteresis),
@@ -754,6 +830,9 @@ static struct kunit_case guard_test_cases[] = {
 	KUNIT_CASE(inhibit_test_status),
 	KUNIT_CASE(inhibit_test_status_unplugged),
 	KUNIT_CASE(stop_test_start_readback),
+	KUNIT_CASE(readback_test_apply),
+	KUNIT_CASE(readback_test_mismatch),
+	KUNIT_CASE(readback_test_inhibit),
 	{ }
 };
 
