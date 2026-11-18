@@ -79,7 +79,10 @@ static const struct resource s2mpg14_rtc_resources[] = {
 	DEFINE_RES_IRQ_NAMED(S2MPG14_IRQ_RTCA0, "alarm"),
 };
 
-/* The qualified LDOs and the RTC with its alarm; no GPIO or protection writes. */
+/*
+ * The qualified LDOs and the RTC with its alarm; no GPIO. The RTC's only
+ * protection writes clear SMPL_EN, WTSR_EN and COLDRST_EN at power off.
+ */
 static const struct mfd_cell s2mpg14_devs[] = {
 	MFD_CELL_NAME("s2mpg14-regulator"),
 	MFD_CELL_RES("s2mpg14-rtc", s2mpg14_rtc_resources),
