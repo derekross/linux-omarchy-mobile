@@ -644,9 +644,9 @@ static const struct regmap_config s2mpg14_regmap_config_pmic = {
 
 /*
  * The RTC: everything up to the oscillator control may be read. Writes
- * only where rtc-s5m writes: CTRL, UPDATE, the time and alarm 0. SMPL,
- * WTSR, CAP_SEL and OSC_CTRL (the power-loss and watchdog-reset
- * protections and the oscillator tuning) stay read-only.
+ * only where rtc-s5m writes: CTRL, UPDATE, the time and alarm 0, and SMPL
+ * and WTSR, where it clears SMPL_EN, WTSR_EN and COLDRST_EN at power off.
+ * CAP_SEL and OSC_CTRL (the oscillator tuning) stay read-only.
  */
 static const struct regmap_range s2mpg14_rtc_rd_registers[] = {
 	regmap_reg_range(S2MPG10_RTC_CTRL, S2MPG10_RTC_OSC_CTRL),
@@ -658,7 +658,7 @@ static const struct regmap_access_table s2mpg14_rtc_rd_table = {
 };
 
 static const struct regmap_range s2mpg14_rtc_wr_registers[] = {
-	regmap_reg_range(S2MPG10_RTC_CTRL, S2MPG10_RTC_UPDATE),
+	regmap_reg_range(S2MPG10_RTC_CTRL, S2MPG10_RTC_WTSR),
 	regmap_reg_range(S2MPG10_RTC_SEC, S2MPG10_RTC_A0YEAR),
 };
 
