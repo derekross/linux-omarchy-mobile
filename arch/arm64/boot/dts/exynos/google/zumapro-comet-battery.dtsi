@@ -1,0 +1,130 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Google Pixel 9 Pro Fold (comet): the MAX77779 gauge, charger and USB-C port
+ * controller on USI6's I2C bus (HSI2C6, gpp12-0/1), all disabled.
+ *
+ * The Pixel 9a has the same parts on the same bus and its board file is the
+ * pattern. The Fold has two cells in parallel: this MAX77779 gauges the base
+ * cell only, and a MAX17201 on USI10 gauges the second. Every client and the
+ * TCPC's interrupt bank stay disabled.
+ */
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/usb/pd.h>
+#include "../exynos-pinctrl.h"
+
+/*
+ * The MAX77779's bus: its fuel gauge, its charger and its USB-C port
+ * controller, a sink with no link to the USB controller's role yet.
+ */
+&hsi2c6 {
+	/* Stock asks for 1 MHz, which would switch the controller to HS mode. */
+	clock-frequency = <950000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&hsi2c6_bus>;
+
+	comet_tcpc: tcpc@25 {
+		compatible = "maxim,max77779-tcpc";
+		reg = <0x25>;
+		interrupt-parent = <&gpa8>;
+		interrupts = <3 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb_pd_irq>;
+		status = "disabled";
+
+		connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			data-role = "dual";
+			power-role = "sink";
+			self-powered;
+			op-sink-microwatt = <2600000>;
+			sink-pdos = <PDO_FIXED(5000, 3000, PDO_FIXED_USB_COMM)>;
+		};
+	};
+
+	/* The base cell only; the 2 mOhm shunt is the MAX77779 profile's. */
+	comet_base_gauge: fuel-gauge@36 {
+		compatible = "maxim,max77779-fg";
+		reg = <0x36>;
+		shunt-resistor-micro-ohms = <2000>;
+		power-supplies = <&comet_charger>;
+		status = "disabled";
+	};
+
+	comet_charger: charger@69 {
+		compatible = "maxim,max77779-charger";
+		reg = <0x69>;
+		status = "disabled";
+	};
+};
+
+/*
+ * The second cell's gauge, a MAX17201 with its nonvolatile memory at 0x0b,
+ * on USI10 (gpp20-0/1, 400 kHz). The same bus carries the pack EEPROM
+ * (0x50), the direct charger (0x57) and the wireless receiver (0x61), not
+ * described here. The gauge's alert is gpa6-5; nothing uses it yet.
+ * Google's driver forces a 3 mOhm sense resistor, which the max1720x
+ * binding can't express yet: the gauge stays disabled until it can.
+ */
+&hsi2c10 {
+	clock-frequency = <400000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&hsi2c10_bus>;
+
+	comet_second_gauge: fuel-gauge@36 {
+		compatible = "maxim,max17201";
+		reg = <0x36>, <0x0b>;
+		reg-names = "m5", "nvmem";
+		status = "disabled";
+	};
+};
+
+/* The USB-C port controller's interrupt (gpa8-3), held inactive with it. */
+&gpa8 {
+	interrupt-controller;
+	#interrupt-cells = <2>;
+	interrupts = <GIC_SPI 44 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 45 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 46 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 47 IRQ_TYPE_LEVEL_HIGH>;
+	status = "disabled";
+};
+
+&pinctrl_alive {
+	/* The MAX77779's INTB, for its PMIC block; nothing takes it yet. */
+	if_pmic_irq: if-pmic-irq-pins {
+		samsung,pins = "gpa8-0";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
+		samsung,pin-drv = <0>;
+	};
+
+	usb_pd_irq: usb-pd-irq-pins {
+		samsung,pins = "gpa8-3";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
+		samsung,pin-drv = <0>;
+	};
+};
+
+&pinctrl_peric1 {
+	hsi2c10_bus: hsi2c10-bus-pins {
+		samsung,pins = "gpp20-0", "gpp20-1";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
+};
+
+&pinctrl_peric0 {
+	hsi2c6_bus: hsi2c6-bus-pins {
+		samsung,pins = "gpp12-0", "gpp12-1";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_3>;
+		/* Stock pulls this bus up; the Pixel 9a's DT has no pull. */
+		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
+		samsung,pin-drv = <0>;
+	};
+};

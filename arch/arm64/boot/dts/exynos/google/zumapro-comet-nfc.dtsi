@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Google Pixel 9 Pro Fold (comet): the NFC controller, disabled.
+ *
+ * An ST54L at 0x08 on USI9's I2C bus (HSI2C9), next to the haptics and the
+ * torch, as in Google's GPL board files for comet (zuma-comet-nfc.dtsi and
+ * zuma-comet-ese.dtsi, whose eSE node names the part). The wiring matches
+ * the Pixel 9a's: IRQ_N on gpa7-5 (level high), RST_N on gph1-6, and the
+ * reference clock from the PMU's clock pad. The ST54L speaks plain NCI
+ * over I2C, so nxp-nci drives it.
+ */
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+
+&hsi2c9 {
+	comet_nfc: nfc@8 {
+		compatible = "st,st54l", "nxp,nxp-nci-i2c";
+		reg = <0x08>;
+		clocks = <&pmu_system_controller 0>;
+		interrupt-parent = <&gpa7>;
+		interrupts = <5 IRQ_TYPE_LEVEL_HIGH>;
+		enable-gpios = <&gph1 6 GPIO_ACTIVE_HIGH>;
+		status = "disabled";
+	};
+};
+
+/* The NFC controller's bank: wakeup EINTs, one GIC SPI per pin. */
+&gpa7 {
+	interrupt-controller;
+	#interrupt-cells = <2>;
+	interrupts = <GIC_SPI 36 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 37 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 38 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 39 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 40 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 41 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 42 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 43 IRQ_TYPE_LEVEL_HIGH>;
+};
