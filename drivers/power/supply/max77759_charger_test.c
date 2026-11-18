@@ -2,7 +2,8 @@
 /*
  * KUnit tests for the battery temperature guard of the MAX77759 charger
  * driver: bands, hysteresis, tiers, limits and the tables themselves; the
- * charge thresholds, the read-back of the limits and the defender.
+ * charge thresholds, the defender, the read-back of the limits and the
+ * float restore.
  *
  * This file is included by max77759_charger.c and can not be built alone.
  */
@@ -433,6 +434,7 @@ struct fake_chip {
 	int nread;
 	int corrupt_reg;	/* reads of this register come back wrong */
 	int fail_writes;	/* this many writes fail with -EIO first */
+	int fail_reads;		/* this many reads fail with -EIO first */
 };
 
 static int fake_read(void *ctx, unsigned int reg, unsigned int *val)
@@ -440,6 +442,10 @@ static int fake_read(void *ctx, unsigned int reg, unsigned int *val)
 	struct fake_chip *c = ctx;
 
 	c->nread++;
+	if (c->fail_reads) {
+		c->fail_reads--;
+		return -EIO;
+	}
 	*val = c->regs[reg];
 	if (reg == c->corrupt_reg)
 		*val ^= 0x01;
@@ -968,6 +974,97 @@ static void defend_test_readback(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, chg_prop_get(psy, start), 0);
 }
 
+static void restore_test_never_raises(struct kunit *test)
+{
+	/* The husky bootloader leaves 4350 mV */
+	KUNIT_EXPECT_FALSE(test, restore_float_needed(4200, 4350));
+	KUNIT_EXPECT_FALSE(test, restore_float_needed(4350, 4350));
+	KUNIT_EXPECT_TRUE(test, restore_float_needed(4360, 4350));
+	KUNIT_EXPECT_TRUE(test, restore_float_needed(4450, 4350));
+	/* Unknown boot float: leave it */
+	KUNIT_EXPECT_FALSE(test, restore_float_needed(4450, 0));
+}
+
+static void restore_test_action(struct kunit *test)
+{
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+	u8 *fv = &c->regs[MAX77759_CHGR_REG_CHG_CNFG_04];
+
+	chg->boot_fv_mv = 4350;
+
+	/* husky above the boot float: back to 4350 mV */
+	chg->guard_table = &guard_table_husky;
+	*fv = 0x2d;
+	max77759_charger_restore_float(chg);
+	KUNIT_EXPECT_EQ(test, *fv, 0x23);
+
+	/* husky below it: untouched */
+	c->nlog = 0;
+	*fv = 0x14;
+	max77759_charger_restore_float(chg);
+	KUNIT_EXPECT_EQ(test, *fv, 0x14);
+	KUNIT_EXPECT_EQ(test, c->nlog, 0);
+
+	/* Another board: untouched, not even read */
+	chg->guard_table = &guard_table_default;
+	c->nread = 0;
+	*fv = 0x2d;
+	max77759_charger_restore_float(chg);
+	KUNIT_EXPECT_EQ(test, *fv, 0x2d);
+	KUNIT_EXPECT_EQ(test, c->nlog, 0);
+	KUNIT_EXPECT_EQ(test, c->nread, 0);
+}
+
+/* A restore that does not hold: charging stopped, and unbind keeps it so */
+static void restore_test_readback_fail(struct kunit *test)
+{
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+	u8 *mode = &c->regs[MAX77759_CHGR_REG_CHG_CNFG_00];
+
+	chg->guard_table = &guard_table_husky;
+	chg->boot_fv_mv = 4350;
+	chg->mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	*mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	c->regs[MAX77759_CHGR_REG_CHG_CNFG_04] = 0x2d;
+	c->corrupt_reg = MAX77759_CHGR_REG_CHG_CNFG_04;
+	KUNIT_EXPECT_EQ(test, restore_float(chg), -EIO);
+	KUNIT_EXPECT_TRUE(test, chg->stop_inhibit);
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_BUCK_ON);
+
+	max77759_charger_clear_stop(chg);
+	KUNIT_EXPECT_TRUE(test, chg->stop_inhibit);
+	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_BUCK_ON);
+}
+
+/* A float that cannot be read is a failed restore too */
+static void restore_test_read_fail(struct kunit *test)
+{
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+
+	chg->guard_table = &guard_table_husky;
+	chg->boot_fv_mv = 4350;
+	chg->mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
+	c->fail_reads = 1;
+	KUNIT_EXPECT_EQ(test, restore_float(chg), -EIO);
+	KUNIT_EXPECT_TRUE(test, chg->stop_inhibit);
+	KUNIT_EXPECT_TRUE(test, chg->float_unsafe);
+}
+
+/* The float to restore: husky caps it and falls back to 4350 mV */
+static void restore_test_boot_float(struct kunit *test)
+{
+	KUNIT_EXPECT_EQ(test, boot_float(true, 4350), 4350);
+	KUNIT_EXPECT_EQ(test, boot_float(true, 4200), 4200);
+	KUNIT_EXPECT_EQ(test, boot_float(true, 4450), 4350);
+	KUNIT_EXPECT_EQ(test, boot_float(true, 0), 4350);
+	KUNIT_EXPECT_EQ(test, boot_float(true, -EIO), 4350);
+	KUNIT_EXPECT_EQ(test, boot_float(false, 4450), 4450);
+	KUNIT_EXPECT_EQ(test, boot_float(false, -EIO), 0);
+}
+
 static struct kunit_case guard_test_cases[] = {
 	KUNIT_CASE(guard_test_band_edges),
 	KUNIT_CASE(guard_test_hysteresis),
@@ -1001,6 +1098,11 @@ static struct kunit_case guard_test_cases[] = {
 	KUNIT_CASE(defend_test_unplug_flag),
 	KUNIT_CASE(defend_test_unplug_chgin),
 	KUNIT_CASE(defend_test_readback),
+	KUNIT_CASE(restore_test_never_raises),
+	KUNIT_CASE(restore_test_action),
+	KUNIT_CASE(restore_test_readback_fail),
+	KUNIT_CASE(restore_test_read_fail),
+	KUNIT_CASE(restore_test_boot_float),
 	{ }
 };
 

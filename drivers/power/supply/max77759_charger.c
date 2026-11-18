@@ -78,6 +78,7 @@ MODULE_PARM_DESC(charge_defender,
 #define DEFEND_END			80
 #define DEFEND_START			79
 #define STOP_RESUME_GAP			5	/* resume at end - 5 when start is 0 */
+#define HUSKY_BOOT_FV_MV		4350	/* float the husky bootloader sets */
 
 #define GUARD_PERIOD_MS			30000
 #define GUARD_RETRY_MS			2000	/* while there is no reading */
@@ -201,6 +202,8 @@ struct max77759_charger {
 	bool defended;		/* defender latched until unplugged */
 	bool unplugged;		/* psy work saw the source go, under lock */
 	ktime_t stop_last;
+	u32 boot_fv_mv;		/* float the bootloader left, 0: unknown */
+	bool float_unsafe;	/* restore failed: keep the stop on unbind */
 	bool apply_failed;	/* the chip did not hold the guard's limits */
 
 	/* Temperature guard */
@@ -886,6 +889,20 @@ static int max77759_init_irqhandler(struct max77759_charger *chg)
 	return 0;
 }
 
+/*
+ * The float to restore, from what the chip holds at probe. On husky a
+ * float left by an earlier driver run is no bootloader's, so it is capped
+ * at the bootloader's, and an unreadable one is taken to be it.
+ */
+static u32 boot_float(bool husky, int read_mv)
+{
+	u32 mv = read_mv > 0 ? read_mv : 0;
+
+	if (husky)
+		return mv ? min(mv, HUSKY_BOOT_FV_MV) : HUSKY_BOOT_FV_MV;
+	return mv;
+}
+
 static int max77759_charger_init(struct max77759_charger *chg)
 {
 	struct power_supply_battery_info *info;
@@ -900,6 +917,10 @@ static int max77759_charger_init(struct max77759_charger *chg)
 	ret = charger_set_mode(chg, MAX77759_CHGR_MODE_OFF);
 	if (ret)
 		return ret;
+
+	/* Husky only: the bootloader's float, before the battery's replaces it */
+	if (chg->guard_table == &guard_table_husky)
+		chg->boot_fv_mv = boot_float(true, get_float_voltage(chg));
 
 	if (power_supply_get_battery_info(chg->psy, &info)) {
 		fv = CHG_FV_DEFAULT_MV;
@@ -1469,10 +1490,68 @@ static void max77759_charger_log_state(struct max77759_charger *chg,
 		 fv, cc, ilim);
 }
 
-/* On unbind, no charge threshold holds charging off any more */
+/* Restore the bootloader's float only to lower the chip's, never to raise it */
+static bool restore_float_needed(u32 cur_mv, u32 boot_mv)
+{
+	return boot_mv && cur_mv > boot_mv;
+}
+
+/*
+ * Pixel 8 Pro: leave no float above the bootloader's behind once the
+ * driver, and with it the guard and the defender, is gone. When the float
+ * cannot be read or put back, charging is stopped (buck only) and the
+ * unbind leaves it stopped, rather than charge on a float that may be the
+ * raised one.
+ */
+static int restore_float(struct max77759_charger *chg)
+{
+	u32 want;
+	int cur;
+
+	if (chg->guard_table != &guard_table_husky)
+		return 0;
+
+	cur = get_float_voltage(chg);
+	if (cur < 0) {
+		dev_err(chg->dev, "could not read the float (%d): charging stopped\n",
+			cur);
+		goto fail;
+	}
+	if (!restore_float_needed(cur, chg->boot_fv_mv))
+		return 0;
+
+	if (fv_quantize(chg->boot_fv_mv, &want) ||
+	    set_float_voltage_limit(chg, chg->boot_fv_mv) ||
+	    get_float_voltage(chg) != (int)want) {
+		dev_err(chg->dev,
+			"could not restore the float to %u mV: charging stopped\n",
+			chg->boot_fv_mv);
+		goto fail;
+	}
+	dev_info(chg->dev, "float restored to %u mV\n", chg->boot_fv_mv);
+	return 0;
+
+fail:
+	chg->float_unsafe = true;
+	charger_set_inhibit(chg, &chg->stop_inhibit, true);
+	return -EIO;
+}
+
+static void max77759_charger_restore_float(void *data)
+{
+	restore_float(data);
+}
+
+/*
+ * On unbind, no charge threshold holds charging off any more, unless the
+ * float could not be restored: then charging stays stopped.
+ */
 static void max77759_charger_clear_stop(void *data)
 {
 	struct max77759_charger *chg = data;
+
+	if (chg->float_unsafe)
+		return;
 
 	charger_set_inhibit(chg, &chg->stop_inhibit, false);
 }
@@ -1522,6 +1601,7 @@ static int max77759_charger_probe(struct platform_device *pdev)
 
 	max77759_charger_log_state(chg, "found");
 
+	chg->guard_table = guard_select_table();
 	ret = max77759_charger_init(chg);
 	if (ret)
 		return dev_err_probe(dev, ret,
@@ -1542,10 +1622,15 @@ static int max77759_charger_probe(struct platform_device *pdev)
 
 	/*
 	 * devm undoes in reverse: on unbind the guard work is cancelled,
-	 * then a threshold stop is cleared, and only then is charging
-	 * left on.
+	 * then the float is restored, then a threshold stop is cleared,
+	 * and only then is charging left on.
 	 */
 	ret = devm_add_action_or_reset(dev, max77759_charger_clear_stop, chg);
+	if (ret)
+		return ret;
+
+	ret = devm_add_action_or_reset(dev, max77759_charger_restore_float,
+				       chg);
 	if (ret)
 		return ret;
 
@@ -1567,7 +1652,6 @@ static int max77759_charger_probe(struct platform_device *pdev)
 	 * unregisters the notifier before it cancels the work.
 	 */
 	chg->guard_band = -2;
-	chg->guard_table = guard_select_table();
 	chg->stop_last = ktime_get_boottime();
 	ret = devm_delayed_work_autocancel(dev, &chg->guard_work, guard_work_item);
 	if (ret)
@@ -1599,6 +1683,19 @@ static int max77759_charger_probe(struct platform_device *pdev)
 	return 0;
 }
 
+static void max77759_charger_shutdown(struct platform_device *pdev)
+{
+	struct max77759_charger *chg = platform_get_drvdata(pdev);
+
+	/* Husky only: other boards are left as they were */
+	if (chg->guard_table != &guard_table_husky)
+		return;
+
+	/* No guard run after this, not even one the notifier kicks */
+	disable_delayed_work_sync(&chg->guard_work);
+	max77759_charger_restore_float(chg);
+}
+
 static const struct platform_device_id max77759_charger_id[] = {
 	{ .name = "max77759-charger" },
 	{ }
@@ -1611,6 +1708,7 @@ static struct platform_driver max77759_charger_driver = {
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
 	.probe = max77759_charger_probe,
+	.shutdown = max77759_charger_shutdown,
 	.id_table = max77759_charger_id,
 };
 module_platform_driver(max77759_charger_driver);
