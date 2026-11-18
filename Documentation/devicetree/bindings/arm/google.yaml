@@ -59,6 +59,7 @@ properties:
         items:
           - enum:
               - google,zumapro-comet
+              - google,zumapro-komodo
               - google,zumapro-tegu
           - const: google,zumapro
 
