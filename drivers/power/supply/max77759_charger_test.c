@@ -2,7 +2,7 @@
 /*
  * KUnit tests for the battery temperature guard of the MAX77759 charger
  * driver: bands, hysteresis, tiers, limits and the tables themselves; the
- * charge thresholds and the read-back of the limits.
+ * charge thresholds, the read-back of the limits and the defender.
  *
  * This file is included by max77759_charger.c and can not be built alone.
  */
@@ -611,20 +611,26 @@ static void inhibit_test_two_flags(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, c->nlog, 2);
 }
 
-/* At 100 / 0: no i2c at all */
+/* At 100 / 0, with the defender off or on a board without it: no i2c */
 static void stop_test_inert_no_io(struct kunit *test)
 {
+	bool saved = charge_defender;
 	struct fake_chip *c;
 	struct max77759_charger *chg = fake_charger(test, &c);
 
 	chg->mode = MAX77759_CHGR_MODE_CHG_BUCK_ON;
 	chg->guard_table = &guard_table_default;
 
+	charge_defender = false;
 	stop_work(chg);
+	charge_defender = true;
+	stop_work(chg);
+	charge_defender = saved;
 
 	KUNIT_EXPECT_EQ(test, c->nread, 0);
 	KUNIT_EXPECT_EQ(test, c->nlog, 0);
 	KUNIT_EXPECT_FALSE(test, chg->stop_inhibit);
+	KUNIT_EXPECT_FALSE(test, chg->defended);
 }
 
 /*
@@ -806,6 +812,162 @@ static void readback_test_inhibit(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, *mode, MAX77759_CHGR_MODE_CHG_BUCK_ON);
 }
 
+static void stop_test_effective(struct kunit *test)
+{
+	int e, s;
+
+	stop_effective(100, 0, false, &e, &s);
+	KUNIT_EXPECT_EQ(test, e, 100);
+	KUNIT_EXPECT_EQ(test, s, 0);
+
+	stop_effective(100, 0, true, &e, &s);
+	KUNIT_EXPECT_EQ(test, e, 80);
+	KUNIT_EXPECT_EQ(test, s, 79);
+
+	/* A lower limit of the user's stays */
+	stop_effective(70, 60, true, &e, &s);
+	KUNIT_EXPECT_EQ(test, e, 70);
+	KUNIT_EXPECT_EQ(test, s, 60);
+
+	stop_effective(80, 50, true, &e, &s);
+	KUNIT_EXPECT_EQ(test, e, 80);
+	KUNIT_EXPECT_EQ(test, s, 50);
+}
+
+/* Run the defender for @n steps of @dt_s at one reading */
+static bool defend_run(u32 *count, bool latched, int uv, int decic, u32 dt_s,
+		       int n)
+{
+	while (n--)
+		latched = defend_step(count, latched, true, uv, decic, dt_s);
+	return latched;
+}
+
+static void defend_test_latch(struct kunit *test)
+{
+	u32 count = 0;
+	bool on;
+
+	/* 21,599 s does not latch, 21,600 s does */
+	on = defend_run(&count, false, 4270000, 350, 30, 719);
+	on = defend_step(&count, on, true, 4270000, 350, 29);
+	KUNIT_EXPECT_EQ(test, count, 21599);
+	KUNIT_EXPECT_FALSE(test, on);
+	on = defend_step(&count, on, true, 4270000, 350, 1);
+	KUNIT_EXPECT_TRUE(test, on);
+
+	/* Latched: stays so whatever the reading, until unplugged */
+	KUNIT_EXPECT_TRUE(test, defend_step(&count, on, true, 3800000, 200, 30));
+	KUNIT_EXPECT_FALSE(test, defend_step(&count, on, false, 4300000, 400, 30));
+	KUNIT_EXPECT_EQ(test, count, 0);
+}
+
+static void defend_test_conditions(struct kunit *test)
+{
+	u32 count = 0;
+
+	/* 4.269 V starts the count again */
+	defend_run(&count, false, 4300000, 400, 30, 100);
+	KUNIT_EXPECT_EQ(test, count, 3000);
+	KUNIT_EXPECT_FALSE(test, defend_step(&count, false, true, 4269000, 400, 30));
+	KUNIT_EXPECT_EQ(test, count, 0);
+
+	/* 34.9 C does not count, and does not reset either */
+	defend_run(&count, false, 4300000, 400, 30, 10);
+	KUNIT_EXPECT_FALSE(test, defend_run(&count, false, 4300000, 349, 30,
+					    1000));
+	KUNIT_EXPECT_EQ(test, count, 300);
+
+	/* Unplugged clears */
+	KUNIT_EXPECT_FALSE(test, defend_step(&count, false, false, 4300000, 400, 30));
+	KUNIT_EXPECT_EQ(test, count, 0);
+
+	/* One long gap between runs counts as at most DEFEND_MAX_STEP_S */
+	KUNIT_EXPECT_FALSE(test, defend_step(&count, false, true, 4300000, 400,
+					     DEFEND_S));
+	KUNIT_EXPECT_EQ(test, count, DEFEND_MAX_STEP_S);
+}
+
+/* An unplug psy work saw clears the defender, and the flag is consumed */
+static void defend_test_unplug_flag(struct kunit *test)
+{
+	bool saved = charge_defender;
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+
+	chg->guard_table = &guard_table_husky;
+	chg->defended = true;
+	chg->defend_s = DEFEND_S;
+	chg->unplugged = true;
+
+	charge_defender = true;
+	stop_work(chg);
+	charge_defender = saved;
+
+	KUNIT_EXPECT_FALSE(test, chg->defended);
+	KUNIT_EXPECT_EQ(test, chg->defend_s, 0);
+	KUNIT_EXPECT_FALSE(test, chg->unplugged);
+	/* No CHGIN read: the flag alone says unplugged */
+	KUNIT_EXPECT_EQ(test, c->nread, 0);
+}
+
+/* With no TCPM notice, the guard run's own CHGIN read clears the defender */
+static void defend_test_unplug_chgin(struct kunit *test)
+{
+	bool saved = charge_defender;
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+
+	chg->guard_table = &guard_table_husky;
+	chg->defended = true;
+	chg->defend_s = DEFEND_S;
+	c->regs[MAX77759_CHGR_REG_CHG_INT_OK] = 0;
+
+	charge_defender = true;
+	stop_work(chg);
+	charge_defender = saved;
+
+	KUNIT_EXPECT_FALSE(test, chg->defended);
+	KUNIT_EXPECT_EQ(test, chg->defend_s, 0);
+}
+
+/* While latched, the thresholds read back the defender's 80 / 79 */
+static void defend_test_readback(struct kunit *test)
+{
+	const enum power_supply_property end =
+		POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD;
+	const enum power_supply_property start =
+		POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD;
+	struct power_supply_config cfg = { };
+	struct power_supply_desc *desc;
+	struct power_supply *psy;
+	struct fake_chip *c;
+	struct max77759_charger *chg = fake_charger(test, &c);
+
+	desc = devm_kmemdup(chg->dev, &max77759_charger_desc, sizeof(*desc),
+			    GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, desc);
+	desc->name = "max77759-chg-test";
+	cfg.drv_data = chg;
+	psy = devm_power_supply_register(chg->dev, desc, &cfg);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, psy);
+
+	chg->defended = true;
+	KUNIT_EXPECT_EQ(test, chg_prop_get(psy, end), 80);
+	KUNIT_EXPECT_EQ(test, chg_prop_get(psy, start), 79);
+
+	/* A lower user end stays in force, and reads back */
+	KUNIT_ASSERT_EQ(test, chg_prop_set(psy, end, 70), 0);
+	KUNIT_EXPECT_EQ(test, chg_prop_get(psy, end), 70);
+	KUNIT_EXPECT_EQ(test, chg_prop_get(psy, start), 65);
+
+	/* Unlatched: the user's values again */
+	KUNIT_ASSERT_EQ(test, chg_prop_set(psy, end, 100), 0);
+	chg->defended = false;
+	KUNIT_EXPECT_EQ(test, chg_prop_get(psy, end), 100);
+	KUNIT_EXPECT_EQ(test, chg_prop_get(psy, start), 0);
+}
+
 static struct kunit_case guard_test_cases[] = {
 	KUNIT_CASE(guard_test_band_edges),
 	KUNIT_CASE(guard_test_hysteresis),
@@ -833,6 +995,12 @@ static struct kunit_case guard_test_cases[] = {
 	KUNIT_CASE(readback_test_apply),
 	KUNIT_CASE(readback_test_mismatch),
 	KUNIT_CASE(readback_test_inhibit),
+	KUNIT_CASE(stop_test_effective),
+	KUNIT_CASE(defend_test_latch),
+	KUNIT_CASE(defend_test_conditions),
+	KUNIT_CASE(defend_test_unplug_flag),
+	KUNIT_CASE(defend_test_unplug_chgin),
+	KUNIT_CASE(defend_test_readback),
 	{ }
 };
 
