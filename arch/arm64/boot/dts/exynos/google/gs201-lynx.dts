@@ -361,3 +361,4 @@
 	status = "disabled";
 };
 
+&gpu { status = "okay"; };
