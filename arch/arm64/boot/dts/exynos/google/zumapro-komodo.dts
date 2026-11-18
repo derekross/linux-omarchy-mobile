@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Google Pixel 9 Pro XL (komodo) board identification.
+ *
+ * Peripheral descriptions are intentionally staged separately after their
+ * Komodo wiring and handoff values have been verified.
+ */
+
+/dts-v1/;
+
+#include "zumapro.dtsi"
+/* Source-derived only; verify each range against Komodo's live memory map
+ * and add its framebuffer handoff before attempting to boot this board.
+ */
+#include "zumapro-reserved-memory.dtsi"
+
+/ {
+	model = "Google Pixel 9 Pro XL";
+	compatible = "google,zumapro-komodo", "google,zumapro";
+
+	/* Selector tuples from Google's public Zumapro GPL source. */
+	soc_compatible {
+		A0_FOPLP {
+			product_id = <0x9875>;
+			major = <0>;
+			minor = <0>;
+			pkg_mode = <0>;
+		};
+
+		A1_FOPLP {
+			product_id = <0x9875>;
+			major = <0>;
+			minor = <1>;
+			pkg_mode = <0>;
+		};
+	};
+
+	chosen {
+		bootargs = "console=tty0 clk_ignore_unused pd_ignore_unused rdinit=/init panic=10";
+	};
+};
