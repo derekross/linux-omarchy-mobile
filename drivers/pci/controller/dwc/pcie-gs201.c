@@ -918,6 +918,33 @@ static const struct dw_pcie_ops gs201_pcie_dw_ops = {
 	.stop_link	= gs201_pcie_stop_link,
 };
 
+static void gs201_pcie_handle_msi(struct gs201_pcie *gp)
+{
+	struct dw_pcie_rp *pp = &gp->pci.pp;
+	unsigned long flags;
+	unsigned int ctrl, num_ctrls;
+	u32 offset;
+
+	dw_handle_msi_irq(pp);
+
+	/*
+	 * The wrapper latches a rising edge, while iMSI-RX remains asserted
+	 * until all unmasked status bits are cleared. A lower vector arriving
+	 * while an upper vector is handled can miss the status snapshot and
+	 * leave the line high without another edge. As Google's combined-MSI
+	 * handler does, pulse the mask to re-pend it. Preserve Linux's masks
+	 * under the same lock used by the DWC IRQ chip's mask/unmask paths.
+	 */
+	num_ctrls = pp->num_vectors / MAX_MSI_IRQS_PER_CTRL;
+	raw_spin_lock_irqsave(&pp->lock, flags);
+	for (ctrl = 0; ctrl < num_ctrls; ctrl++) {
+		offset = PCIE_MSI_INTR0_MASK + ctrl * MSI_REG_CTRL_BLOCK_SIZE;
+		dw_pcie_writel_dbi(&gp->pci, offset, U32_MAX);
+		dw_pcie_writel_dbi(&gp->pci, offset, pp->irq_mask[ctrl]);
+	}
+	raw_spin_unlock_irqrestore(&pp->lock, flags);
+}
+
 static void gs201_pcie_irq_handler(struct irq_desc *desc);
 static void gs201_pcie_msi_irq_handler(struct irq_desc *desc);
 
@@ -1104,7 +1131,7 @@ static __always_inline void gs201_pcie_handle_irq(struct irq_desc *desc, bool ms
 	/* DWC owns the MSI domain; our handler owns the shared interrupt. */
 	/* Pairs with publication after link training, before IRQ enable. */
 	if (msi && (irq2 & GS201_ELBI_IRQ2_MSI_RISING) && smp_load_acquire(&gp->msi_ready))
-		dw_handle_msi_irq(&gp->pci.pp);
+		gs201_pcie_handle_msi(gp);
 
 	chained_irq_exit(chip, desc);
 }
