@@ -27,11 +27,12 @@ config GOOGLE_GSA_TRUSTY
 	  Google kernel uses.
 
 config GS201_AOC_SYSMMU
-	tristate "gs201 AoC System MMU static windows"
+	tristate "gs201 and zuma AoC System MMU static windows"
 	help
 	  Programs the AoC's System MMU with the fixed windows its firmware
-	  expects (from the firmware image header), as 1 MiB sections. Used by
-	  the AoC driver.
+	  expects (from the firmware image header), as 1 MiB sections, and on
+	  zuma's version 9 block as 4 KiB pages where a window needs them.
+	  Used by the AoC driver.
 
 config GS201_AOC_BOOT
 	tristate "gs201 AoC firmware boot (bring-up)"
