@@ -316,7 +316,7 @@ int configure_iommu_interrupts(struct device *dev, struct device_node *iommu_nod
 }
 EXPORT_SYMBOL_GPL(configure_iommu_interrupts);
 
-#if IS_ENABLED(CONFIG_SOC_GS101)
+/* Set every AoC stream to bypass in its SSMT ("ssmt_aoc"), on SoCs that ask for it */
 void aoc_configure_ssmt(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -340,11 +340,6 @@ void aoc_configure_ssmt(struct platform_device *pdev)
 
 	devm_iounmap(dev, ssmt_base);
 }
-#else
-void aoc_configure_ssmt(struct platform_device *pdev
-	__attribute__((unused)))
-{}
-#endif
 EXPORT_SYMBOL_GPL(aoc_configure_ssmt);
 
 void configure_crash_interrupts(struct aoc_prvdata *prvdata, bool enable)

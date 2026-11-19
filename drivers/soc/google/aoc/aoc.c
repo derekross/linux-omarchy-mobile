@@ -1245,6 +1245,22 @@ static const struct aoc_soc_data gs201_aoc_data = {
 	.pcu_db_clear = 0xd008,
 };
 
+/*
+ * zuma's AoC block is laid out as zumapro's (Google's zuma-aoc.dtsi, relative
+ * to BLK_AOC at 0x17000000), but Linux programs its System MMU as on gs201,
+ * reads the chip id as on gs201, and sets its SSMT to bypass.
+ */
+static const struct aoc_soc_data zuma_aoc_data = {
+	.merge_subrevision_into_type = true,
+	.configure_ssmt = true,
+	.chipid_main_reg = 0x10,
+	.chipid_main_shift = 20,
+	.pcu_base = 0x1400000,
+	.gpio_base = 0x1c00000,
+	.pcu_db_set = 0x1f004,
+	.pcu_db_clear = 0x1f008,
+};
+
 static const struct aoc_soc_data zumapro_aoc_data = {
 	.ordered_sensor_supplies = true,
 	.firmware_managed_mmu = true,
@@ -1262,6 +1278,7 @@ static const struct of_device_id aoc_match[] = {
 		.compatible = "google,gs201-aoc",
 		.data = &gs201_aoc_data,
 	},
+	{ .compatible = "google,zuma-aoc", .data = &zuma_aoc_data },
 	{ .compatible = "google,zumapro-aoc", .data = &zumapro_aoc_data },
 	{},
 };
@@ -2892,7 +2909,8 @@ static int aoc_platform_probe(struct platform_device *pdev)
 
 	pm_runtime_set_suspended(dev);
 
-	aoc_configure_ssmt(pdev);
+	if (prvdata->soc->configure_ssmt)
+		aoc_configure_ssmt(pdev);
 
 	if (!aoc_create_dma_buf_heaps(prvdata)) {
 		pr_err("Unable to create dma_buf heaps\n");
