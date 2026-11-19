@@ -857,6 +857,7 @@ static void gsa_remove(struct platform_device *pdev)
 
 static const struct of_device_id gsa_of_match[] = {
 	{ .compatible = "google,gs201-gsa" },
+	{ .compatible = "google,zuma-gsa" },
 	{ .compatible = "google,zumapro-gsa" },
 	{ }
 };
