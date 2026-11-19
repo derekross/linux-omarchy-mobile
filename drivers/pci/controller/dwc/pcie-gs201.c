@@ -10,8 +10,8 @@
  * controller/dwc-whi/pcie-exynos-rc.c (exynos_pcie_rc_resumed_phydown(),
  * exynos_pcie_rc_poweron() and exynos_pcie_rc_establish_link()).
  *
- * Only legacy INTx interrupts are supported, which is what the Pixel 7 Wi-Fi
- * uses on stock firmware too.
+ * Pixel 7 Wi-Fi uses legacy INTx. Pixel 7a uses the DWC iMSI-RX, demuxed
+ * from the shared ELBI interrupt after link reset has completed.
  *
  * Bring-up runs in numbered stages, each touching one more part of the
  * hardware. The stop_after parameter ends probe after a given stage, and
@@ -54,6 +54,7 @@
 #define GS201_ELBI_IRQ1_LINK_DOWN	BIT(10)
 #define GS201_ELBI_IRQ2			0x008
 #define GS201_ELBI_IRQ2_CPL_TIMEOUT	BIT(24)
+#define GS201_ELBI_IRQ2_MSI_RISING		BIT(17)
 #define GS201_ELBI_IRQ0_EN		0x010
 #define GS201_ELBI_IRQ1_EN		0x014
 #define GS201_ELBI_IRQ2_EN		0x018
@@ -182,6 +183,7 @@ MODULE_PARM_DESC(cmu_acg_off,
  *	the soft power reset before the PHY powers down, as Google's
  *	exynos_pcie_rc_poweroff() does for the zuma family. Only zumapro so
  *	far: it hasn't run on a zuma board here.
+ * @wcn_msi: lynx's WCN endpoint requires iMSI-RX
  */
 struct gs201_pcie_soc_data {
 	bool ctrl_reset_before_phy;
@@ -191,6 +193,7 @@ struct gs201_pcie_soc_data {
 	bool noncoherent_only;
 	bool skip_link_history;
 	unsigned int link_tries;
+	bool wcn_msi;
 };
 
 struct gs201_pcie {
@@ -217,6 +220,7 @@ struct gs201_pcie {
 	int irq;
 	struct irq_domain *intx_domain;
 	raw_spinlock_t lock;
+	bool msi_ready;
 };
 
 #define to_gs201_pcie(x)	dev_get_drvdata((x)->dev)
@@ -452,8 +456,10 @@ static bool gs201_pcie_link_up(struct dw_pcie *pci)
 	       ltssm <= DW_PCIE_LTSSM_L1_IDLE;
 }
 
-static void gs201_pcie_enable_irqs(struct gs201_pcie *gp)
+static int gs201_pcie_enable_irqs(struct gs201_pcie *gp)
 {
+	u32 enabled;
+
 	gs201_trace(gp, "about to clear ELBI IRQ0-2 and enable link-down and completion-timeout interrupts");
 
 	/* Clear anything latched during training */
@@ -466,6 +472,21 @@ static void gs201_pcie_enable_irqs(struct gs201_pcie *gp)
 
 	gs201_elbi_rmw(gp, GS201_ELBI_IRQ1_EN, 0, GS201_ELBI_IRQ1_LINK_DOWN);
 	gs201_elbi_rmw(gp, GS201_ELBI_IRQ2_EN, 0, GS201_ELBI_IRQ2_CPL_TIMEOUT);
+	/* Link soft reset clears this bit too. Arm only after the link is up. */
+	if (gp->data->wcn_msi) {
+		if (upper_32_bits(gp->pci.pp.msi_data))
+			return dev_err_probe(gp->pci.dev, -ERANGE,
+					     "MSI target exceeds 32 bits\n");
+		gs201_elbi_rmw(gp, GS201_ELBI_IRQ2_EN, 0,
+			       GS201_ELBI_IRQ2_MSI_RISING);
+		enabled = gs201_elbi_readl(gp, GS201_ELBI_IRQ2_EN);
+		if (!(enabled & GS201_ELBI_IRQ2_MSI_RISING))
+			return dev_err_probe(gp->pci.dev, -EIO,
+					     "MSI interrupt enable did not latch\n");
+		dev_info(gp->pci.dev, "MSI armed after link up, ELBI IRQ2_EN %#x\n",
+			 enabled);
+	}
+	return 0;
 }
 
 static void gs201_pcie_disable_irqs(struct gs201_pcie *gp)
@@ -850,14 +871,23 @@ static int gs201_pcie_start_link(struct dw_pcie *pci)
 			return ret;
 	}
 
-	/*
-	 * Leave the LTSSM running even on failure: dw_pcie_wait_for_link()
-	 * reports the final state, and a card that shows up late can still
-	 * train.
-	 */
+	/* MSI must be armed before the DWC core can enumerate an endpoint. */
+	if (ret && gp->data->wcn_msi)
+		return ret;
+
+	/* The existing INTx path permits a card to train during DWC's wait. */
 	if (!ret) {
 		dev_info(dev, "link up on try %u\n", try);
-		gs201_pcie_enable_irqs(gp);
+		if (gp->data->wcn_msi)
+			/* Publish the domain before enabling its interrupt. */
+			smp_store_release(&gp->msi_ready, true);
+		ret = gs201_pcie_enable_irqs(gp);
+		if (ret) {
+			WRITE_ONCE(gp->msi_ready, false);
+			gs201_pcie_disable_irqs(gp);
+			synchronize_irq(gp->irq);
+			return ret;
+		}
 		gs201_pcie_check_iocc(gp, "after link up");
 	}
 
@@ -873,7 +903,11 @@ static void gs201_pcie_stop_link(struct dw_pcie *pci)
 {
 	struct gs201_pcie *gp = to_gs201_pcie(pci);
 
+	if (gp->data->wcn_msi)
+		WRITE_ONCE(gp->msi_ready, false);
 	gs201_pcie_disable_irqs(gp);
+	if (gp->data->wcn_msi)
+		synchronize_irq(gp->irq);
 	gs201_elbi_writel(gp, GS201_ELBI_LTSSM_EN, 0);
 }
 
@@ -885,6 +919,7 @@ static const struct dw_pcie_ops gs201_pcie_dw_ops = {
 };
 
 static void gs201_pcie_irq_handler(struct irq_desc *desc);
+static void gs201_pcie_msi_irq_handler(struct irq_desc *desc);
 
 /*
  * Stage 5 entry, from dw_pcie_host_init(): stages 1-2, the endpoint power
@@ -906,7 +941,8 @@ static int gs201_pcie_host_init(struct dw_pcie_rp *pp)
 		goto err_bringdown;
 
 	/* ELBI is reachable and its interrupt enables are off */
-	irq_set_chained_handler_and_data(gp->irq, gs201_pcie_irq_handler, gp);
+	irq_set_chained_handler_and_data(gp->irq, gp->data->wcn_msi ?
+			gs201_pcie_msi_irq_handler : gs201_pcie_irq_handler, gp);
 
 	dev_info(dev, "stage %u/%u: %s\n", GS201_STAGE_LINK, GS201_STAGE_LINK,
 		 gs201_stage_names[GS201_STAGE_LINK]);
@@ -985,6 +1021,11 @@ static const struct dw_pcie_host_ops gs201_pcie_host_ops = {
 	.msi_init	= gs201_pcie_msi_init,
 };
 
+static const struct dw_pcie_host_ops gs201_pcie_host_ops_msi = {
+	.init		= gs201_pcie_host_init,
+	.deinit		= gs201_pcie_host_deinit,
+};
+
 static void gs201_pcie_intx_mask(struct irq_data *d)
 {
 	struct gs201_pcie *gp = irq_data_get_irq_chip_data(d);
@@ -1027,7 +1068,7 @@ static const struct irq_domain_ops gs201_pcie_intx_domain_ops = {
 	.xlate	= pci_irqd_intx_xlate,
 };
 
-static void gs201_pcie_irq_handler(struct irq_desc *desc)
+static __always_inline void gs201_pcie_handle_irq(struct irq_desc *desc, bool msi)
 {
 	struct gs201_pcie *gp = irq_desc_get_handler_data(desc);
 	struct irq_chip *chip = irq_desc_get_chip(desc);
@@ -1060,7 +1101,22 @@ static void gs201_pcie_irq_handler(struct irq_desc *desc)
 	for_each_set_bit(bit, &intx, PCI_NUM_INTX)
 		generic_handle_domain_irq(gp->intx_domain, bit);
 
+	/* DWC owns the MSI domain; our handler owns the shared interrupt. */
+	/* Pairs with publication after link training, before IRQ enable. */
+	if (msi && (irq2 & GS201_ELBI_IRQ2_MSI_RISING) && smp_load_acquire(&gp->msi_ready))
+		dw_handle_msi_irq(&gp->pci.pp);
+
 	chained_irq_exit(chip, desc);
+}
+
+static void gs201_pcie_irq_handler(struct irq_desc *desc)
+{
+	gs201_pcie_handle_irq(desc, false);
+}
+
+static void gs201_pcie_msi_irq_handler(struct irq_desc *desc)
+{
+	gs201_pcie_handle_irq(desc, true);
 }
 
 /*
@@ -1217,6 +1273,13 @@ static int gs201_pcie_probe(struct platform_device *pdev)
 	pci->dev = dev;
 	pci->ops = &gs201_pcie_dw_ops;
 	pci->pp.ops = &gs201_pcie_host_ops;
+	if (gp->data->wcn_msi) {
+		if (!pci_msi_enabled())
+			return dev_err_probe(dev, -ENODEV, "lynx requires PCI MSI\n");
+		pci->pp.ops = &gs201_pcie_host_ops_msi;
+		pci->pp.msi_irq[0] = -ENXIO;
+		pci->pp.num_vectors = MAX_MSI_IRQS_PER_CTRL;
+	}
 
 	dev_info(dev, "stage 0/%u: %s (stop_after=%u, trace=%d, use_ia=%d, cmu_acg_off=%d)\n",
 		 GS201_STAGE_LINK, gs201_stage_names[GS201_STAGE_NONE],
@@ -1324,6 +1387,10 @@ static const struct gs201_pcie_soc_data gs101_pcie_data = {
 static const struct gs201_pcie_soc_data gs201_pcie_data = {
 };
 
+static const struct gs201_pcie_soc_data lynx_pcie_data = {
+	.wcn_msi = true,
+};
+
 static const struct gs201_pcie_soc_data zuma_pcie_data = {
 	.ctrl_reset_before_phy = true,
 };
@@ -1335,6 +1402,7 @@ static const struct gs201_pcie_soc_data zumapro_pcie_data = {
 
 static const struct of_device_id gs201_pcie_of_match[] = {
 	{ .compatible = "google,gs101-pcie", .data = &gs101_pcie_data },
+	{ .compatible = "google,gs201-lynx-pcie", .data = &lynx_pcie_data },
 	{ .compatible = "google,gs201-pcie", .data = &gs201_pcie_data },
 	{ .compatible = "google,zumapro-pcie", .data = &zumapro_pcie_data },
 	{ .compatible = "google,zuma-pcie", .data = &zuma_pcie_data },
