@@ -8,7 +8,6 @@
 #include <linux/err.h>
 #include <linux/kernel.h>
 
-#include <linux/dma-map-ops.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/notifier.h>
@@ -232,8 +231,8 @@ static int trusty_virtio_finalize_features(struct virtio_device *vdev)
 	u64 features = vdev->features;
 
 	/*
-	 * We set VIRTIO_F_ACCESS_PLATFORM to enable the dma mapping hooks.
-	 * The other side does not need to know.
+	 * IPC buffers are already shared with Trusty and use the premapped
+	 * virtqueue API. Keep the local mapping feature out of its feature word.
 	 */
 	features &= ~(1ULL << VIRTIO_F_ACCESS_PLATFORM);
 
@@ -699,24 +698,6 @@ err_share_memory:
 	return ret;
 }
 
-/*
- * The IPC driver maps its message buffers through this device; the "DMA
- * address" handed to Trusty is the buffer's shared memory id.
- */
-static dma_addr_t trusty_virtio_dma_map_phys(struct device *dev,
-					     phys_addr_t phys, size_t size,
-					     enum dma_data_direction dir,
-					     unsigned long attrs)
-{
-	struct tipc_msg_buf *buf = phys_to_virt(phys);
-
-	return buf->buf_id;
-}
-
-static const struct dma_map_ops trusty_virtio_dma_map_ops = {
-	.map_phys = trusty_virtio_dma_map_phys,
-};
-
 static int trusty_virtio_probe(struct platform_device *pdev)
 {
 	int ret;
@@ -733,8 +714,6 @@ static int trusty_virtio_probe(struct platform_device *pdev)
 	INIT_WORK(&tctx->check_vqs, check_all_vqs);
 	INIT_WORK(&tctx->kick_vqs, kick_vqs);
 	platform_set_drvdata(pdev, tctx);
-
-	set_dma_ops(&pdev->dev, &trusty_virtio_dma_map_ops);
 
 	tctx->check_wq = alloc_workqueue("trusty-check-wq",
 					 WQ_UNBOUND | WQ_HIGHPRI, 0);
