@@ -132,6 +132,7 @@ struct max77759_charger {
 	struct mutex lock; /* protects the state below */
 	enum max77759_chgr_mode mode;
 	bool inhibit;	/* charge suspended by the temperature guard */
+	bool user_inhibit;	/* charge_behaviour inhibit-charge, from user space */
 
 	/* Temperature guard */
 	struct delayed_work guard_work;
@@ -210,6 +211,10 @@ static int get_status(struct max77759_charger *chg)
 	case MAX77759_CHGR_CHG_DTLS_SUSP_JEITA:
 		return POWER_SUPPLY_STATUS_NOT_CHARGING;
 	case MAX77759_CHGR_CHG_DTLS_OFF:
+		/* Held off by the guard or user space, on input: not charging */
+		if ((READ_ONCE(chg->inhibit) || READ_ONCE(chg->user_inhibit)) &&
+		    charger_input_valid(chg) > 0)
+			return POWER_SUPPLY_STATUS_NOT_CHARGING;
 		return POWER_SUPPLY_STATUS_DISCHARGING;
 	default:
 		break;
@@ -429,6 +434,7 @@ static const enum power_supply_property max77759_charger_props[] = {
 	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
 	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX,
 	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
+	POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR,
 };
 
 static int max77759_charger_get_property(struct power_supply *psy,
@@ -463,6 +469,10 @@ static int max77759_charger_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
 		ret = get_input_current_limit(chg);
 		break;
+	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
+		ret = chg->user_inhibit ? POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE
+					: POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO;
+		break;
 	default:
 		ret = -EINVAL;
 	}
@@ -471,19 +481,15 @@ static int max77759_charger_get_property(struct power_supply *psy,
 	return ret < 0 ? ret : 0;
 }
 
-static const struct power_supply_desc max77759_charger_desc = {
-	.name = "max77759-charger",
-	.type = POWER_SUPPLY_TYPE_USB,
-	.properties = max77759_charger_props,
-	.num_properties = ARRAY_SIZE(max77759_charger_props),
-	.get_property = max77759_charger_get_property,
-};
-
-/* The mode the hardware gets: buck only while the guard inhibits charging */
+/*
+ * The mode the hardware gets: buck only while the guard or user space inhibits
+ * charging. The phone then runs from the input and the battery is left alone.
+ */
 static int charger_write_mode(struct max77759_charger *chg,
 			      enum max77759_chgr_mode mode)
 {
-	if (mode == MAX77759_CHGR_MODE_CHG_BUCK_ON && chg->inhibit)
+	if (mode == MAX77759_CHGR_MODE_CHG_BUCK_ON &&
+	    (chg->inhibit || chg->user_inhibit))
 		mode = MAX77759_CHGR_MODE_BUCK_ON;
 
 	return regmap_update_bits(chg->regmap, MAX77759_CHGR_REG_CHG_CNFG_00,
@@ -515,6 +521,57 @@ static int charger_set_mode(struct max77759_charger *chg,
 	chg->mode = mode;
 	return 0;
 }
+
+static int charger_set_user_inhibit(struct max77759_charger *chg, bool inhibit)
+{
+	guard(mutex)(&chg->lock);
+
+	if (chg->user_inhibit == inhibit)
+		return 0;
+	chg->user_inhibit = inhibit;
+	if (chg->mode != MAX77759_CHGR_MODE_CHG_BUCK_ON)
+		return 0;
+	return charger_write_mode(chg, chg->mode);
+}
+
+static int max77759_charger_set_property(struct power_supply *psy,
+					 enum power_supply_property psp,
+					 const union power_supply_propval *pval)
+{
+	struct max77759_charger *chg = power_supply_get_drvdata(psy);
+
+	switch (psp) {
+	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
+		switch (pval->intval) {
+		case POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO:
+			return charger_set_user_inhibit(chg, false);
+		case POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE:
+			return charger_set_user_inhibit(chg, true);
+		default:
+			return -EINVAL;
+		}
+	default:
+		return -EINVAL;
+	}
+}
+
+static int max77759_charger_property_is_writeable(struct power_supply *psy,
+						  enum power_supply_property psp)
+{
+	return psp == POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR;
+}
+
+static const struct power_supply_desc max77759_charger_desc = {
+	.name = "max77759-charger",
+	.type = POWER_SUPPLY_TYPE_USB,
+	.charge_behaviours = BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO) |
+			     BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE),
+	.properties = max77759_charger_props,
+	.num_properties = ARRAY_SIZE(max77759_charger_props),
+	.get_property = max77759_charger_get_property,
+	.set_property = max77759_charger_set_property,
+	.property_is_writeable = max77759_charger_property_is_writeable,
+};
 
 static int enable_chgin_otg(struct regulator_dev *rdev)
 {
