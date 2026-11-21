@@ -527,12 +527,40 @@
 
 	status = "okay";
 
-	/* stmfts5 @49 */
+	touchscreen: touchscreen@49 {
+		compatible = "st,stmfts5";
+		reg = <0x49>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <31 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 32 GPIO_ACTIVE_LOW>;
+		vdd-supply = <&vreg_panel_vddio>;
+		avdd-supply = <&vreg_l28a_3p3>;
+		touchscreen-size-x = <1080>;
+		touchscreen-size-y = <2248>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&dipper_fts5_irq &dipper_fts5_reset>;
+		status = "disabled";
+	};
 };
 
 &tlmm {
 	gpio-reserved-ranges = < 0 4>, /* SPI (Goodix Fingerprint) */
 			       <81 4>; /* SPI (Synaptics Fingerprint) */
+
+	dipper_fts5_irq: dipper-fts5-irq-state {
+		pins = "gpio31";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-pull-up;
+		output-disable;
+	};
+
+	dipper_fts5_reset: dipper-fts5-reset-state {
+		pins = "gpio32";
+		function = "gpio";
+		drive-strength = <16>;
+		output-high;
+	};
 };
 
 &ufs_mem_hc {
