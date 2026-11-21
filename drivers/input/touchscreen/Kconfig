@@ -1319,13 +1319,13 @@ config TOUCHSCREEN_SURFACE3_SPI
 	  module will be called surface3_spi.
 
 config TOUCHSCREEN_FOCALTECH_FT3658
-	tristate "FocalTech FT3658 SPI touchscreen"
+	tristate "FocalTech FT3658/FT8756 SPI touchscreen"
 	depends on SPI
 	depends on GPIOLIB || COMPILE_TEST
 	select CRC_CCITT
 	help
-	  Say Y here if you have a FocalTech FT3658 touchscreen controller
-	  on SPI, such as the one in the Google Pixel 7.
+	  Say Y here if you have a FocalTech FT3658 or FT8756 touchscreen
+	  controller on SPI, such as the one in the Google Pixel 7.
 
 	  If unsure, say N.
 
