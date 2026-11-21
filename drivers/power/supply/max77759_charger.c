@@ -786,6 +786,14 @@ static void max_tcpci_unregister_psy_notifier(void *nb)
  * Without a Type-C port controller nothing ever reports a source, so start
  * charging at the default input current limit right away, as the
  * bootloader left it (CHG_BUCK_ON).
+ *
+ * Nothing here learns what the source can give, so let the charger raise
+ * its input current from what the source advertises: clear NO_AUTOIBUS.
+ * Something before us can leave it set (it was, at a boot from a flat
+ * battery), and then the input stays at the default limit, which a phone
+ * in use draws in full, so the battery gains nothing on the cable. If the
+ * write fails, carry on at the default limit rather than fail the probe
+ * and lose the temperature guard.
  */
 static int max77759_charger_start_default(struct max77759_charger *chg)
 {
@@ -794,6 +802,11 @@ static int max77759_charger_start_default(struct max77759_charger *chg)
 	ret = set_input_current_limit(chg, default_ilim_ua);
 	if (ret)
 		return ret;
+
+	ret = regmap_update_bits(chg->regmap, MAX77759_CHGR_REG_CHG_CNFG_09,
+				 MAX77759_CHGR_REG_CHG_CNFG_09_NO_AUTOIBUS, 0);
+	if (ret)
+		dev_warn(chg->dev, "Failed to clear NO_AUTOIBUS, ret=%d\n", ret);
 
 	return charger_set_mode(chg, MAX77759_CHGR_MODE_CHG_BUCK_ON);
 }
@@ -985,13 +998,16 @@ static void max77759_charger_log_state(struct max77759_charger *chg,
 	int fv = get_float_voltage(chg);
 	int cc = get_fast_charge_current(chg);
 	int ilim = get_input_current_limit(chg);
-	u32 cnfg_00 = 0;
+	u32 cnfg_00 = 0, cnfg_09 = 0;
 
 	regmap_read(chg->regmap, MAX77759_CHGR_REG_CHG_CNFG_00, &cnfg_00);
+	regmap_read(chg->regmap, MAX77759_CHGR_REG_CHG_CNFG_09, &cnfg_09);
 	dev_info(chg->dev,
-		 "%s: mode %#lx, float voltage %d mV, fast charge %d uA, input limit %d uA\n",
+		 "%s: mode %#lx, float voltage %d mV, fast charge %d uA, input limit %d uA%s\n",
 		 when, FIELD_GET(MAX77759_CHGR_REG_CHG_CNFG_00_MODE, cnfg_00),
-		 fv, cc, ilim);
+		 fv, cc, ilim,
+		 cnfg_09 & MAX77759_CHGR_REG_CHG_CNFG_09_NO_AUTOIBUS ?
+		 " (NO_AUTOIBUS set)" : "");
 }
 
 static int max77759_charger_probe(struct platform_device *pdev)

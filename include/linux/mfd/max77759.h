@@ -104,6 +104,7 @@
 #define MAX77759_CHGR_REG_CHG_CNFG_08                  0xc1
 #define MAX77759_CHGR_REG_CHG_CNFG_09                  0xc2
 #define   MAX77759_CHGR_REG_CHG_CNFG_09_CHGIN_ILIM     GENMASK(6, 0)
+#define   MAX77759_CHGR_REG_CHG_CNFG_09_NO_AUTOIBUS    BIT(7)
 #define MAX77759_CHGR_REG_CHG_CNFG_10                  0xc3
 #define MAX77759_CHGR_REG_CHG_CNFG_11                  0xc4
 #define MAX77759_CHGR_REG_CHG_CNFG_12                  0xc5
