@@ -17,6 +17,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/mod_devicetable.h>
+#include <linux/mutex.h>
 #include <linux/regulator/consumer.h>
 
 #include <video/mipi_display.h>
@@ -43,6 +44,10 @@ struct s6e3fc3 {
 	struct gpio_desc *reset_gpio;
 	struct regulator_bulk_data *supplies;
 	struct drm_dsc_config dsc;
+	/* keeps multi-command sequences (0xb0 offsets) from interleaving */
+	struct mutex lock;
+	/* out of reset and sleep: commands reach the panel */
+	bool prepared;
 	bool display_off;
 };
 
@@ -182,6 +187,7 @@ static int s6e3fc3_prepare(struct drm_panel *panel)
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 	int ret;
 
+	guard(mutex)(&ctx->lock);
 	ret = regulator_bulk_enable(ARRAY_SIZE(s6e3fc3_supplies), ctx->supplies);
 	if (ret < 0)
 		return ret;
@@ -198,9 +204,14 @@ static int s6e3fc3_prepare(struct drm_panel *panel)
 	if (dsi_ctx.accum_err) {
 		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
 		regulator_bulk_disable(ARRAY_SIZE(s6e3fc3_supplies), ctx->supplies);
+		return dsi_ctx.accum_err;
 	}
 
-	return dsi_ctx.accum_err;
+	/* the reset left the display off; display on comes with enable */
+	ctx->prepared = true;
+	ctx->display_off = true;
+
+	return 0;
 }
 
 static int s6e3fc3_enable(struct drm_panel *panel)
@@ -208,6 +219,7 @@ static int s6e3fc3_enable(struct drm_panel *panel)
 	struct s6e3fc3 *ctx = to_s6e3fc3(panel);
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 
+	guard(mutex)(&ctx->lock);
 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
 	if (!dsi_ctx.accum_err)
 		ctx->display_off = false;
@@ -220,6 +232,7 @@ static int s6e3fc3_disable(struct drm_panel *panel)
 	struct s6e3fc3 *ctx = to_s6e3fc3(panel);
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 
+	guard(mutex)(&ctx->lock);
 	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
 	if (!dsi_ctx.accum_err)
 		ctx->display_off = true;
@@ -232,10 +245,13 @@ static int s6e3fc3_unprepare(struct drm_panel *panel)
 	struct s6e3fc3 *ctx = to_s6e3fc3(panel);
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 
+	guard(mutex)(&ctx->lock);
 	/* the vendor off set: display off, then sleep in and 120 ms */
 	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
 	mipi_dsi_msleep(&dsi_ctx, 120);
 
+	/* the panel loses its registers: only prepare() brings it back */
+	ctx->prepared = false;
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
 	regulator_bulk_disable(ARRAY_SIZE(s6e3fc3_supplies), ctx->supplies);
 
@@ -283,6 +299,14 @@ static int s6e3fc3_bl_update_status(struct backlight_device *bl)
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 	u16 brightness = backlight_get_brightness(bl);
 
+	guard(mutex)(&ctx->lock);
+	/*
+	 * In reset or asleep: keep the new state, enable() applies it
+	 * through backlight_enable().
+	 */
+	if (!ctx->prepared)
+		return 0;
+
 	if (backlight_is_blank(bl)) {
 		if (!ctx->display_off) {
 			mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
@@ -328,6 +352,10 @@ static int s6e3fc3_probe(struct mipi_dsi_device *dsi)
 	if (IS_ERR(ctx))
 		return PTR_ERR(ctx);
 
+	ret = devm_mutex_init(dev, &ctx->lock);
+	if (ret)
+		return ret;
+
 	ret = devm_regulator_bulk_get_const(dev, ARRAY_SIZE(s6e3fc3_supplies),
 					    s6e3fc3_supplies, &ctx->supplies);
 	if (ret < 0)
@@ -354,6 +382,13 @@ static int s6e3fc3_probe(struct mipi_dsi_device *dsi)
 		if (ret < 0)
 			return dev_err_probe(dev, ret, "failed to enable regulators\n");
 		ret = gpiod_direction_output(ctx->reset_gpio, 0);
+		/*
+		 * The bootloader left it prepared and enabled: let a display
+		 * driver's drm_panel_disable()/unprepare() reach it.
+		 */
+		ctx->prepared = true;
+		ctx->panel.prepared = true;
+		ctx->panel.enabled = true;
 	} else {
 		ret = gpiod_direction_output(ctx->reset_gpio, 1);
 	}
