@@ -1592,6 +1592,18 @@ config GPIO_MAX77650
 	  GPIO driver for MAX77650/77651 PMIC from Maxim Semiconductor.
 	  These chips have a single pin that can be configured as GPIO.
 
+config GPIO_MAX77779
+	tristate "Maxim Integrated MAX77779 PMIC SGPIO support"
+	depends on I2C
+	select REGMAP_I2C
+	select GPIOLIB_IRQCHIP
+	help
+	  GPIO driver for the SGPIO block of the MAX77779 interface PMIC from
+	  Maxim Integrated (Google Pixel 9a). The eight pins can generate
+	  interrupts; the board's charger side signals sit on them.
+
+	  Say M to build it as a module, called gpio-max77779.
+
 config GPIO_MAX77759
 	tristate "Maxim Integrated MAX77759 GPIO support"
 	depends on MFD_MAX77759

@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/gpio/maxim,max77779-pmic.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Maxim Integrated MAX77779 PMIC block (SGPIO)
+
+maintainers:
+  - W4HO <87742609+W4HO-ham@users.noreply.github.com>
+
+description: |
+  The MAX77779 interface PMIC is a set of I2C blocks on one chip: the
+  charger (maxim,max77779-charger), the fuel gauge (maxim,max77779-fg), the
+  Type-C port controller (maxim,max77779-tcpc) and the PMIC block, which
+  owns the chip's interrupt line and eight SGPIO pins with interrupt
+  support. This binding describes the PMIC block.
+
+properties:
+  compatible:
+    const: maxim,max77779-pmic
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+    description: The chip's interrupt line (INTB), active low.
+
+  "#gpio-cells":
+    const: 2
+
+  gpio-controller: true
+
+  gpio-line-names:
+    minItems: 1
+    maxItems: 8
+
+  "#interrupt-cells":
+    const: 2
+
+  interrupt-controller: true
+
+required:
+  - compatible
+  - reg
+  - "#gpio-cells"
+  - gpio-controller
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/interrupt-controller/irq.h>
+
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        pmic@66 {
+            compatible = "maxim,max77779-pmic";
+            reg = <0x66>;
+            interrupt-parent = <&gpa8>;
+            interrupts = <0 IRQ_TYPE_LEVEL_LOW>;
+            gpio-controller;
+            #gpio-cells = <2>;
+            interrupt-controller;
+            #interrupt-cells = <2>;
+        };
+    };
