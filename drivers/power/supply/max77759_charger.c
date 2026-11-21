@@ -43,6 +43,9 @@ MODULE_PARM_DESC(default_ilim_ua,
  * Battery temperature guard: the step-charging policy of the stock phone
  * (Google's google,battery node on gs201 phones: chg-temp-limits,
  * chg-cv-limits, chg-cc-limits). Off by default.
+ *
+ * The temperature bands are the same on every board; the voltage tiers and
+ * the currents come from a table per board, see guard_select_table().
  */
 static bool temp_guard;
 module_param(temp_guard, bool, 0644);
@@ -57,24 +60,57 @@ MODULE_PARM_DESC(guard_psy, "Battery power supply whose temp and voltage_now the
 #define GUARD_RETRY_MS			2000	/* while there is no reading */
 #define GUARD_HYST_DECIC		20	/* 2.0 C into a band before relaxing */
 #define GUARD_NBANDS			6
-#define GUARD_NTIERS			3
+#define GUARD_MAX_TIERS			4
 
 /* Band i is [guard_temp_decic[i], guard_temp_decic[i + 1]), in 0.1 C */
 static const int guard_temp_decic[GUARD_NBANDS + 1] = {
 	0, 100, 200, 420, 460, 480, 550
 };
 
-/* Tier j charges up to guard_cv_mv[j] */
-static const u32 guard_cv_mv[GUARD_NTIERS] = { 4200, 4300, 4450 };
+/**
+ * struct guard_table - step-charging table of one battery
+ * @ntiers: number of voltage tiers in use, at most GUARD_MAX_TIERS
+ * @cv_mv: tier j charges up to cv_mv[j]
+ * @cc_pct: charge current per band and tier, in percent of the design
+ *	    capacity; 0 means the band does not charge in that tier
+ */
+struct guard_table {
+	int ntiers;
+	u32 cv_mv[GUARD_MAX_TIERS];
+	u8 cc_pct[GUARD_NBANDS][GUARD_MAX_TIERS];
+};
 
-/* Charge current per band and tier, in percent of the design capacity */
-static const u8 guard_cc_pct[GUARD_NBANDS][GUARD_NTIERS] = {
-	{  30, 10,  0 },	/*  0-10 C */
-	{  50, 30, 30 },	/* 10-20 C */
-	{ 100, 70, 50 },	/* 20-42 C */
-	{  80, 50, 50 },	/* 42-46 C */
-	{  50, 50,  0 },	/* 46-48 C */
-	{  30,  0,  0 },	/* 48-55 C */
+/* Google's gs201 table, for every board without a table of its own */
+static const struct guard_table guard_table_default = {
+	.ntiers = 3,
+	.cv_mv = { 4200, 4300, 4450 },
+	.cc_pct = {
+		{  30, 10,  0 },	/*  0-10 C */
+		{  50, 30, 30 },	/* 10-20 C */
+		{ 100, 70, 50 },	/* 20-42 C */
+		{  80, 50, 50 },	/* 42-46 C */
+		{  50, 50,  0 },	/* 46-48 C */
+		{  30,  0,  0 },	/* 48-55 C */
+	},
+};
+
+/*
+ * Pixel 8 Pro (husky): the google,battery node in Google's
+ * kernel/devices/google/shusky, branch android-gs-shusky-6.1-android16:
+ * temperature and voltage limits from dts/zuma-shusky-battery.dtsi,
+ * the 4950 mAh and the six rows from dts/zuma-husky-battery.dtsi.
+ */
+static const struct guard_table guard_table_husky = {
+	.ntiers = 4,
+	.cv_mv = { 4200, 4300, 4350, 4480 },
+	.cc_pct = {
+		{  50,  30,   0,  0 },	/*  0-10 C */
+		{  70,  30,  30, 30 },	/* 10-20 C */
+		{ 120, 120, 120, 50 },	/* 20-42 C */
+		{ 100, 100, 100, 50 },	/* 42-46 C */
+		{  50,  50,   0,  0 },	/* 46-48 C */
+		{  30,   0,   0,  0 },	/* 48-55 C */
+	},
 };
 
 #define FOREACH_IRQ(S)			\
@@ -139,6 +175,7 @@ struct max77759_charger {
 	int guard_band;		/* -1: charging inhibited */
 	bool guard_no_reading;	/* inhibited for want of a reading */
 	int guard_tier;
+	const struct guard_table *guard_table;
 	u32 fv_max_mv;		/* limits from the battery description */
 	u32 cc_max_ua;
 	u32 design_uah;
@@ -826,22 +863,22 @@ static int guard_classify(int decic)
 }
 
 /* Charging allowed in a band, for comparing how restrictive two bands are */
-static unsigned int guard_band_score(int band)
+static unsigned int guard_band_score(const struct guard_table *tbl, int band)
 {
-	return band < 0 ? 0 : guard_cc_pct[band][0];
+	return band < 0 ? 0 : tbl->cc_pct[band][0];
 }
 
 /*
  * Move to a more restrictive band at once; to a less restrictive one only
  * when the temperature is GUARD_HYST_DECIC inside it on both sides.
  */
-static int guard_next_band(int cur, int decic)
+static int guard_next_band(const struct guard_table *tbl, int cur, int decic)
 {
 	int band = guard_classify(decic);
 
 	/* First reading (cur -2): take it as it is */
 	if (cur < -1 || band == cur ||
-	    guard_band_score(band) < guard_band_score(cur))
+	    guard_band_score(tbl, band) < guard_band_score(tbl, cur))
 		return band;
 	if (guard_classify(decic - GUARD_HYST_DECIC) == band &&
 	    guard_classify(decic + GUARD_HYST_DECIC) == band)
@@ -850,14 +887,49 @@ static int guard_next_band(int cur, int decic)
 }
 
 /* Highest tier of a band that may charge at all */
-static int guard_top_tier(int band)
+static int guard_top_tier(const struct guard_table *tbl, int band)
 {
 	int t;
 
-	for (t = GUARD_NTIERS - 1; t > 0; t--)
-		if (guard_cc_pct[band][t])
+	for (t = tbl->ntiers - 1; t > 0; t--)
+		if (tbl->cc_pct[band][t])
 			break;
 	return t;
+}
+
+/*
+ * Tiers only rise within a band, as the voltage does while charging: from
+ * @tier, step up past every tier whose voltage the battery has reached, up
+ * to the highest tier the band charges in.
+ */
+static int guard_next_tier(const struct guard_table *tbl, int band, int tier,
+			   int uv)
+{
+	while (tier < tbl->ntiers - 1 && uv >= tbl->cv_mv[tier] * 1000)
+		tier++;
+	return min(tier, guard_top_tier(tbl, band));
+}
+
+/*
+ * Float voltage and charge current for a band and tier, both capped by the
+ * limits from the battery description.
+ */
+static void guard_limits(const struct guard_table *tbl, int band, int tier,
+			 u32 design_uah, u32 fv_max_mv, u32 cc_max_ua,
+			 u32 *fv_mv, u32 *cc_ua)
+{
+	u32 cc;
+
+	cc = div_u64((u64)design_uah * tbl->cc_pct[band][tier], 100);
+	*fv_mv = min(tbl->cv_mv[guard_top_tier(tbl, band)], fv_max_mv);
+	*cc_ua = min(cc, cc_max_ua);
+}
+
+static const struct guard_table *guard_select_table(void)
+{
+	if (of_machine_is_compatible("google,zuma-husky"))
+		return &guard_table_husky;
+	return &guard_table_default;
 }
 
 static int guard_read(int *decic, int *uv)
@@ -908,6 +980,7 @@ static void guard_work_item(struct work_struct *work)
 {
 	struct max77759_charger *chg =
 		container_of(work, struct max77759_charger, guard_work.work);
+	const struct guard_table *tbl = chg->guard_table;
 	int decic = 0, uv = 0, band, tier;
 	unsigned int next_ms = GUARD_PERIOD_MS;
 	bool read_ok;
@@ -935,7 +1008,7 @@ static void guard_work_item(struct work_struct *work)
 	WRITE_ONCE(chg->guard_no_reading, !read_ok);
 	if (!read_ok)
 		next_ms = GUARD_RETRY_MS;
-	band = read_ok ? guard_next_band(chg->guard_band, decic) : -1;
+	band = read_ok ? guard_next_band(tbl, chg->guard_band, decic) : -1;
 
 	if (band < 0) {
 		if (chg->guard_band != -1 && !read_ok)
@@ -950,17 +1023,12 @@ static void guard_work_item(struct work_struct *work)
 		goto out;
 	}
 
-	/* Tiers only rise within a band, as the voltage does while charging */
+	/* A new band starts again from the lowest tier */
 	if (band != chg->guard_band)
 		chg->guard_tier = 0;
-	tier = chg->guard_tier;
-	while (tier < GUARD_NTIERS - 1 && uv >= guard_cv_mv[tier] * 1000)
-		tier++;
-	tier = min(tier, guard_top_tier(band));
-
-	fv = min(guard_cv_mv[guard_top_tier(band)], chg->fv_max_mv);
-	cc = div_u64((u64)chg->design_uah * guard_cc_pct[band][tier], 100);
-	cc = min(cc, chg->cc_max_ua);
+	tier = guard_next_tier(tbl, band, chg->guard_tier, uv);
+	guard_limits(tbl, band, tier, chg->design_uah, chg->fv_max_mv,
+		     chg->cc_max_ua, &fv, &cc);
 
 	if (band != chg->guard_band || tier != chg->guard_tier)
 		dev_info(chg->dev,
@@ -1074,6 +1142,7 @@ static int max77759_charger_probe(struct platform_device *pdev)
 	 * unregisters the notifier before it cancels the work.
 	 */
 	chg->guard_band = -2;
+	chg->guard_table = guard_select_table();
 	ret = devm_delayed_work_autocancel(dev, &chg->guard_work, guard_work_item);
 	if (ret)
 		return dev_err_probe(dev, ret, "Failed to initialize guard work\n");
@@ -1119,6 +1188,10 @@ static struct platform_driver max77759_charger_driver = {
 	.id_table = max77759_charger_id,
 };
 module_platform_driver(max77759_charger_driver);
+
+#if IS_ENABLED(CONFIG_CHARGER_MAX77759_KUNIT_TEST)
+#include "max77759_charger_test.c"
+#endif
 
 MODULE_AUTHOR("Amit Sunil Dhamne <amitsd@google.com>");
 MODULE_DESCRIPTION("Maxim MAX77759 charger driver");
