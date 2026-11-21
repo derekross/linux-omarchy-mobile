@@ -1,0 +1,265 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Google Pixel 9 Pro Fold (comet): CPU levels and thermal trips.
+ *
+ * The CPU levels and per-core power are comet's own ACPM table, as stock's
+ * exynos_acme and cpu_cooling log them at boot; ACPM owns voltage selection.
+ * Levels above the ceilings that ran on comet (1328/1549/1745 MHz) are
+ * turbo-mode, so cpufreq-dt offers them only with boost on. The tables stop
+ * at stock's brownout limits, 1696/1795/1999 MHz: higher levels need a
+ * working brownout throttle first.
+ */
+
+#include <dt-bindings/thermal/thermal.h>
+
+&cpucl0_opp {
+	/delete-node/ opp-1849000000;
+	/delete-node/ opp-1950000000;
+	/delete-node/ opp-324000000;
+	/delete-node/ opp-610000000;
+
+	opp-820000000 {
+		opp-hz = /bits/ 64 <820000000>;
+		opp-microwatt = <18000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-955000000 {
+		opp-hz = /bits/ 64 <955000000>;
+		opp-microwatt = <23000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-1098000000 {
+		opp-hz = /bits/ 64 <1098000000>;
+		opp-microwatt = <28000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-1197000000 {
+		opp-hz = /bits/ 64 <1197000000>;
+		opp-microwatt = <32000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-1328000000 {
+		opp-hz = /bits/ 64 <1328000000>;
+		opp-microwatt = <39000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-1425000000 {
+		opp-hz = /bits/ 64 <1425000000>;
+		opp-microwatt = <44000>;
+		clock-latency-ns = <500000>;
+		turbo-mode;
+	};
+
+	opp-1548000000 {
+		opp-hz = /bits/ 64 <1548000000>;
+		opp-microwatt = <52000>;
+		clock-latency-ns = <500000>;
+		turbo-mode;
+	};
+
+	opp-1696000000 {
+		opp-hz = /bits/ 64 <1696000000>;
+		opp-microwatt = <61000>;
+		clock-latency-ns = <500000>;
+		turbo-mode;
+	};
+};
+
+&cpucl1_opp {
+	/delete-node/ opp-1945000000;
+	/delete-node/ opp-2130000000;
+	/delete-node/ opp-2245000000;
+	/delete-node/ opp-2367000000;
+
+	opp-357000000 {
+		opp-hz = /bits/ 64 <357000000>;
+		opp-microwatt = <46000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-578000000 {
+		opp-hz = /bits/ 64 <578000000>;
+		opp-microwatt = <85000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-648000000 {
+		opp-hz = /bits/ 64 <648000000>;
+		opp-microwatt = <98000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-787000000 {
+		opp-hz = /bits/ 64 <787000000>;
+		opp-microwatt = <124000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-910000000 {
+		opp-hz = /bits/ 64 <910000000>;
+		opp-microwatt = <150000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-1065000000 {
+		opp-hz = /bits/ 64 <1065000000>;
+		opp-microwatt = <188000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-1221000000 {
+		opp-hz = /bits/ 64 <1221000000>;
+		opp-microwatt = <234000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-1328000000 {
+		opp-hz = /bits/ 64 <1328000000>;
+		opp-microwatt = <271000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-1418000000 {
+		opp-hz = /bits/ 64 <1418000000>;
+		opp-microwatt = <300000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-1549000000 {
+		opp-hz = /bits/ 64 <1549000000>;
+		opp-microwatt = <362000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-1795000000 {
+		opp-hz = /bits/ 64 <1795000000>;
+		opp-microwatt = <492000>;
+		clock-latency-ns = <500000>;
+		turbo-mode;
+	};
+};
+
+&cpucl2_opp {
+	/delete-node/ opp-2147000000;
+	/delete-node/ opp-2294000000;
+	/delete-node/ opp-2363000000;
+	/delete-node/ opp-2499000000;
+	/delete-node/ opp-2687000000;
+
+	opp-700000000 {
+		opp-hz = /bits/ 64 <700000000>;
+		opp-microwatt = <170000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-1164000000 {
+		opp-hz = /bits/ 64 <1164000000>;
+		opp-microwatt = <330000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-1396000000 {
+		opp-hz = /bits/ 64 <1396000000>;
+		opp-microwatt = <446000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-1557000000 {
+		opp-hz = /bits/ 64 <1557000000>;
+		opp-microwatt = <537000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-1745000000 {
+		opp-hz = /bits/ 64 <1745000000>;
+		opp-microwatt = <669000>;
+		clock-latency-ns = <500000>;
+	};
+
+	opp-1885000000 {
+		opp-hz = /bits/ 64 <1885000000>;
+		opp-microwatt = <775000>;
+		clock-latency-ns = <500000>;
+		turbo-mode;
+	};
+
+	opp-1999000000 {
+		opp-hz = /bits/ 64 <1999000000>;
+		opp-microwatt = <864000>;
+		clock-latency-ns = <500000>;
+		turbo-mode;
+	};
+};
+
+&{/thermal-zones/big-thermal/cooling-maps/map1} {
+	cooling-device = <&cpu7 6 THERMAL_NO_LIMIT>;
+};
+
+&{/thermal-zones/mid-thermal/cooling-maps/map1} {
+	cooling-device = <&cpu4 10 THERMAL_NO_LIMIT>;
+};
+
+&{/thermal-zones/little-thermal/cooling-maps/map1} {
+	cooling-device = <&cpu0 7 THERMAL_NO_LIMIT>;
+};
+
+/*
+ * Comet's trips, lower than the SoC defaults: step-wise cooling from 60 C,
+ * the clusters' force-down trip at 65 C and the critical trip at 85 C, with
+ * the GPU zone polled as the CPU zones are. These are the values the phone
+ * runs; stock's trips are higher but come with its own skin-temperature
+ * policy, which Linux doesn't have.
+ */
+&big_alert {
+	temperature = <60000>;
+};
+
+&big_hot {
+	temperature = <65000>;
+};
+
+&big_crit {
+	temperature = <85000>;
+};
+
+&mid_alert {
+	temperature = <60000>;
+};
+
+&mid_hot {
+	temperature = <65000>;
+};
+
+&mid_crit {
+	temperature = <85000>;
+};
+
+&little_alert {
+	temperature = <60000>;
+};
+
+&little_hot {
+	temperature = <65000>;
+};
+
+&little_crit {
+	temperature = <85000>;
+};
+
+&gpu_alert {
+	temperature = <60000>;
+};
+
+&gpu_crit {
+	temperature = <85000>;
+};
+
+&{/thermal-zones/gpu-thermal} {
+	polling-delay-passive = <250>;
+	polling-delay = <1000>;
+};
