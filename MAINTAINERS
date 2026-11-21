@@ -11184,6 +11184,7 @@ F:	Documentation/devicetree/bindings/phy/google,zuma-pcie-phy.yaml
 F:	Documentation/devicetree/bindings/soc/google/google,gs101-dtzpc.yaml
 F:	Documentation/devicetree/bindings/soc/google/google,gs101-pmu.yaml
 F:	Documentation/devicetree/bindings/soc/google/google,gs101-pmu-intr-gen.yaml
+F:	Documentation/devicetree/bindings/soc/google/google,gs201-bcl.yaml
 F:	Documentation/devicetree/bindings/usb/google,lga-dwc3.yaml
 F:	arch/arm64/boot/dts/exynos/google/
 F:	drivers/clk/samsung/clk-gs101.c
@@ -11192,6 +11193,7 @@ F:	drivers/clk/samsung/clk-zuma.c
 F:	drivers/clk/samsung/clk-zumapro.c
 F:	drivers/phy/phy-google-usb.c
 F:	drivers/soc/samsung/gs101-pmu.c
+F:	drivers/soc/samsung/gs201-bcl.c
 F:	drivers/phy/samsung/phy-gs101-ufs.c
 F:	drivers/phy/samsung/phy-zuma-pcie.c
 F:	drivers/phy/samsung/phy-zumapro-ufs.c

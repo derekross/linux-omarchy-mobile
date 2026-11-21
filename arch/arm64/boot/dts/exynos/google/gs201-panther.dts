@@ -27,6 +27,22 @@
 	 */
 	soc_id = <0x09855001 0x0>;
 
+	/*
+	 * The battery current limiter's lines, as Google's
+	 * gs201-cloudripper-bcl.dtsi: the MAX77759's vdroop1 (SYS_UVLO1) and
+	 * vdroop2 (SYS_UVLO2 or BAT_OILO) on gpa5-5/6, the S2MPG12's
+	 * SMPL_WARN on gpa5-0. Disabled until it has probed from this node on
+	 * the phone; an overlay turns it on for that test.
+	 */
+	battery-current-limiter {
+		compatible = "google,gs201-bcl";
+		smpl-warn-gpios = <&gpa5 0 GPIO_ACTIVE_LOW>;
+		vdroop1-gpios = <&gpa5 5 GPIO_ACTIVE_HIGH>;
+		vdroop2-gpios = <&gpa5 6 GPIO_ACTIVE_HIGH>;
+		google,gpu = <&gpu>;
+		status = "disabled";
+	};
+
 	chosen {
 		/* ABL requires bootargs to exist; it appends its own after these. */
 		bootargs = "console=tty0 panic=10 reboot=warm clk_ignore_unused pd_ignore_unused rdinit=/init omamobile.ufs-probe mem_sleep_default=s2idle";

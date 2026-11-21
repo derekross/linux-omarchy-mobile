@@ -72,6 +72,20 @@ config SAMSUNG_PM_CHECK_CHUNKSIZE
 	  the CRC data block will take more memory, but will identify any
 	  faults with better precision.
 
+config GS201_BCL
+	tristate "Google Tensor G2 battery current limiter"
+	depends on ARCH_EXYNOS || COMPILE_TEST
+	depends on CPU_FREQ && GPIOLIB
+	help
+	  Caps the CPU clusters and the GPU of Google Tensor G2 (gs201)
+	  phones while the MAX77759 or the S2MPG12 report a battery
+	  voltage droop or over-current, and lifts the caps when it ends,
+	  so a load peak doesn't take the battery under the level where
+	  the phone shuts down.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called gs201-bcl.
+
 config EXYNOS_REGULATOR_COUPLER
 	bool "Exynos SoC Regulator Coupler" if COMPILE_TEST
 	depends on ARCH_EXYNOS || COMPILE_TEST
