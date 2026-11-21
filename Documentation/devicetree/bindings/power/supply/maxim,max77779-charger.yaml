@@ -32,6 +32,25 @@ properties:
     description: The charger's interrupt, through the PMIC's interrupt
       controller.
 
+  otg-boost-supply:
+    description: An external boost that supplies VBUS to a device on the
+      USB port. For host mode the charger is put in standby and this
+      supply is enabled.
+
+  chgin-otg-regulator:
+    type: object
+    $ref: /schemas/regulator/regulator.yaml#
+    unevaluatedProperties: false
+    description: VBUS out of the charger's input (CHGIN) for a device on
+      the USB port, the supply of the Type-C controller's vbus. Only the
+      Type-C controller turns it on, after it has seen VBUS at vSafe0V.
+    properties:
+      regulator-always-on: false
+      regulator-boot-on: false
+
+dependentRequired:
+  chgin-otg-regulator: [ otg-boost-supply ]
+
 required:
   - compatible
   - reg
@@ -47,6 +66,11 @@ examples:
         charger: charger@69 {
             compatible = "maxim,max77779-charger";
             reg = <0x69>;
+            otg-boost-supply = <&otg_boost>;
+
+            chgin-otg-regulator {
+                regulator-name = "chgin-otg";
+            };
         };
 
         fuel-gauge@36 {
