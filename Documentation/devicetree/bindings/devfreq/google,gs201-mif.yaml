@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/devfreq/google,gs201-mif.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Google gs201 memory interface (MIF) frequency scaling
+
+maintainers:
+  - Ángel René <17342133+angelrenefm@users.noreply.github.com>
+
+description:
+  The memory interface (MIF) of the gs201 SoC, the DRAM controllers and
+  their PHYs, is clocked by a DVFS domain of the ACPM firmware. Its rate is
+  chosen from the activity of the bus masters that use most bandwidth, the
+  CPU clusters and the GPU, among the operating points listed.
+
+properties:
+  compatible:
+    const: google,gs201-mif
+
+  clocks:
+    minItems: 1
+    items:
+      - description: MIF DVFS domain clock
+      - description: GPU shader clock
+
+  clock-names:
+    minItems: 1
+    items:
+      - const: mif
+      - const: gpu
+
+  operating-points-v2: true
+
+  google,gpu:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description:
+      The GPU node. The GPU only asks for MIF bandwidth while it is powered.
+
+required:
+  - compatible
+  - clocks
+  - clock-names
+  - operating-points-v2
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/clock/google,gs201-acpm.h>
+
+    memory-controller {
+        compatible = "google,gs201-mif";
+        clocks = <&acpm_ipc GS201_CLK_ACPM_DVFS_MIF>,
+                 <&acpm_ipc GS201_CLK_ACPM_GPU>;
+        clock-names = "mif", "gpu";
+        operating-points-v2 = <&mif_opp_table>;
+        google,gpu = <&gpu>;
+    };

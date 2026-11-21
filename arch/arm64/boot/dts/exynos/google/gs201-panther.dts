@@ -298,6 +298,10 @@
 	memory-region = <&mfc_pool>;
 };
 
+&mif {
+	status = "okay";
+};
+
 &usbdrd31_phy {
 	status = "okay";
 };
