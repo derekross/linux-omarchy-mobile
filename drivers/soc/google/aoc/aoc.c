@@ -42,6 +42,7 @@
 #include <linux/mutex.h>
 #include <linux/soc/google/gs201-aoc-sysmmu.h>
 #include <linux/soc/google/gsa.h>
+#include <linux/soc/google/gs201-aoc.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 
@@ -65,6 +66,16 @@ DEFINE_MUTEX(aoc_service_lock);
 enum AOC_FW_STATE aoc_state;
 
 struct platform_device *aoc_platform_device;
+
+bool gs201_aoc_firmware_online(const struct device_node *np)
+{
+	struct platform_device *pdev = READ_ONCE(aoc_platform_device);
+
+	/* No MMIO or access to the protected firmware carve-out. */
+	return pdev && pdev->dev.of_node == np &&
+		READ_ONCE(aoc_state) == AOC_STATE_ONLINE;
+}
+EXPORT_SYMBOL_GPL(gs201_aoc_firmware_online);
 
 /* TODO: Reduce the global variables (move into a driver structure) */
 /* Resources found from the device tree */
@@ -2751,8 +2762,7 @@ static int aoc_platform_probe(struct platform_device *pdev)
 
 	rc = find_gsa_device(prvdata);
 	if (rc) {
-		dev_err(dev, "Failed to initialize gsa device: %d\n", rc);
-		rc = -EINVAL;
+		dev_err_probe(dev, rc, "failed to initialize GSA device\n");
 		goto err_failed_prvdata_alloc;
 	}
 
@@ -2838,10 +2848,15 @@ static int aoc_platform_probe(struct platform_device *pdev)
 			goto err_watchdog_iommu_irq;
 		}
 	}
-	prvdata->chipid_virt =
-		devm_platform_ioremap_resource_byname(pdev, "chipid");
-	if (IS_ERR(prvdata->chipid_virt)) {
-		rc = PTR_ERR(prvdata->chipid_virt);
+	/* exynos-chipid owns this read-only range; do not claim it again. */
+	rsrc = platform_get_resource_byname(pdev, IORESOURCE_MEM, "chipid");
+	if (!rsrc) {
+		rc = -EINVAL;
+		goto err_watchdog_iommu_irq;
+	}
+	prvdata->chipid_virt = devm_ioremap(dev, rsrc->start, resource_size(rsrc));
+	if (!prvdata->chipid_virt) {
+		rc = -ENOMEM;
 		goto err_watchdog_iommu_irq;
 	}
 	aoc_chipid_virt = prvdata->chipid_virt;
