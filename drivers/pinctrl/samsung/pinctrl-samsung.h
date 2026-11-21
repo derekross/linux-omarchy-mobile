@@ -267,6 +267,7 @@ struct samsung_retention_data {
  * @pin_banks: list of pin banks included in this controller.
  * @nr_banks: number of pin banks.
  * @nr_ext_resources: number of the extra base address for pin banks.
+ * @has_get_direction: enable GPIO direction readback for this controller.
  * @retention_data: configuration data for retention control.
  * @eint_gpio_init: platform specific callback to setup the external gpio
  *	interrupts for the controller.
@@ -284,6 +285,7 @@ struct samsung_pin_ctrl {
 	const struct samsung_pin_bank_data *pin_banks;
 	unsigned int	nr_banks;
 	unsigned int	nr_ext_resources;
+	bool		has_get_direction;
 	const struct samsung_retention_data *retention_data;
 
 	int		(*eint_gpio_init)(struct samsung_pinctrl_drv_data *);
