@@ -107,6 +107,14 @@
 		google,vgpio2ap-sysreg = <&sysreg_vgpio2ap>;
 		wakeup-source;
 
+		/* No meter channels described: the MFD core leaves the meter out. */
+		power-meter {
+			compatible = "samsung,s2mpg12-meter";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
 		regulators {
 			ldo25m: ldo25m {
 				regulator-name = "vddio-ts";

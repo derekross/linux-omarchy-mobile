@@ -24401,11 +24401,14 @@ L:	linux-samsung-soc@vger.kernel.org
 S:	Maintained
 B:	mailto:linux-samsung-soc@vger.kernel.org
 F:	Documentation/devicetree/bindings/clock/samsung,s2mps11.yaml
+F:	Documentation/devicetree/bindings/hwmon/samsung,s2mpg12-meter.yaml
 F:	Documentation/devicetree/bindings/mfd/samsung,s2*.yaml
 F:	Documentation/devicetree/bindings/mfd/samsung,s5m*.yaml
 F:	Documentation/devicetree/bindings/regulator/samsung,s2m*.yaml
 F:	Documentation/devicetree/bindings/regulator/samsung,s5m*.yaml
+F:	Documentation/hwmon/s2mpg12-meter.rst
 F:	drivers/clk/clk-s2mps11.c
+F:	drivers/hwmon/s2mpg12-meter.c
 F:	drivers/mfd/sec*.[ch]
 F:	drivers/regulator/s2*.c
 F:	drivers/regulator/s5m*.c

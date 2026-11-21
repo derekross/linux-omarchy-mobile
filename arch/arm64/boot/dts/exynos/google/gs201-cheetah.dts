@@ -251,6 +251,14 @@
 		google,vgpio2ap-sysreg = <&sysreg_vgpio2ap>;
 		wakeup-source;
 		status = "disabled";
+
+		/* No meter channels described: the MFD core leaves the meter out. */
+		power-meter {
+			compatible = "samsung,s2mpg12-meter";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
 	};
 
 	/*
@@ -263,6 +271,14 @@
 	pmic-2 {
 		compatible = "samsung,s2mpg13-pmic";
 		status = "disabled";
+
+		/* No meter channels described: the MFD core leaves the meter out. */
+		power-meter {
+			compatible = "samsung,s2mpg13-meter";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
 
 		/*
 		 * GPIO0 wakes the camera PMIC (SLG51002 chip select), GPIO1

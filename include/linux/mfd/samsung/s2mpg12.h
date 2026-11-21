@@ -101,14 +101,22 @@ enum s2mpg12_pmic_reg {
  */
 #define S2MPG12_RTC_LAST		0x30
 
-/* Meter registers (type 0xa00), only those the core needs */
+/* Meter registers (type 0xa00), only those the drivers use */
 enum s2mpg12_meter_reg {
 	S2MPG12_METER_INT1,
 	S2MPG12_METER_INT2,
 	S2MPG12_METER_INT1M = 0x04,
 	S2MPG12_METER_INT2M,
+	S2MPG12_METER_CTRL1 = 0x08,
+	S2MPG12_METER_MUXSEL11 = 0x1c,
+	S2MPG12_METER_ACC_DATA_CH0_1 = 0x63,
+	S2MPG12_METER_ACC_COUNT_3 = 0xad,
 	S2MPG12_METER_LAST = 0xe5,
 };
+
+/* Meter trim register (type 0xe00) holding the meter's reset bit */
+#define S2MPG12_MT_TRIM_COMMON		0x29
+#define S2MPG12_MT_TRIM_METER_RST	BIT(7)
 
 /*
  * The PMIC signals its interrupts in-band (I3C IBI). The SoC turns them into
