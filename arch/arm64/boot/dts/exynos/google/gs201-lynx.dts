@@ -79,6 +79,15 @@
 		#size-cells = <1>;
 		ranges;
 
+		/* Match the stock WLAN allocation window for bench testing. */
+		wifi_dma_pool: wifi-dma-pool {
+			compatible = "restricted-dma-pool";
+			size = <0x2800000>;
+			alignment = <0x0 0x400000>;
+			alloc-ranges = <0x0 0x80000000 0x80000000>;
+			status = "disabled";
+		};
+
 		ramoops@fd3ff000 {
 			compatible = "ramoops";
 			reg = <0x0 0xfd3ff000 0x400000>;
@@ -200,7 +209,7 @@
 		regulator-always-on;
 	};
 
-	wcn6855-pmu {
+	lynx_wcn_pmu: wcn6855-pmu {
 		compatible = "qcom,wcn6855-pmu";
 		pinctrl-0 = <&bt_reg_on>;
 		pinctrl-names = "default";
@@ -269,6 +278,51 @@
 /* gph2 (the buck's GPIO) is on HSI2, disabled in gs201.dtsi. */
 &pinctrl_hsi2 {
 	status = "okay";
+
+	lynx_wlan_low: wlan-low-pins {
+		samsung,pins = "gph2-4";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-val = <0>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+};
+
+/* Bench only. Keep PCIe and its DMA pool disabled together. */
+&pcie_1 {
+	status = "disabled";
+	compatible = "google,gs201-lynx-pcie", "google,gs201-pcie";
+
+	pcie@0,0 {
+		compatible = "pciclass,0604";
+		device_type = "pci";
+		reg = <0 0 0 0 0>;
+		bus-range = <0x01 0xff>;
+		#address-cells = <3>;
+		#size-cells = <2>;
+		ranges;
+
+		wifi@0,0 {
+			compatible = "pci17cb,1103";
+			reg = <0x10000 0 0 0 0>;
+			/*
+			 * Bench only: MHI requests 512 KiB segments but this
+			 * pool allows 256 KiB per allocation. ath11k also
+			 * interprets memory-region as fixed firmware storage.
+			 */
+			memory-region = <&wifi_dma_pool>;
+			qcom,ath11k-calibration-variant = "google,gs201-lynx";
+			vddrfacmn-supply = <&vreg_pmu_rfa_cmn_0p8>;
+			vddaon-supply = <&vreg_pmu_aon_0p8>;
+			vddwlcx-supply = <&vreg_pmu_wlcx_0p8>;
+			vddwlmx-supply = <&vreg_pmu_wlmx_0p8>;
+			vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
+			vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
+			vddrfa1p8-supply = <&vreg_pmu_rfa_1p7>;
+			vddpcie0p9-supply = <&vreg_pmu_pcie_0p9>;
+			vddpcie1p8-supply = <&vreg_pmu_pcie_1p8>;
+		};
+	};
 };
 
 &pinctrl_peric0 {
