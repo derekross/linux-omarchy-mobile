@@ -1,0 +1,237 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/sound/google,aoc-snd-card.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Google Tensor AoC sound card
+
+maintainers:
+  - W4HO <87742609+W4HO-ham@users.noreply.github.com>
+
+description:
+  The sound card of the AoC, the audio and sensor DSP of Tensor SoCs. Its
+  front ends are the AoC's entry points (the PCM device number is the entry
+  point), and its back ends are the AoC's own ports to the amplifiers,
+  microphones, Bluetooth and USB. Each DAI link names the AoC path DAI it
+  runs on, the AoC driver that serves its PCM, and for a back end the
+  codecs and the format on the wire. The same card serves gs201 and
+  zumapro.
+
+properties:
+  compatible:
+    const: google-aoc-snd-card
+
+  aoc-card-name:
+    $ref: /schemas/types.yaml#/definitions/string
+    description:
+      The ALSA card's long name, which UCM profiles and session rules match.
+
+  codec_cfg:
+    type: object
+    description: Name prefixes for codecs that serve more than one back end.
+    additionalProperties: false
+    patternProperties:
+      "^[a-z0-9]+$":
+        type: object
+        additionalProperties: false
+        properties:
+          of_node:
+            $ref: /schemas/types.yaml#/definitions/phandle
+            description: The codec.
+          prefix:
+            $ref: /schemas/types.yaml#/definitions/string
+            description: The prefix of its controls and widgets.
+        required:
+          - of_node
+          - prefix
+
+  clks:
+    type: object
+    description:
+      Clocks the AoC drives for codecs or DAIs, from its system clocks (sys)
+      or its PLLs (pll).
+    additionalProperties: false
+    patternProperties:
+      "^(sys|pll)$":
+        type: object
+        additionalProperties: false
+        patternProperties:
+          "^(sys|pll)@[a-z0-9_]+$":
+            type: object
+            additionalProperties: false
+            properties:
+              comp:
+                $ref: /schemas/types.yaml#/definitions/phandle
+                description: The component the clock feeds.
+              dai_id:
+                $ref: /schemas/types.yaml#/definitions/uint32
+                description: The DAI the clock feeds, when there is no component.
+              src:
+                enum: [MCLK, BCLK, PLL]
+              id:
+                $ref: /schemas/types.yaml#/definitions/uint32
+              srcid:
+                $ref: /schemas/types.yaml#/definitions/uint32
+              in_mul:
+                $ref: /schemas/types.yaml#/definitions/uint32
+              out_mul:
+                $ref: /schemas/types.yaml#/definitions/uint32
+            oneOf:
+              - required: [comp]
+              - required: [dai_id]
+            required:
+              - src
+              - id
+              - srcid
+              - in_mul
+              - out_mul
+
+  dai_link:
+    type: object
+    description: The card's DAI links, front ends (fe_) and back ends (be_).
+    additionalProperties: false
+    patternProperties:
+      "^(fe|be)_[a-z0-9_]+$":
+        $ref: "#/$defs/link"
+
+$defs:
+  link:
+    type: object
+    additionalProperties: false
+    properties:
+      dai-name:
+        $ref: /schemas/types.yaml#/definitions/string
+      stream-name:
+        $ref: /schemas/types.yaml#/definitions/string
+      id:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description:
+          The link's ID. A front end's is its AoC entry point; a back end's
+          has bit 31 set and names the AoC port.
+      dynamic:
+        type: boolean
+        description: A DPCM front end.
+      no-pcm:
+        type: boolean
+        description: A DPCM back end, with no PCM device of its own.
+      playback:
+        type: boolean
+      capture:
+        type: boolean
+      useops:
+        type: boolean
+        description: The back end uses the AoC path's stream operations.
+      usefixup:
+        type: boolean
+        description: The back end's hardware parameters come from its AoC port.
+      cpu:
+        type: object
+        additionalProperties: false
+        properties:
+          sound-dai:
+            $ref: /schemas/types.yaml#/definitions/phandle-array
+            maxItems: 1
+            description: The AoC path DAI and the link's ID.
+        required:
+          - sound-dai
+      codec:
+        type: object
+        additionalProperties: false
+        properties:
+          sound-dai:
+            $ref: /schemas/types.yaml#/definitions/phandle-array
+            minItems: 1
+        required:
+          - sound-dai
+      platform:
+        type: object
+        additionalProperties: false
+        description: The AoC drivers that serve the link's PCM.
+        patternProperties:
+          "^(rx|tx|vorx|votx)[0-9]*$":
+            type: object
+            additionalProperties: false
+            properties:
+              of_drv:
+                $ref: /schemas/types.yaml#/definitions/phandle
+            required:
+              - of_drv
+      daifmt:
+        type: object
+        additionalProperties: false
+        properties:
+          dai-format:
+            enum: [i2s, dsp_a, dsp_b, left_j, right_j]
+          bitclock-inversion:
+            type: boolean
+        required:
+          - dai-format
+    required:
+      - dai-name
+      - stream-name
+      - id
+      - cpu
+
+required:
+  - compatible
+  - aoc-card-name
+  - dai_link
+
+additionalProperties: false
+
+examples:
+  - |
+    sound-aoc {
+        compatible = "google-aoc-snd-card";
+        aoc-card-name = "google,tegu-aoc-snd-card";
+
+        codec_cfg {
+            top {
+                of_node = <1>;
+                prefix = "Top";
+            };
+        };
+
+        dai_link {
+            fe_ep1_rx {
+                dai-name = "audio_playback0";
+                stream-name = "EP1 playback";
+                id = <0x00>;
+                dynamic;
+                playback;
+
+                cpu {
+                    sound-dai = <2 0x00>;
+                };
+
+                platform {
+                    rx1 {
+                        of_drv = <3>;
+                    };
+                };
+            };
+
+            be_tdm0_rx {
+                dai-name = "TDM_0_RX Playback";
+                stream-name = "TDM_0_RX Playback";
+                id = <0x80000006>;
+                playback;
+                no-pcm;
+                useops;
+                usefixup;
+
+                codec {
+                    sound-dai = <1>;
+                };
+
+                cpu {
+                    sound-dai = <2 0x80000006>;
+                };
+
+                daifmt {
+                    dai-format = "dsp_a";
+                };
+            };
+        };
+    };
