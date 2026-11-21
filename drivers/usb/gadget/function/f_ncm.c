@@ -76,6 +76,7 @@ struct f_ncm {
 	struct sk_buff			*skb_tx_ndp;
 	u16				ndp_dgram_count;
 	struct hrtimer			task_timer;
+	bool				suspended;
 };
 
 static inline struct f_ncm *func_to_ncm(struct usb_function *f)
@@ -919,6 +920,7 @@ static int ncm_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 			net = gether_connect(&ncm->port);
 			if (IS_ERR(net))
 				return PTR_ERR(net);
+			WRITE_ONCE(ncm->suspended, false);
 			ncm->netdev = net;
 		}
 
@@ -1149,7 +1151,8 @@ static enum hrtimer_restart ncm_tx_timeout(struct hrtimer *data)
 	struct f_ncm *ncm = container_of(data, struct f_ncm, task_timer);
 	struct net_device *netdev = READ_ONCE(ncm->netdev);
 
-	if (netdev) {
+	if (netdev && !READ_ONCE(ncm->suspended) &&
+	    !READ_ONCE(ncm->port.is_suspend)) {
 		/* XXX This allowance of a NULL skb argument to ndo_start_xmit
 		 * XXX is not sane.  The gadget layer should be redesigned so
 		 * XXX that the dev->wrap() invocations to build SKBs is transparent
@@ -1158,9 +1161,35 @@ static enum hrtimer_restart ncm_tx_timeout(struct hrtimer *data)
 		 *
 		 * This will call directly into u_ether's eth_start_xmit()
 		 */
-		netdev->netdev_ops->ndo_start_xmit(NULL, netdev);
+		/* Retry the buffered NTB when a USB request becomes available. */
+		if (netdev->netdev_ops->ndo_start_xmit(NULL, netdev) ==
+		    NETDEV_TX_BUSY && !READ_ONCE(ncm->suspended) &&
+		    !READ_ONCE(ncm->port.is_suspend)) {
+			hrtimer_forward_now(data, TX_TIMEOUT_NSECS);
+			return HRTIMER_RESTART;
+		}
 	}
 	return HRTIMER_NORESTART;
+}
+
+/* Stop aggregation retries for both bus and USB3 function suspend. */
+static void ncm_suspend(struct usb_function *f)
+{
+	struct f_ncm *ncm = func_to_ncm(f);
+
+	WRITE_ONCE(ncm->suspended, true);
+	hrtimer_try_to_cancel(&ncm->task_timer);
+}
+
+static void ncm_resume(struct usb_function *f)
+{
+	struct f_ncm *ncm = func_to_ncm(f);
+
+	WRITE_ONCE(ncm->suspended, false);
+	/* A timer stopped by suspend may still have a buffered tail. */
+	if (READ_ONCE(ncm->netdev))
+		hrtimer_start(&ncm->task_timer, TX_TIMEOUT_NSECS,
+			      HRTIMER_MODE_REL_SOFT);
 }
 
 static int ncm_unwrap_ntb(struct gether *port,
@@ -1798,6 +1827,8 @@ static struct usb_function *ncm_alloc(struct usb_function_instance *fi)
 	ncm->port.func.get_alt = ncm_get_alt;
 	ncm->port.func.setup = ncm_setup;
 	ncm->port.func.disable = ncm_disable;
+	ncm->port.func.suspend = ncm_suspend;
+	ncm->port.func.resume = ncm_resume;
 	ncm->port.func.free_func = ncm_free;
 
 	ncm->port.wrap = ncm_wrap_ntb;
