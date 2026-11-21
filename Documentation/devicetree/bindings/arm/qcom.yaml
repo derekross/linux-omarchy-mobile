@@ -1101,6 +1101,7 @@ properties:
       - items:
           - enum:
               - microsoft,surface-duo
+              - oneplus,hotdog
               - qcom,sm8150-hdk
               - qcom,sm8150-mtp
               - sony,bahamut-generic
