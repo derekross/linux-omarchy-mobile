@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/phy/ti,tusb2e11.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: TI TUSB2E11 eUSB2 to USB 2.0 repeater
+
+maintainers:
+  - W4HO <87742609+W4HO-ham@users.noreply.github.com>
+
+description:
+  The TUSB2E11 converts between an SoC's eUSB2 signalling and USB 2.0 on
+  one port. It takes its role, host or peripheral, from the eUSB2 link.
+  The optional properties are the board's signal tuning, written to the
+  repeater's register of the same name when the PHY is initialized; a
+  property left out keeps the repeater's reset value.
+
+properties:
+  compatible:
+    const: ti,tusb2e11
+
+  reg:
+    maxItems: 1
+
+  "#phy-cells":
+    const: 0
+
+  vdd3v3-supply:
+    description: 3.3 V supply
+
+  ti,uart-port1:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    maximum: 0xff
+    description: UART_PORT1 (0x50), the port's mode control
+
+  ti,usb2-tx-adjust:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    maximum: 0xff
+    description: U_TX_ADJUST_PORT1 (0x70)
+
+  ti,usb2-hs-tx-pre-emphasis:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    maximum: 0xff
+    description: U_HS_TX_PRE_EMPHASIS_P1 (0x71)
+
+  ti,usb2-rx-adjust:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    maximum: 0xff
+    description: U_RX_ADJUST_PORT1 (0x72)
+
+  ti,usb2-disconnect-squelch:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    maximum: 0xff
+    description: U_DISCONNECT_SQUELCH_PORT1 (0x73)
+
+  ti,eusb2-hs-tx-pre-emphasis:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    maximum: 0xff
+    description: E_HS_TX_PRE_EMPHASIS_P1 (0x77)
+
+  ti,eusb2-tx-adjust:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    maximum: 0xff
+    description: E_TX_ADJUST_PORT1 (0x78)
+
+  ti,eusb2-rx-adjust:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    maximum: 0xff
+    description: E_RX_ADJUST_PORT1 (0x79)
+
+required:
+  - compatible
+  - reg
+  - "#phy-cells"
+  - vdd3v3-supply
+
+additionalProperties: false
+
+examples:
+  - |
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        usb-repeater@3e {
+            compatible = "ti,tusb2e11";
+            reg = <0x3e>;
+            #phy-cells = <0>;
+            vdd3v3-supply = <&vreg_l19m>;
+            ti,uart-port1 = <0x0a>;
+            ti,usb2-tx-adjust = <0x4f>;
+            ti,usb2-hs-tx-pre-emphasis = <0x3c>;
+        };
+    };
+...
