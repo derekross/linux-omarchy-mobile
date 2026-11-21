@@ -835,6 +835,41 @@
 		};
 	};
 
+	/*
+	 * Only the MIF levels tested on mainline: lower ones starve the
+	 * display at 60 Hz until it asks for bandwidth, higher ones need the
+	 * INT domain scaled with them.
+	 */
+	mif_opp_table: opp-table-mif {
+		compatible = "operating-points-v2";
+
+		opp-1352000000 {
+			opp-hz = /bits/ 64 <1352000000>;
+		};
+
+		opp-1539000000 {
+			opp-hz = /bits/ 64 <1539000000>;
+		};
+
+		opp-1716000000 {
+			opp-hz = /bits/ 64 <1716000000>;
+		};
+
+		opp-2028000000 {
+			opp-hz = /bits/ 64 <2028000000>;
+		};
+	};
+
+	mif: memory-controller {
+		compatible = "google,gs201-mif";
+		clocks = <&acpm_ipc GS201_CLK_ACPM_DVFS_MIF>,
+			 <&acpm_ipc GS201_CLK_ACPM_GPU>;
+		clock-names = "mif", "gpu";
+		operating-points-v2 = <&mif_opp_table>;
+		google,gpu = <&gpu>;
+		status = "disabled";
+	};
+
 	reserved-memory {
 		#address-cells = <2>;
 		#size-cells = <1>;
