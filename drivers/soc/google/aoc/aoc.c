@@ -2751,8 +2751,7 @@ static int aoc_platform_probe(struct platform_device *pdev)
 
 	rc = find_gsa_device(prvdata);
 	if (rc) {
-		dev_err(dev, "Failed to initialize gsa device: %d\n", rc);
-		rc = -EINVAL;
+		dev_err_probe(dev, rc, "failed to initialize GSA device\n");
 		goto err_failed_prvdata_alloc;
 	}
 
