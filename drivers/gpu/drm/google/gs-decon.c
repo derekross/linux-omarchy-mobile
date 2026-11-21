@@ -274,6 +274,8 @@ struct gs_decon_soc_data {
 	bool hold_boot_fb;
 	/* a VT switch around system sleep only with the fbdev console */
 	bool vt_switch_fbdev_only;
+	/* the panel driver owns the modes, not this table */
+	bool panel_modes;
 };
 
 static const struct gs_decon_soc_data gs201_decon_data = {
@@ -321,6 +323,37 @@ static const struct gs_decon_soc_data zuma_decon_data = {
 	.padded_pitch = true,
 	.start_hw_trigger = true,
 	.floors_optional = true,
+};
+
+/*
+ * Pixel 7a: 1080x2400, 32/12/26 horizontal and 12/4/26 vertical blanks.
+ * Same register layout as gs201_decon_data; only the mode differs.
+ */
+static const struct drm_display_mode gs201_lynx_decon_modes[] = {
+	{
+		.clock = (1080 + 32 + 12 + 26) * (2400 + 12 + 4 + 26) * 60 / 1000,
+		.hdisplay = 1080,
+		.hsync_start = 1080 + 32,
+		.hsync_end = 1080 + 32 + 12,
+		.htotal = 1080 + 32 + 12 + 26,
+		.vdisplay = 2400,
+		.vsync_start = 2400 + 12,
+		.vsync_end = 2400 + 12 + 4,
+		.vtotal = 2400 + 12 + 4 + 26,
+		.width_mm = 64,
+		.height_mm = 141,
+		.type = DRM_MODE_TYPE_DRIVER,
+	},
+};
+
+static const struct gs_decon_soc_data gs201_lynx_decon_data = {
+	.padded_pitch = true,
+	.modes = gs201_lynx_decon_modes,
+	.num_modes = ARRAY_SIZE(gs201_lynx_decon_modes),
+	.panel_modes = true,
+	.image_size_reg = RDMA_IMG_SIZE,
+	.source_offset_reg = RDMA_SRC_OFFSET,
+	.shadow_update_mask = SHD_REG_UP_REQ_FLIP(SHD_REG_UP_REQ_ALL_WIN),
 };
 
 #define GS_DECON_BOOT_HZ		60
@@ -443,6 +476,20 @@ static void gs_decon_dump(struct gs_decon *dc)
 	if (dc->soc->separate_source_height)
 		dev_info(dc->dev, "RDMA_SRC_HEIGHT = 0x%08x\n",
 			 readl(dc->dma + RDMA_SRC_HEIGHT_G4));
+}
+
+static void gs_decon_pick_lynx_soc(struct gs_decon *dc)
+{
+	struct device_node *dsim, *panel;
+
+	dsim = of_graph_get_remote_node(dc->dev->of_node, 0, 0);
+	if (!dsim)
+		return;
+	panel = of_get_compatible_child(dsim, "samsung,s6e3fc5");
+	if (panel)
+		dc->soc = &gs201_lynx_decon_data;
+	of_node_put(panel);
+	of_node_put(dsim);
 }
 
 /*
@@ -1129,8 +1176,22 @@ static const struct drm_crtc_funcs gs_decon_crtc_funcs = {
 static int gs_decon_connector_get_modes(struct drm_connector *connector)
 {
 	struct gs_decon *dc = drm_to_decon(connector->dev);
-	int i, count = 0;
+	int i, count;
 
+	if (dc->dsim && dc->soc->panel_modes) {
+		count = gs_dsim_panel_get_modes(dc->dsim, connector);
+		if (count > 0) {
+			struct drm_display_mode *mode;
+
+			mode = list_first_entry(&connector->probed_modes,
+						struct drm_display_mode, head);
+			connector->display_info.width_mm = mode->width_mm;
+			connector->display_info.height_mm = mode->height_mm;
+			return count;
+		}
+	}
+
+	count = 0;
 	for (i = 0; i < dc->soc->num_modes; i++) {
 		unsigned int hz = drm_mode_vrefresh(&dc->soc->modes[i]);
 		struct drm_display_mode *mode;
@@ -1437,6 +1498,7 @@ static int gs_decon_probe(struct platform_device *pdev)
 	dc->soc = device_get_match_data(dev);
 	if (!dc->soc)
 		return -ENODEV;
+	gs_decon_pick_lynx_soc(dc);
 	dc->hz = GS_DECON_BOOT_HZ;
 	dc->max_hz = GS_DECON_BOOT_HZ;
 	spin_lock_init(&dc->lock);

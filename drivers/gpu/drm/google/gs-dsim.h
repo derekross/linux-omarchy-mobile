@@ -20,6 +20,8 @@ unsigned int gs_dsim_refresh_rate(struct gs_dsim *dsim);
 bool gs_dsim_can_set_refresh_rate(struct gs_dsim *dsim, unsigned int hz);
 int gs_dsim_set_refresh_rate(struct gs_dsim *dsim, unsigned int hz);
 
+int gs_dsim_panel_get_modes(struct gs_dsim *dsim,
+			    struct drm_connector *connector);
 int gs_dsim_panel_sleep(struct gs_dsim *dsim);
 int gs_dsim_panel_wake(struct gs_dsim *dsim, bool enable);
 
