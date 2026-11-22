@@ -86,7 +86,8 @@ int s5p_mfc_power_on(struct s5p_mfc_dev *dev)
 
 	/*
 	 * Run at the variant's rate while the MFC is in use. The bootloader
-	 * leaves the GS201 MFC at 100 MHz, a quarter of what 4K needs.
+	 * leaves the GS201 MFC at 100 MHz, a quarter of what 4K needs (zuma's
+	 * reads 100 MHz too).
 	 */
 	if (dev->variant->active_clk_rate && dev->pm.clocks[0]) {
 		dev->pm.idle_clk_rate = clk_get_rate(dev->pm.clocks[0]);

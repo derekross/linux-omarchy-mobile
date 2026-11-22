@@ -1788,6 +1788,26 @@ static const struct s5p_mfc_variant mfc_drvdata_v15 = {
 	.clocks_optional = true,
 	/* The top MFC rate of Google's gs201 tables (mfc_freqs) */
 	.active_clk_rate = 666000000,
+	.hw_version	= MFC_HW_VERSION_V15,
+};
+
+/*
+ * Google zuma (Tensor G3) MFC v16.6: Google's exynos-mfc driver is the same
+ * for gs201 and zuma, so the v15 support is reused. Only the IP version,
+ * the firmware file and the top rate of zuma's mfc_freqs differ.
+ */
+static const struct s5p_mfc_variant mfc_drvdata_v16_zuma = {
+	.version        = MFC_VERSION_V15,
+	.version_bit    = MFC_V15_BIT,
+	.port_num       = MFC_NUM_PORTS_V15,
+	.buf_size       = &buf_size_v15,
+	.fw_name[0]     = "s5p-mfc-v16.fw",
+	.clk_names	= {"mfc"},
+	.num_clocks	= 1,
+	.clocks_optional = true,
+	/* The top MFC rate of Google's zuma tables (mfc_freqs) */
+	.active_clk_rate = 664000000,
+	.hw_version	= MFC_HW_VERSION_V16,
 };
 
 static const struct of_device_id exynos_mfc_match[] = {
@@ -1818,6 +1838,9 @@ static const struct of_device_id exynos_mfc_match[] = {
 	}, {
 		.compatible = "google,gs201-mfc",
 		.data = &mfc_drvdata_v15,
+	}, {
+		.compatible = "google,zuma-mfc",
+		.data = &mfc_drvdata_v16_zuma,
 	},
 	{},
 };

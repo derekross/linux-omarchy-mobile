@@ -240,6 +240,7 @@ struct s5p_mfc_variant {
 	bool		use_clock_gating;
 	bool		clocks_optional;
 	unsigned long	active_clk_rate;
+	u32		hw_version;
 };
 
 /**
