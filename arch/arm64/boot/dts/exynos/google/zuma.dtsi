@@ -1400,6 +1400,26 @@
 			status = "disabled";
 		};
 
+		/*
+		 * MFC v16.6 video codec (Google's zuma-mfc.dtsi). Its System MMU
+		 * (0x1a470000) is not described and stays as the bootloader leaves
+		 * it, and pd_mfc and CMU_MFC are not described yet, so the block
+		 * runs on the power domain and clocks the bootloader leaves on; a
+		 * board that enables it boots with clk_ignore_unused and
+		 * pd_ignore_unused, as husky does. Its rate (and
+		 * voltage) is the ACPM firmware's MFC DVFS domain. The firmware and
+		 * its buffers need memory below 4 GiB from the board's
+		 * memory-region. Off until the System MMU is described.
+		 */
+		mfc: video-codec@1a4d0000 {
+			compatible = "google,zuma-mfc";
+			reg = <0x1a4d0000 0x10000>;
+			interrupts = <GIC_SPI 515 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&acpm_ipc ZUMA_CLK_ACPM_DVFS_MFC>;
+			clock-names = "mfc";
+			status = "disabled";
+		};
+
 		/* The bootloader leaves G3D powered; there's no power domain yet. */
 		cmu_g3d: clock-controller@1ee00000 {
 			compatible = "google,zuma-cmu-g3d";
