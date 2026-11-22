@@ -19,6 +19,7 @@ properties:
     oneOf:
       - enum:
           - google,gs201-mfc              # Google GS201 (MFC v15)
+          - google,zuma-mfc               # Google zuma (MFC v16)
           - samsung,exynos5433-mfc        # Exynos5433
           - samsung,mfc-v5                # Exynos4
           - samsung,mfc-v6                # Exynos5
@@ -166,6 +167,7 @@ allOf:
           contains:
             enum:
               - google,gs201-mfc
+              - google,zuma-mfc
               - tesla,fsd-mfc
     then:
       properties:
