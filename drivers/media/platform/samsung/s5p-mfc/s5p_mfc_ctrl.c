@@ -223,9 +223,9 @@ static int s5p_mfc_v15_check_fw(struct s5p_mfc_dev *dev)
 	u32 ver;
 
 	ver = mfc_read(dev, S5P_FIMV_MFC_VERSION_V15);
-	if (ver != MFC_HW_VERSION_V15) {
+	if (ver != dev->variant->hw_version) {
 		mfc_err("Unsupported MFC IP version 0x%08x (expected 0x%08x)\n",
-			ver, MFC_HW_VERSION_V15);
+			ver, dev->variant->hw_version);
 		return -ENODEV;
 	}
 

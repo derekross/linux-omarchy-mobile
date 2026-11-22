@@ -44,4 +44,7 @@
  */
 #define MFC_MEM_SIZE_V15		(64 * SZ_1M)
 
+/* MFC v16.6 of Google zuma: runs on the v15 support, only the IP differs */
+#define MFC_HW_VERSION_V16		0x16060000
+
 #endif /*_REGS_MFC_V15_H*/
