@@ -1078,27 +1078,32 @@ static int s5p_mfc_queue_setup(struct vb2_queue *vq,
 /*
  * MFCv15 firmware rejects any buffer below its own base address. The private
  * buffers are allocated after it, but the vb2 buffers come from the generic
- * DMA allocator and nothing guarantees their position unless the device has
- * its own "memory-region". Warn so that a failure can be traced to this.
+ * DMA allocator: when the device's "memory-region" runs out they fall back to
+ * ordinary memory, which can be below that base. Refuse such a buffer, so
+ * that REQBUFS gives the client fewer buffers or fails with -ENOMEM instead
+ * of handing the firmware a frame it cannot reach.
  */
-static void s5p_mfc_check_buf_addr_v15(struct s5p_mfc_ctx *ctx,
-				       struct vb2_buffer *vb, unsigned int planes)
+static int s5p_mfc_check_buf_addr_v15(struct s5p_mfc_ctx *ctx,
+				      struct vb2_buffer *vb, unsigned int planes)
 {
 	struct s5p_mfc_dev *dev = ctx->dev;
 	dma_addr_t addr;
 	unsigned int i;
 
 	if (!IS_MFCV15(dev))
-		return;
+		return 0;
 
 	for (i = 0; i < planes; i++) {
 		addr = vb2_dma_contig_plane_dma_addr(vb, i);
-		if (addr < dev->fw_buf.dma)
-			dev_warn(&dev->plat_dev->dev,
-				 "%s buffer %u plane %u at %pad is below the firmware base %pad, the MFC will reject it\n",
-				 V4L2_TYPE_IS_OUTPUT(vb->type) ? "OUTPUT" : "CAPTURE",
-				 vb->index, i, &addr, &dev->fw_buf.dma);
+		if (addr < dev->fw_buf.dma) {
+			dev_warn_ratelimited(&dev->plat_dev->dev,
+					     "%s buffer %u plane %u at %pad is below the firmware base %pad, refusing it\n",
+					     V4L2_TYPE_IS_OUTPUT(vb->type) ? "OUTPUT" : "CAPTURE",
+					     vb->index, i, &addr, &dev->fw_buf.dma);
+			return -ENOMEM;
+		}
 	}
+	return 0;
 }
 
 static int s5p_mfc_buf_init(struct vb2_buffer *vb)
@@ -1107,6 +1112,7 @@ static int s5p_mfc_buf_init(struct vb2_buffer *vb)
 	struct vb2_queue *vq = vb->vb2_queue;
 	struct s5p_mfc_ctx *ctx = vb2_get_drv_priv(vq);
 	unsigned int i;
+	int ret;
 
 	if (vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		if (ctx->capture_state == QUEUE_BUFS_MMAPED)
@@ -1132,7 +1138,10 @@ static int s5p_mfc_buf_init(struct vb2_buffer *vb)
 				return -EINVAL;
 			}
 		}
-		s5p_mfc_check_buf_addr_v15(ctx, vb, ctx->dst_fmt->num_planes);
+		ret = s5p_mfc_check_buf_addr_v15(ctx, vb,
+						 ctx->dst_fmt->num_planes);
+		if (ret)
+			return ret;
 		i = vb->index;
 		ctx->dst_bufs[i].b = vbuf;
 		ctx->dst_bufs[i].cookie.raw.luma =
@@ -1160,7 +1169,9 @@ static int s5p_mfc_buf_init(struct vb2_buffer *vb)
 			return -EINVAL;
 		}
 
-		s5p_mfc_check_buf_addr_v15(ctx, vb, 1);
+		ret = s5p_mfc_check_buf_addr_v15(ctx, vb, 1);
+		if (ret)
+			return ret;
 		i = vb->index;
 		ctx->src_bufs[i].b = vbuf;
 		ctx->src_bufs[i].cookie.stream =
