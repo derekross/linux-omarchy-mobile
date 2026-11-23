@@ -572,13 +572,17 @@ static int reqbufs_output(struct s5p_mfc_dev *dev, struct s5p_mfc_ctx *ctx,
 		mfc_debug(2, "Allocating %d buffers for OUTPUT queue\n",
 				reqbufs->count);
 		ret = vb2_reqbufs(&ctx->vq_src, reqbufs);
-		if (ret)
+		if (ret) {
+			/* buf_init counted the buffers vb2 has freed again */
+			ctx->src_bufs_cnt = 0;
 			goto out;
+		}
 
 		ret = s5p_mfc_open_mfc_inst(dev, ctx);
 		if (ret) {
 			reqbufs->count = 0;
 			vb2_reqbufs(&ctx->vq_src, reqbufs);
+			ctx->src_bufs_cnt = 0;
 			goto out;
 		}
 
@@ -613,8 +617,11 @@ static int reqbufs_capture(struct s5p_mfc_dev *dev, struct s5p_mfc_ctx *ctx,
 		mfc_debug(2, "Allocating %d buffers for CAPTURE queue\n",
 				reqbufs->count);
 		ret = vb2_reqbufs(&ctx->vq_dst, reqbufs);
-		if (ret)
+		if (ret) {
+			/* buf_init counted the buffers vb2 has freed again */
+			ctx->dst_bufs_cnt = 0;
 			goto out;
+		}
 
 		ctx->capture_state = QUEUE_BUFS_REQUESTED;
 		ctx->total_dpb_count = reqbufs->count;
@@ -624,6 +631,7 @@ static int reqbufs_capture(struct s5p_mfc_dev *dev, struct s5p_mfc_ctx *ctx,
 			mfc_err("Failed to allocate decoding buffers\n");
 			reqbufs->count = 0;
 			vb2_reqbufs(&ctx->vq_dst, reqbufs);
+			ctx->dst_bufs_cnt = 0;
 			ret = -ENOMEM;
 			ctx->capture_state = QUEUE_FREE;
 			goto out;
