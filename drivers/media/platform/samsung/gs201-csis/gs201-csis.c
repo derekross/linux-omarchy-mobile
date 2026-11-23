@@ -26,8 +26,11 @@
 #include <linux/clk.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
+#include <linux/devfreq.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
+#include <linux/of.h>
+#include <linux/pm_qos.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
 #include <linux/log2.h>
@@ -132,6 +135,7 @@ struct gs201_csis_stats {
 };
 
 struct gs201_csis {
+	struct dev_pm_qos_request mif_req;	/* MIF floor while the WDMA runs */
 	struct device *dev;
 	void __iomem *link;
 	void __iomem *dma;
@@ -231,6 +235,18 @@ MODULE_PARM_DESC(cam_khz, "CAM DVFS rate in kHz while streaming (0: leave it)");
 static unsigned int cam_khz_cphy = 533000;
 module_param(cam_khz_cphy, uint, 0644);
 MODULE_PARM_DESC(cam_khz_cphy, "CAM DVFS rate in kHz while a C-PHY link streams (0: leave it)");
+
+/*
+ * The WDMA also needs the memory interface (MIF) fast while it writes: with
+ * the MIF devfreq (google,gs201-mif) scaling it down, the main and front
+ * cameras' WDMA stopped with LASTADDR a few lines into most frames; at its
+ * top level (2028 MHz) every capture landed, at 1539 MHz pinned none did.
+ * A minimum-frequency request on that devfreq while the WDMA runs, as the
+ * CAM and INT votes; 0 makes none.
+ */
+static unsigned int mif_khz = 2028000;
+module_param(mif_khz, uint, 0644);
+MODULE_PARM_DESC(mif_khz, "Minimum MIF devfreq rate in kHz while the WDMA runs (0: none)");
 
 static unsigned int int_khz = 400000;
 module_param(int_khz, uint, 0644);
@@ -1020,6 +1036,36 @@ static void gs201_csis_dvfs_vote(struct gs201_csis *csis, struct clk *clk,
 	}
 }
 
+/* A floor on the MIF devfreq while the WDMA runs (mif_khz) */
+static void gs201_csis_mif_vote(struct gs201_csis *csis)
+{
+	struct device_node *np;
+	struct devfreq *df;
+	int ret;
+
+	if (!IS_ENABLED(CONFIG_PM_DEVFREQ) || !mif_khz)
+		return;
+	np = of_find_compatible_node(NULL, NULL, "google,gs201-mif");
+	if (!np)
+		return;
+	df = devfreq_get_devfreq_by_node(np);
+	of_node_put(np);
+	if (IS_ERR(df)) {
+		dev_dbg(csis->dev, "no MIF devfreq: %pe\n", df);
+		return;
+	}
+	ret = dev_pm_qos_add_request(df->dev.parent, &csis->mif_req,
+				     DEV_PM_QOS_MIN_FREQUENCY, mif_khz);
+	if (ret < 0)
+		dev_warn(csis->dev, "MIF floor of %u kHz: %d\n", mif_khz, ret);
+}
+
+static void gs201_csis_mif_release(struct gs201_csis *csis)
+{
+	if (dev_pm_qos_request_active(&csis->mif_req))
+		dev_pm_qos_remove_request(&csis->mif_req);
+}
+
 static void gs201_csis_dvfs_restore(struct clk *clk, unsigned long *old)
 {
 	if (clk && *old)
@@ -1601,6 +1647,7 @@ static int gs201_csis_start_streaming(struct vb2_queue *vq, unsigned int count)
 			goto err_pipeline;
 
 		gs201_csis_dvfs_vote(csis, csis->int_clk, "INT", int_khz, &csis->int_rate_old);
+		gs201_csis_mif_vote(csis);
 		if (!wdma_after_link)
 			gs201_csis_wdma_start(csis);
 	}
@@ -1615,6 +1662,7 @@ err_wdma:
 	if (csis->dma_on) {
 		gs201_csis_wdma_stop(csis);
 		gs201_csis_dvfs_restore(csis->int_clk, &csis->int_rate_old);
+		gs201_csis_mif_release(csis);
 		gs201_csis_unroute(csis);
 	}
 err_pipeline:
@@ -1659,6 +1707,7 @@ static void gs201_csis_stop_streaming(struct vb2_queue *vq)
 	if (csis->dma_on) {
 		gs201_csis_wdma_stop(csis);
 		gs201_csis_dvfs_restore(csis->int_clk, &csis->int_rate_old);
+		gs201_csis_mif_release(csis);
 		gs201_csis_unroute(csis);
 	}
 	video_device_pipeline_stop(&csis->vdev);
