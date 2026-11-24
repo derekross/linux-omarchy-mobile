@@ -82,7 +82,7 @@
 	};
 };
 
-/* The USB-C port controller's interrupt (gpa8-3), held inactive with it. */
+/* The USB-C port controller uses the gpa8-3 interrupt when enabled. */
 &gpa8 {
 	interrupt-controller;
 	#interrupt-cells = <2>;
@@ -90,7 +90,6 @@
 		     <GIC_SPI 45 IRQ_TYPE_LEVEL_HIGH>,
 		     <GIC_SPI 46 IRQ_TYPE_LEVEL_HIGH>,
 		     <GIC_SPI 47 IRQ_TYPE_LEVEL_HIGH>;
-	status = "disabled";
 };
 
 &pinctrl_alive {
