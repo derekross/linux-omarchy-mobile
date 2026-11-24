@@ -10,8 +10,10 @@ maintainers:
   - W4HO <87742609+W4HO-ham@users.noreply.github.com>
 
 description:
-  Fuel-gauge measurements from a MAX77779 with an initialized battery model.
-  Firmware retains responsibility for model programming and charger control.
+  Fuel-gauge measurements from a MAX77779. The gauge keeps its battery model
+  across reboots; after a power-on reset (Status bit 1) it starts from its
+  defaults, and the operating system loads the model again. Charger control
+  belongs to the charger.
 
 allOf:
   - $ref: power-supply.yaml#
@@ -27,6 +29,36 @@ properties:
     description: Resistance of the battery current sense resistor in micro-ohms.
     minimum: 100
     maximum: 100000
+
+  maxim,fg-model:
+    $ref: /schemas/types.yaml#/definitions/uint16-array
+    minItems: 32
+    maxItems: 32
+    description:
+      Cell characterization table of the gauge's ModelGauge m5 algorithm,
+      from Maxim's battery modelling for the cell. Written to registers
+      0x80-0x9f, followed by a model load, only after a power-on reset of
+      the gauge.
+
+  maxim,fg-params:
+    $ref: /schemas/types.yaml#/definitions/uint16-array
+    minItems: 22
+    maxItems: 22
+    description:
+      Register values that go with maxim,fg-model, from the same battery
+      model, in this fixed order (register address in parentheses; n marks
+      a non-volatile shadow register, at the gauge's second I2C address)
+        nNVCfg0 (0xc0), RelaxCfg (n, 0xb6), nLearnCfg (0x9f), Config (0x0c),
+        Config2 (0xab), nFullSOCThr (0xbc), nFullCapRep (0xa9),
+        nDesignCap (0xb3), dPAcc (0x46), nFullCapNom (0xa5), nVEmpty (0xc6),
+        nQRTable00 (0xa0), nQRTable10 (0xa1), nQRTable20 (0xa2),
+        nQRTable30 (0xa3), nRComp0 (0xa6), nTempCo (0xa7), nIChgTerm (0x9c),
+        nMiscCfg (0xb2), nModelCfg (0x9e, not written), nThermCfg (0xca) and
+        nFilterCfg (0x9d).
+
+dependencies:
+  maxim,fg-model: [ 'maxim,fg-params' ]
+  maxim,fg-params: [ 'maxim,fg-model' ]
 
 required:
   - compatible
