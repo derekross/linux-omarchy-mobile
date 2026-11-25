@@ -26,6 +26,11 @@ properties:
           - const: qcom,sc7280-aoss-cc
           - const: qcom,sdm845-aoss-cc
 
+      - description: on SDM670 SoCs the following compatibles must be specified
+        items:
+          - const: qcom,sdm670-aoss-cc
+          - const: qcom,sdm845-aoss-cc
+
       - description: on SDM845 SoCs the following compatibles must be specified
         items:
           - const: qcom,sdm845-aoss-cc
