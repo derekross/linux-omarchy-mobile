@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/mfd/maxim,max77779-pmic.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Maxim Integrated MAX77779 PMIC block
+
+maintainers:
+  - W4HO <87742609+W4HO-ham@users.noreply.github.com>
+
+description: |
+  The MAX77779 interface PMIC is a set of I2C blocks on one chip: the
+  charger (maxim,max77779-charger), the fuel gauge (maxim,max77779-fg), the
+  Type-C port controller (maxim,max77779-tcpc), the battery voltage and
+  current monitor, an I2C master and the PMIC block, which this binding
+  describes.
+
+  The PMIC block owns the chip's interrupt line (INTB) and is the interrupt
+  controller for the chip's interrupt sources. The first cell of an
+  interrupt specifier names the source:
+
+    0: Type-C port controller
+    1: fuel gauge
+    2: charger
+    3: I2C master
+    4: battery voltage and current monitor (VIMON)
+    5: SGPIO controller
+    6: VDROOP
+    7: PMIC top
+
+  A block at its own address names its source here. The block also holds
+  eight SGPIOs, described by the gpio child node, which interrupts through
+  source 5 and is the interrupt controller for its own lines.
+
+properties:
+  compatible:
+    const: maxim,max77779-pmic
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+    description: The chip's interrupt line (INTB), active low.
+
+  interrupt-controller: true
+
+  "#interrupt-cells":
+    const: 2
+
+  gpio:
+    $ref: /schemas/gpio/maxim,max77779-sgpio.yaml
+
+required:
+  - compatible
+  - reg
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/interrupt-controller/irq.h>
+
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        pmic@66 {
+            compatible = "maxim,max77779-pmic";
+            reg = <0x66>;
+            interrupts-extended = <&gpa8 0 IRQ_TYPE_LEVEL_LOW>;
+            interrupt-controller;
+            #interrupt-cells = <2>;
+
+            gpio {
+                compatible = "maxim,max77779-sgpio";
+                gpio-controller;
+                #gpio-cells = <2>;
+                interrupt-controller;
+                #interrupt-cells = <2>;
+            };
+        };
+    };
