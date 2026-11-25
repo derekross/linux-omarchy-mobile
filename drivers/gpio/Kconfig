@@ -1605,6 +1605,19 @@ config GPIO_MAX77759
 	  This driver can also be built as a module. If so, the module will be
 	  called gpio-max77759.
 
+config GPIO_MAX77779
+	tristate "Maxim Integrated MAX77779 SGPIO support"
+	depends on MFD_MAX77779
+	default MFD_MAX77779
+	select GPIOLIB_IRQCHIP
+	help
+	  GPIO driver for the SGPIOs of the MAX77779 interface PMIC from
+	  Maxim Integrated (Google Pixel 9a). The eight pins can generate
+	  interrupts; the board's charger side signals sit on them.
+
+	  This driver can also be built as a module. If so, the module will be
+	  called gpio-max77779.
+
 config GPIO_NCT6694
 	tristate "Nuvoton NCT6694 GPIO controller support"
 	depends on MFD_NCT6694

@@ -16241,6 +16241,7 @@ L:	linux-kernel@vger.kernel.org
 S:	Maintained
 F:	Documentation/devicetree/bindings/gpio/maxim,max77779-sgpio.yaml
 F:	Documentation/devicetree/bindings/mfd/maxim,max77779-pmic.yaml
+F:	drivers/gpio/gpio-max77779.c
 F:	drivers/mfd/max77779.c
 F:	include/linux/mfd/max77779.h
 
