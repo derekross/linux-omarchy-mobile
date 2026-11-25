@@ -35,13 +35,14 @@
 #include <linux/platform_device.h>
 #include <linux/pm_opp.h>
 #include <linux/pm_runtime.h>
+#include <linux/spinlock.h>
 #include <linux/units.h>
 
 /* A cluster asks for MIF only if its busiest CPU was busy this share, %. */
 #define GS201_MIF_BUSY_PCT	40
 /* Time the requests must stay lower before the rate goes down. */
 #define GS201_MIF_HOLD_MS	200
-/* How often the cached MIF rate is read back from the firmware. */
+/* How often the cached MIF and GPU rates are read back from the firmware. */
 #define GS201_MIF_RESYNC_MS	1000
 
 /**
@@ -113,6 +114,13 @@ struct gs201_mif {
 	struct clk *mif_clk;
 	struct clk *gpu_clk;
 	struct device *gpu_dev;
+	struct notifier_block mif_nb;
+	struct notifier_block gpu_nb;
+	spinlock_t rate_lock;		/* the two rates and their counts */
+	unsigned long mif_rate;		/* last rate of each clock */
+	unsigned long gpu_rate;
+	unsigned int mif_seq;		/* notifications so far */
+	unsigned int gpu_seq;
 	unsigned long boot_rate;
 	unsigned long hold_until;
 	unsigned long next_resync;
@@ -157,6 +165,81 @@ static unsigned int gs201_mif_cluster_busy(struct gs201_mif *mif,
 	return busy;
 }
 
+/*
+ * Both clocks are ACPM domains with CLK_GET_RATE_NOCACHE: clk_get_rate() is
+ * a firmware call each time. Their rates are kept from the clock core's
+ * rate-change notifications instead, and read back from the firmware at
+ * the resync below, which also catches a change the firmware made itself
+ * (a read-back sends no notification).
+ */
+static void gs201_mif_note(struct gs201_mif *mif, unsigned long *rate,
+			   unsigned int *seq, unsigned long new_rate)
+{
+	spin_lock(&mif->rate_lock);
+	WRITE_ONCE(*rate, new_rate);
+	(*seq)++;
+	spin_unlock(&mif->rate_lock);
+}
+
+static int gs201_mif_mif_notify(struct notifier_block *nb,
+				unsigned long action, void *data)
+{
+	struct gs201_mif *mif = container_of(nb, struct gs201_mif, mif_nb);
+	struct clk_notifier_data *cnd = data;
+
+	if (action == POST_RATE_CHANGE)
+		gs201_mif_note(mif, &mif->mif_rate, &mif->mif_seq,
+			       cnd->new_rate);
+
+	return NOTIFY_OK;
+}
+
+static int gs201_mif_gpu_notify(struct notifier_block *nb,
+				unsigned long action, void *data)
+{
+	struct gs201_mif *mif = container_of(nb, struct gs201_mif, gpu_nb);
+	struct clk_notifier_data *cnd = data;
+
+	if (action == POST_RATE_CHANGE)
+		gs201_mif_note(mif, &mif->gpu_rate, &mif->gpu_seq,
+			       cnd->new_rate);
+
+	return NOTIFY_OK;
+}
+
+/*
+ * Read @clk back from the firmware into @rate, unless a notification came
+ * in meanwhile (its rate is newer) or the read failed (ACPM returns 0).
+ */
+static void gs201_mif_read_back(struct gs201_mif *mif, struct clk *clk,
+				unsigned long *rate, unsigned int *seq)
+{
+	unsigned int seen;
+	unsigned long now;
+
+	spin_lock(&mif->rate_lock);
+	seen = *seq;
+	spin_unlock(&mif->rate_lock);
+
+	now = clk_get_rate(clk);
+	if (!now)
+		return;
+
+	spin_lock(&mif->rate_lock);
+	if (*seq == seen)
+		WRITE_ONCE(*rate, now);
+	spin_unlock(&mif->rate_lock);
+}
+
+static void gs201_mif_resync(struct gs201_mif *mif)
+{
+	gs201_mif_read_back(mif, mif->mif_clk, &mif->mif_rate, &mif->mif_seq);
+	if (mif->gpu_clk)
+		gs201_mif_read_back(mif, mif->gpu_clk, &mif->gpu_rate,
+				    &mif->gpu_seq);
+	mif->next_resync = jiffies + msecs_to_jiffies(GS201_MIF_RESYNC_MS);
+}
+
 static unsigned int gs201_mif_gpu_khz(struct gs201_mif *mif)
 {
 	/* A suspended GPU keeps its last rate but makes no traffic. */
@@ -164,7 +247,7 @@ static unsigned int gs201_mif_gpu_khz(struct gs201_mif *mif)
 	    pm_runtime_status_suspended(mif->gpu_dev))
 		return 0;
 
-	return clk_get_rate(mif->gpu_clk) / HZ_PER_KHZ;
+	return READ_ONCE(mif->gpu_rate) / HZ_PER_KHZ;
 }
 
 static int gs201_mif_get_target(struct devfreq *devfreq, unsigned long *freq)
@@ -214,6 +297,12 @@ static int gs201_mif_governor_event(struct devfreq *devfreq,
 		devfreq_monitor_suspend(devfreq);
 		break;
 	case DEVFREQ_GOV_RESUME:
+		/*
+		 * The firmware may have changed either rate over the suspend,
+		 * and jiffies did not count it: read both back before the
+		 * monitor takes the current rate.
+		 */
+		gs201_mif_resync(dev_get_drvdata(devfreq->dev.parent));
 		devfreq_monitor_resume(devfreq);
 		break;
 	}
@@ -235,6 +324,8 @@ static int gs201_mif_target(struct device *dev, unsigned long *freq,
 {
 	struct gs201_mif *mif = dev_get_drvdata(dev);
 	struct dev_pm_opp *opp;
+	unsigned long rate;
+	int ret;
 
 	opp = devfreq_recommended_opp(dev, freq, flags);
 	if (IS_ERR(opp))
@@ -242,15 +333,12 @@ static int gs201_mif_target(struct device *dev, unsigned long *freq,
 	dev_pm_opp_put(opp);
 
 	/*
-	 * The clock has CLK_GET_RATE_NOCACHE, but clk_set_rate() compares
-	 * with the cached rate: refresh it now and then, in case the
-	 * firmware changed the rate over a suspend.
+	 * The clocks have CLK_GET_RATE_NOCACHE, but clk_set_rate() compares
+	 * with the clock core's cached rate: refresh it, and ours, now and
+	 * then, in case the firmware changed a rate itself.
 	 */
-	if (time_after_eq(jiffies, mif->next_resync)) {
-		clk_get_rate(mif->mif_clk);
-		mif->next_resync = jiffies +
-				   msecs_to_jiffies(GS201_MIF_RESYNC_MS);
-	}
+	if (time_after_eq(jiffies, mif->next_resync))
+		gs201_mif_resync(mif);
 
 	/*
 	 * Asked every period: when the display controller drops its floor
@@ -258,12 +346,38 @@ static int gs201_mif_target(struct device *dev, unsigned long *freq,
 	 * While the floor holds, or the rate is already right, the clock
 	 * core returns without asking the firmware.
 	 */
-	return clk_set_rate(mif->mif_clk, *freq);
+	ret = clk_set_rate(mif->mif_clk, *freq);
+	if (ret)
+		return ret;
+
+	/*
+	 * Report the rate the clock runs at, which a floor can hold above
+	 * the request, so that trans_stat counts it; only an OPP, which the
+	 * statistics need.
+	 */
+	rate = READ_ONCE(mif->mif_rate);
+	opp = dev_pm_opp_find_freq_exact(dev, rate, true);
+	if (!IS_ERR(opp)) {
+		dev_pm_opp_put(opp);
+		*freq = rate;
+	}
+
+	return 0;
+}
+
+static int gs201_mif_get_cur_freq(struct device *dev, unsigned long *freq)
+{
+	struct gs201_mif *mif = dev_get_drvdata(dev);
+
+	*freq = READ_ONCE(mif->mif_rate);
+
+	return 0;
 }
 
 static struct devfreq_dev_profile gs201_mif_profile = {
 	.polling_ms = 50,
 	.target = gs201_mif_target,
+	.get_cur_freq = gs201_mif_get_cur_freq,
 };
 
 static void gs201_mif_restore(void *data)
@@ -304,6 +418,15 @@ static int gs201_mif_get_gpu(struct device *dev, struct gs201_mif *mif)
 	if (ret)
 		return ret;
 
+	if (!mif->gpu_clk)
+		return 0;
+	mif->gpu_rate = clk_get_rate(mif->gpu_clk);
+	mif->gpu_nb.notifier_call = gs201_mif_gpu_notify;
+	ret = devm_clk_notifier_register(dev, mif->gpu_clk, &mif->gpu_nb);
+	if (ret)
+		return dev_err_probe(dev, ret,
+				     "failed to watch the GPU clock\n");
+
 	return 0;
 }
 
@@ -320,6 +443,7 @@ static int gs201_mif_probe(struct platform_device *pdev)
 	if (!mif)
 		return -ENOMEM;
 	platform_set_drvdata(pdev, mif);
+	spin_lock_init(&mif->rate_lock);
 
 	mif->prev_idle = devm_kcalloc(dev, nr_cpu_ids, sizeof(u64), GFP_KERNEL);
 	mif->prev_wall = devm_kcalloc(dev, nr_cpu_ids, sizeof(u64), GFP_KERNEL);
@@ -340,6 +464,11 @@ static int gs201_mif_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, ret, "failed to add the OPP table\n");
 
 	mif->boot_rate = clk_get_rate(mif->mif_clk);
+	mif->mif_rate = mif->boot_rate;
+	mif->mif_nb.notifier_call = gs201_mif_mif_notify;
+	ret = devm_clk_notifier_register(dev, mif->mif_clk, &mif->mif_nb);
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to watch the MIF clock\n");
 	rate = mif->boot_rate;
 	opp = devfreq_recommended_opp(dev, &rate, 0);
 	if (IS_ERR(opp))
