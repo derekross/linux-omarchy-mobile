@@ -16221,6 +16221,15 @@ F:	Documentation/devicetree/bindings/power/supply/maxim,max77779-fg.yaml
 F:	drivers/power/supply/max77779_battery.c
 F:	drivers/power/supply/max77779_charger.c
 
+MAXIM MAX77779 PMIC BLOCK DRIVERS
+M:	W4HO <87742609+W4HO-ham@users.noreply.github.com>
+L:	linux-kernel@vger.kernel.org
+S:	Maintained
+F:	Documentation/devicetree/bindings/gpio/maxim,max77779-sgpio.yaml
+F:	Documentation/devicetree/bindings/mfd/maxim,max77779-pmic.yaml
+F:	drivers/mfd/max77779.c
+F:	include/linux/mfd/max77779.h
+
 MAXIM MAX77802 PMIC REGULATOR DEVICE DRIVER
 M:	Javier Martinez Canillas <javier@dowhile0.org>
 L:	linux-kernel@vger.kernel.org

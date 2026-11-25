@@ -1048,6 +1048,26 @@ config MFD_MAX77759
 	  To compile this driver as a module, choose M here: the module will be
 	  called max77759.
 
+config MFD_MAX77779
+	tristate "Maxim Integrated MAX77779 PMIC block"
+	depends on I2C
+	depends on OF
+	select IRQ_DOMAIN
+	select MFD_CORE
+	select REGMAP_I2C
+	select REGMAP_IRQ
+	help
+	  Say yes here to add support for the PMIC block of the Maxim
+	  Integrated MAX77779 interface PMIC, found in the Google Pixel 9a.
+	  The block owns the chip's interrupt line and collects the
+	  interrupts of the chip's other blocks (charger, fuel gauge,
+	  battery monitor, I2C master); it also holds eight SGPIOs. This
+	  driver is the interrupt controller for those sources and adds the
+	  SGPIOs as a child device, driven by GPIO_MAX77779.
+
+	  To compile this driver as a module, choose M here: the module will be
+	  called max77779.
+
 config MFD_MAX77843
 	bool "Maxim Semiconductor MAX77843 PMIC Support"
 	depends on I2C=y
