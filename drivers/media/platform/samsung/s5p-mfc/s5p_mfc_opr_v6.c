@@ -710,6 +710,22 @@ static int s5p_mfc_set_dec_frame_buffer_v6(struct s5p_mfc_ctx *ctx)
 		ctx->dpb_used = 0;
 	}
 
+	/*
+	 * With the stride field at 0 the VP9 decoder writes its rows at a
+	 * 16-byte stride, whatever DPB stride it is given; at 2, as Google's
+	 * driver sets it, it writes at the programmed one. The field only
+	 * applies to VP9, and the register is shared by every instance, so
+	 * clear it for the other codecs.
+	 */
+	if (IS_MFCV15(dev)) {
+		u32 reg = readl(mfc_regs->d_init_buffer_options);
+
+		reg &= ~S5P_FIMV_D_INIT_BUF_OPT_STRIDE_ALIGN_V15;
+		if (ctx->codec_mode == S5P_FIMV_CODEC_VP9_DEC)
+			reg |= S5P_FIMV_D_INIT_BUF_OPT_STRIDE_ALIGN_VP9_V15;
+		writel(reg, mfc_regs->d_init_buffer_options);
+	}
+
 	for (i = 0; !dev->dynamic_dpb && i < ctx->total_dpb_count; i++) {
 		/* Bank2 */
 		mfc_debug(2, "Luma %d: %zx\n", i,

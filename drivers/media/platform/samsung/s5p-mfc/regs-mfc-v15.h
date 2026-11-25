@@ -26,6 +26,13 @@
 #define S5P_FIMV_D_USED_DPB_FLAG_UPPER_V15	0xF720
 #define S5P_FIMV_D_USED_DPB_FLAG_LOWER_V15	0xF724
 #define S5P_FIMV_D_INIT_BUF_OPT_DYNAMIC_DPB_V15	BIT(3)
+/*
+ * Bits 8:7, the VP9 decoder's stride: at 0 it writes rows at 16 bytes,
+ * at 2 at the programmed DPB stride (Google's driver writes 2 on gs201
+ * and zuma, "vp9_stride_align").
+ */
+#define S5P_FIMV_D_INIT_BUF_OPT_STRIDE_ALIGN_V15	GENMASK(8, 7)
+#define S5P_FIMV_D_INIT_BUF_OPT_STRIDE_ALIGN_VP9_V15	(2 << 7)
 
 /* MFCv15 variant defines */
 #define MFC_VERSION_V15			0xF0
