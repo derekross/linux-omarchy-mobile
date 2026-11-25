@@ -634,11 +634,8 @@ static const struct snd_soc_component_driver aoc_pcm_component = {
 static int aoc_pcm_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct device_node *np = dev->of_node;
 	int err = 0;
 
-	if (!np)
-		return -EINVAL;
 	err = devm_snd_soc_register_component(dev, &aoc_pcm_component, NULL, 0);
 	if (err) {
 		dev_err(dev, "ERR:%d fail to reigster aoc pcm comp\n", err);
@@ -648,21 +645,11 @@ static int aoc_pcm_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct of_device_id aoc_incall_of_match[] = {
-	{
-		.compatible = "google-aoc-snd-incall",
-	},
-	{},
-};
-MODULE_DEVICE_TABLE(of, aoc_incall_of_match);
-
 static struct platform_driver aoc_pcm_drv = {
-    .driver =
-        {
-            .name = "google-aoc-snd-incall",
-            .of_match_table = aoc_incall_of_match,
-        },
-    .probe = aoc_pcm_probe,
+	.driver = {
+		.name = AOC_INCALL_DRV_NAME,
+	},
+	.probe = aoc_pcm_probe,
 };
 
 int aoc_incall_init(void)

@@ -33,6 +33,8 @@
 #include "aoc_alsa.h"
 #include "google-aoc-enum.h"
 
+#include <dt-bindings/sound/google,aoc.h>
+
 static const char *aoc_detect[] = {
 	"aoc_audio_state",
 	"aoc_aocdump_state",
@@ -1041,276 +1043,252 @@ static void put_dai_links(struct snd_soc_card *card)
 	}
 }
 
-static int of_parse_dai_platform(struct device *dev,
-	struct device_node *node, struct snd_soc_dai_link *dai)
-{
-	struct device_node *of_platform_root = NULL;
-	struct device_node *of_node;
-	struct device_node *np;
-	int count, ret = 0;
-	struct snd_soc_dai_link_component *component;
+/*
+ * The components that serve a front end's PCM, by the kind of stream.
+ */
+enum aoc_fe_kind {
+	AOC_FE_PCM,
+	AOC_FE_VOICE,
+	AOC_FE_COMPR,
+	AOC_FE_NOHOST,
+	AOC_FE_VOIP,
+	AOC_FE_INCALL,
+};
 
-	/*
-	 * The platform is not must have
-	 */
-	of_platform_root = of_get_child_by_name(node, "platform");
-	if (!of_platform_root)
-		return 0;
+static const char *const aoc_fe_platform[] = {
+	[AOC_FE_PCM] = AOC_PCM_DRV_NAME,
+	[AOC_FE_VOICE] = AOC_VOICE_DRV_NAME,
+	[AOC_FE_COMPR] = AOC_COMPR_DRV_NAME,
+	[AOC_FE_NOHOST] = AOC_NOHOST_DRV_NAME,
+	[AOC_FE_VOIP] = AOC_VOIP_DRV_NAME,
+	[AOC_FE_INCALL] = AOC_INCALL_DRV_NAME,
+};
 
-	count = of_get_available_child_count(of_platform_root);
-	if (count <= 0) {
-		pr_err("invalid child count %d for %s\n", count,
-			of_platform_root->name);
-		ret = -EINVAL;
-		goto exit;
-	}
-
-	component = devm_kzalloc(dev,
-		sizeof(struct snd_soc_dai_link_component) * count, GFP_KERNEL);
-	if (!component) {
-		ret = -ENOMEM;
-		goto exit;
-	}
-
-	dai->platforms = component;
-	dai->num_platforms = count;
-
-	count = 0;
-	for_each_available_child_of_node(of_platform_root, np) {
-		of_node = of_parse_phandle(np, "of_drv", 0);
-		if (!of_node) {
-			pr_err("%s: no of_drv for %s", __func__,
-				of_node->name);
-			ret = -EINVAL;
-			break;
-		}
-
-		component->of_node = of_node;
-		component++;
-		count++;
-	}
-
-exit:
-	if (of_platform_root)
-		of_node_put(of_platform_root);
-	return ret;
-}
-
-static int of_parse_dai_cpu(struct device *dev,
-	struct device_node *node, struct snd_soc_dai_link *dai)
-{
-	struct device_node *of_cpu_root = NULL, *of_node;
-	struct snd_soc_dai_link_component *component;
-	int ret;
-
-	/*
-	 * Each FE/BE must specify the cpu dai
-	 */
-	of_cpu_root = of_get_child_by_name(node, "cpu");
-	if (!of_cpu_root) {
-		pr_err("%s: can't find cpu node for %s", __func__, dai->name);
-		return -EINVAL;
-	}
-
-	of_node = of_parse_phandle(of_cpu_root, "sound-dai", 0);
-	if (!of_node) {
-		pr_err("%s: fail to get cpu dai for %s", __func__, dai->name);
-		ret = -EINVAL;
-		goto exit;
-	}
-
-	component = devm_kzalloc(dev,
-		sizeof(struct snd_soc_dai_link_component), GFP_KERNEL);
-	if (!component) {
-		ret = -ENOMEM;
-		goto exit;
-	}
-
-	/* Only support single cpu dai */
-	dai->cpus = component;
-	dai->num_cpus = 1;
-	component->of_node = of_node;
-
-	ret = snd_soc_of_get_dai_name(of_cpu_root, &component->dai_name, 0);
-	if (ret) {
-		if (ret == -EPROBE_DEFER) {
-			pr_info("%s: wait cpu_dai for %s", __func__, dai->name);
-		} else {
-			pr_err("%s: get cpu_dai fail for %s", __func__,
-			       dai->name);
-		}
-	}
-
-exit:
-	if (of_cpu_root)
-		of_node_put(of_cpu_root);
-	return ret;
-}
-
-static int of_parse_dai_codec(struct device *dev,
-	struct device_node *node, struct snd_soc_dai_link *dai)
-{
-	struct device_node *of_codec_root;
-	int ret;
-
-	of_codec_root = of_get_child_by_name(node, "codec");
-	if (!of_codec_root) {
-		/* default codec */
-		dai->codecs = &null_component;
-		dai->num_codecs = 1;
-		return 0;
-	}
-
-	ret = snd_soc_of_get_dai_link_codecs(dev, of_codec_root, dai);
-	of_node_put(of_codec_root);
-	return ret;
-}
-
-static int of_parse_one_dai(struct device_node *node, struct device *dev,
-	struct snd_soc_dai_link *dai)
-{
-	int ret = 0;
-	bool ops, fixup;
-	u32 trigger, id;
-	struct device_node *daifmt = NULL;
-
-	if (!node || !dai)
-		return -EINVAL;
-
-	ret = of_property_read_string(node, "dai-name", &dai->name);
-	if (ret) {
-		pr_err("%s: fail to get dai name %d", __func__, ret);
-		goto exit;
-	}
-
-	ret = of_property_read_string(node, "stream-name", &dai->stream_name);
-	if (ret) {
-		pr_err("%s: fail to get dai stream name %d", __func__, ret);
-		goto exit;
-	}
-
-	ret = of_parse_dai_cpu(dev, node, dai);
-	if (ret) {
-		pr_err("%s: fail to parse cpu %d for %s", __func__, ret, dai->name);
-		goto exit;
-	}
-
-	ret = of_parse_dai_platform(dev, node, dai);
-	if (ret) {
-		pr_err("%s: fail to parse platform %d for %s", __func__, ret, dai->name);
-		goto exit;
-	}
-
-	ret = of_parse_dai_codec(dev, node, dai);
-	if (ret) {
-		pr_err("%s: fail to parse codec %d for %s", __func__, ret, dai->name);
-		goto exit;
-	}
-
-	ret = of_property_read_u32_index(node, "trigger", 0, &trigger);
-	if (ret == 0) {
-		switch (trigger) {
-		case 1:
-			dai->trigger[0] = SND_SOC_DPCM_TRIGGER_POST;
-			dai->trigger[1] = SND_SOC_DPCM_TRIGGER_POST;
-			break;
-		case 2:
-			/* BESPOKE triggers are gone from ASoC */
-			dai->trigger[0] = SND_SOC_DPCM_TRIGGER_POST;
-			dai->trigger[1] = SND_SOC_DPCM_TRIGGER_POST;
-			break;
-		default:
-			dai->trigger[0] = SND_SOC_DPCM_TRIGGER_PRE;
-			dai->trigger[1] = SND_SOC_DPCM_TRIGGER_PRE;
-			break;
-		}
-	} else {
-		/* default setting */
-		dai->trigger[0] = SND_SOC_DPCM_TRIGGER_POST;
-		dai->trigger[1] = SND_SOC_DPCM_TRIGGER_POST;
-	}
-
-	ret = of_property_read_u32_index(node, "id", 0, &id);
-	if (ret == 0) {
-		dai->id = id;
-		id = AOC_ID_TO_INDEX(id);
-
-		if (dai->id & AOC_BE) {
-			if (id < ARRAY_SIZE(be_res_map)) {
-				ops = of_property_read_bool(node, "useops");
-				fixup = of_property_read_bool(node, "usefixup");
-
-				if (ops)
-					dai->ops = be_res_map[id].ops;
-
-				if (fixup)
-					dai->be_hw_params_fixup =
-						be_res_map[id].fixup;
-			}
-		}
-	}
-
-	daifmt = of_get_child_by_name(node, "daifmt");
-	if (daifmt) {
-		dai->dai_fmt = snd_soc_daifmt_parse_format(daifmt, NULL);
-		dai->dai_fmt |=
-			snd_soc_daifmt_parse_clock_provider_as_flag(daifmt, NULL);
-		of_node_put(daifmt);
-		pr_debug("%s: daifmt 0x%x for %s", __func__, dai->dai_fmt,
-			dai->name);
-	}
-
-	dai->playback_only = of_property_read_bool(node, "playback") &&
-			     !of_property_read_bool(node, "capture");
-	dai->capture_only = of_property_read_bool(node, "capture") &&
-			    !of_property_read_bool(node, "playback");
-	dai->no_pcm = of_property_read_bool(node, "no-pcm");
-	dai->dynamic = of_property_read_bool(node, "dynamic");
-	dai->ignore_pmdown_time =
-		!of_property_read_bool(node, "require-pmdown-time");
-	dai->ignore_suspend = !of_property_read_bool(node, "require-suspend");
-exit:
-
-	return ret;
-}
+struct aoc_fe_desc {
+	u32 port;
+	const char *name;
+	enum aoc_fe_kind kind;
+};
 
 /*
+ * The front ends, as Google's device trees describe them: the AoC DAI, the
+ * link's name (the AoC service the PCM drivers open by it) and the
+ * component that serves the PCM. Every front end but the in-call family is
+ * a DPCM front end.
+ *
  * ASoC numbers a card's PCMs in DAI link order, and the PCM drivers take the
  * AoC entry point (and the capture use case) from the PCM number, so the
  * links must be in the order of Google's device tree for cheetah. Do not
  * rely on the device tree's node order (a card added by an overlay can come
- * out in another order): sort the front ends by link id into that order;
- * front ends not in the list follow, then the back ends, each in device
- * tree order.
+ * out in another order): the front ends are sorted into the order of this
+ * table, then the back ends follow in device tree order.
  */
-static const u32 aoc_stock_fe_order[] = {
-	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,	/* EP1-EP8 playback: PCM 0-7 */
-	0x40000000, 0x40000001, 0x40000002,		/* EP1-EP6 capture: PCM 8-13 */
-	0x40000003, 0x40000004, 0x40000005,
-	0x20000008, 0x60000008,				/* no-host 1 */
-	0x0a, 0x4000000a,				/* VoIP */
-	0x0b, 0x0c, 0x4000000d, 0x4000000e, 0x4000000f,	/* in-call */
-	0x09,						/* raw */
-	0x20000011,					/* haptics no-host */
-	0x10, 0x40000010,				/* HiFi out, in */
-	0x40000012,					/* Android AEC */
-	0x13,						/* ultrasonic */
-	0x14,						/* in-call playback 2 */
-	0x15,						/* immersive */
-	0x16,						/* capture inject */
-	0x40000017,					/* hotword tap */
+static const struct aoc_fe_desc aoc_fe_links[] = {
+	/* EP1-EP8 playback: PCM 0-7 */
+	{ AOC_PORT_EP1_PLAYBACK, "audio_playback0", AOC_FE_PCM },
+	{ AOC_PORT_EP2_PLAYBACK, "audio_playback1", AOC_FE_PCM },
+	{ AOC_PORT_EP3_PLAYBACK, "audio_playback2", AOC_FE_PCM },
+	{ AOC_PORT_EP4_PLAYBACK, "audio_playback3", AOC_FE_PCM },
+	{ AOC_PORT_EP5_PLAYBACK, "audio_playback4", AOC_FE_VOICE },
+	{ AOC_PORT_EP6_PLAYBACK, "audio_playback5", AOC_FE_PCM },
+	{ AOC_PORT_EP7_PLAYBACK, "audio_playback6", AOC_FE_COMPR },
+	{ AOC_PORT_EP8_PLAYBACK, "audio_haptics", AOC_FE_PCM },
+	/* EP1-EP6 capture: PCM 8-13 */
+	{ AOC_PORT_EP1_CAPTURE, "audio_capture0", AOC_FE_PCM },
+	{ AOC_PORT_EP2_CAPTURE, "audio_capture1", AOC_FE_PCM },
+	{ AOC_PORT_EP3_CAPTURE, "audio_capture2", AOC_FE_PCM },
+	{ AOC_PORT_EP4_CAPTURE, "audio_capture3", AOC_FE_VOICE },
+	{ AOC_PORT_EP5_CAPTURE, "ultrasonic_capture", AOC_FE_PCM },
+	{ AOC_PORT_EP6_CAPTURE, "audio_capture5", AOC_FE_PCM },
+	{ AOC_PORT_NOHOST1_PLAYBACK, "nohost1 playback", AOC_FE_NOHOST },
+	{ AOC_PORT_NOHOST1_CAPTURE, "nohost1 capture", AOC_FE_NOHOST },
+	{ AOC_PORT_VOIP_PLAYBACK, "audio_voip_rx", AOC_FE_VOIP },
+	{ AOC_PORT_VOIP_CAPTURE, "audio_voip_tx", AOC_FE_VOIP },
+	{ AOC_PORT_INCALL0_PLAYBACK, "audio_incall_pb_0", AOC_FE_INCALL },
+	{ AOC_PORT_INCALL1_PLAYBACK, "audio_incall_pb_1", AOC_FE_INCALL },
+	{ AOC_PORT_INCALL0_CAPTURE, "audio_incall_cap_0", AOC_FE_INCALL },
+	{ AOC_PORT_INCALL1_CAPTURE, "audio_incall_cap_1", AOC_FE_INCALL },
+	{ AOC_PORT_INCALL2_CAPTURE, "audio_incall_cap_2", AOC_FE_INCALL },
+	{ AOC_PORT_RAW_PLAYBACK, "audio_raw", AOC_FE_PCM },
+	{ AOC_PORT_HAPTIC_NOHOST_PLAYBACK, "haptic nohost playback", AOC_FE_NOHOST },
+	{ AOC_PORT_HIFI_PLAYBACK, "audio_hifiout", AOC_FE_INCALL },
+	{ AOC_PORT_HIFI_CAPTURE, "audio_hifiin", AOC_FE_INCALL },
+	{ AOC_PORT_ANDROID_AEC_CAPTURE, "audio_android_aec", AOC_FE_INCALL },
+	{ AOC_PORT_ULTRASONIC_PLAYBACK, "audio_ultrasonic", AOC_FE_PCM },
+	{ AOC_PORT_INCALL2_PLAYBACK, "audio_incall_pb_2", AOC_FE_INCALL },
+	{ AOC_PORT_IMMERSIVE_PLAYBACK, "audio_immersive", AOC_FE_PCM },
+	{ AOC_PORT_CAPTURE_INJECT_PLAYBACK, "audio_capture_inject", AOC_FE_INCALL },
+	{ AOC_PORT_HOTWORD_TAP_CAPTURE, "audio_hotword_tap", AOC_FE_INCALL },
+	/* Not on cheetah: after its front ends */
+	{ AOC_PORT_INCALL3_CAPTURE, "audio_incall_cap_3", AOC_FE_INCALL },
 };
 
-static unsigned int aoc_link_rank(const struct snd_soc_dai_link *link, unsigned int pos)
+static_assert(AOC_DAI_BACK_END == AOC_BE);
+static_assert(AOC_DAI_CAPTURE == AOC_TX);
+static_assert(AOC_DAI_NO_HOST == AOC_NOHOST);
+
+static int aoc_fe_index(u32 port)
 {
 	unsigned int i;
 
-	if (link->id & AOC_BE)
-		return 0x20000 + pos;
-	for (i = 0; i < ARRAY_SIZE(aoc_stock_fe_order); i++)
-		if (link->id == aoc_stock_fe_order[i])
+	for (i = 0; i < ARRAY_SIZE(aoc_fe_links); i++)
+		if (aoc_fe_links[i].port == port)
 			return i;
-	return 0x10000 + pos;
+	return -ENOENT;
+}
+
+static int aoc_of_parse_link_cpu(struct device *dev, struct device_node *node,
+				 struct snd_soc_dai_link *link, u32 *port)
+{
+	struct snd_soc_dai_link_component *cpu;
+	struct device_node *np;
+	struct of_phandle_args args;
+	int ret;
+
+	np = of_get_child_by_name(node, "cpu");
+	if (!np) {
+		dev_err(dev, "%pOF: no cpu\n", node);
+		return -EINVAL;
+	}
+
+	cpu = devm_kzalloc(dev, sizeof(*cpu), GFP_KERNEL);
+	if (!cpu) {
+		of_node_put(np);
+		return -ENOMEM;
+	}
+
+	ret = of_parse_phandle_with_args(np, "sound-dai", "#sound-dai-cells",
+					 0, &args);
+	of_node_put(np);
+	if (ret) {
+		dev_err(dev, "%pOF: bad cpu sound-dai\n", node);
+		return ret;
+	}
+
+	if (args.args_count != 1) {
+		dev_err(dev, "%pOF: the AoC DAI takes one cell\n", node);
+		of_node_put(args.np);
+		return -EINVAL;
+	}
+
+	ret = snd_soc_get_dlc(&args, cpu);
+	if (ret) {
+		of_node_put(args.np);
+		return dev_err_probe(dev, ret, "%pOF: no AoC DAI %#x\n",
+				     node, args.args[0]);
+	}
+
+	link->cpus = cpu;
+	link->num_cpus = 1;
+	*port = args.args[0];
+	return 0;
+}
+
+static int aoc_of_parse_link_codec(struct device *dev,
+				   struct device_node *node,
+				   struct snd_soc_dai_link *link)
+{
+	struct device_node *np;
+	int ret;
+
+	np = of_get_child_by_name(node, "codec");
+	if (!np) {
+		link->codecs = &null_component;
+		link->num_codecs = 1;
+		return 0;
+	}
+
+	ret = snd_soc_of_get_dai_link_codecs(dev, np, link);
+	of_node_put(np);
+	return ret;
+}
+
+/*
+ * A link is its AoC DAI: a back end gets the AoC port's stream operations and
+ * hardware parameters and no PCM of its own; a front end gets its AoC
+ * service name and the component that serves its PCM from aoc_fe_links. The
+ * capture bit makes the link capture-only, otherwise it is playback-only.
+ */
+static int aoc_of_parse_one_link(struct device *dev, struct device_node *node,
+				 struct snd_soc_dai_link *link)
+{
+	struct snd_soc_dai_link_component *platform;
+	const struct aoc_fe_desc *fe;
+	const char *name;
+	u32 port, idx;
+	int ret;
+
+	ret = of_property_read_string(node, "link-name", &name);
+	if (ret) {
+		dev_err(dev, "%pOF: no link-name\n", node);
+		return ret;
+	}
+	link->stream_name = name;
+
+	ret = aoc_of_parse_link_cpu(dev, node, link, &port);
+	if (ret)
+		return ret;
+	link->id = port;
+	idx = AOC_ID_TO_INDEX(port);
+
+	if (port & AOC_DAI_BACK_END) {
+		if (idx >= ARRAY_SIZE(be_res_map) || !be_res_map[idx].ops) {
+			dev_err(dev, "%pOF: unknown AoC port %#x\n", node, port);
+			return -EINVAL;
+		}
+		link->name = name;
+		link->no_pcm = 1;
+		link->ops = be_res_map[idx].ops;
+		link->be_hw_params_fixup = be_res_map[idx].fixup;
+	} else {
+		ret = aoc_fe_index(port);
+		if (ret < 0) {
+			dev_err(dev, "%pOF: unknown AoC entry point %#x\n",
+				node, port);
+			return -EINVAL;
+		}
+		fe = &aoc_fe_links[ret];
+
+		platform = devm_kzalloc(dev, sizeof(*platform), GFP_KERNEL);
+		if (!platform)
+			return -ENOMEM;
+		platform->name = aoc_fe_platform[fe->kind];
+
+		link->name = fe->name;
+		link->platforms = platform;
+		link->num_platforms = 1;
+		link->dynamic = fe->kind != AOC_FE_INCALL;
+	}
+
+	if (port & AOC_DAI_CAPTURE)
+		link->capture_only = 1;
+	else
+		link->playback_only = 1;
+
+	ret = aoc_of_parse_link_codec(dev, node, link);
+	if (ret)
+		return dev_err_probe(dev, ret, "%pOF: bad codec\n", node);
+
+	if (of_property_present(node, "dai-format")) {
+		link->dai_fmt = snd_soc_daifmt_parse_format(node, NULL);
+		link->dai_fmt |=
+			snd_soc_daifmt_parse_clock_provider_as_flag(node, NULL);
+	}
+
+	link->trigger[0] = SND_SOC_DPCM_TRIGGER_POST;
+	link->trigger[1] = SND_SOC_DPCM_TRIGGER_POST;
+	link->ignore_pmdown_time = 1;
+	link->ignore_suspend = 1;
+
+	return 0;
+}
+
+/* Every front end is in aoc_fe_links: aoc_of_parse_one_link() checked */
+static unsigned int aoc_link_rank(const struct snd_soc_dai_link *link, unsigned int pos)
+{
+	if (link->id & AOC_DAI_BACK_END)
+		return ARRAY_SIZE(aoc_fe_links) + pos;
+	return aoc_fe_index(link->id);
 }
 
 static int aoc_sort_dai_links(struct device *dev, struct snd_soc_card *card)
@@ -1345,171 +1323,59 @@ static int aoc_sort_dai_links(struct device *dev, struct snd_soc_card *card)
 	return 0;
 }
 
+/* The card's links are its children with a cpu node */
+static bool aoc_of_is_link(struct device_node *np)
+{
+	struct device_node *cpu = of_get_child_by_name(np, "cpu");
+	bool is_link = cpu;
+
+	of_node_put(cpu);
+	return is_link;
+}
+
 static int aoc_of_parse_dai_link(struct device_node *node,
 				 struct snd_soc_card *card)
 {
-	int ret = 0, count;
-	struct device_node *np_dai;
-	struct device_node *np = NULL;
 	struct device *dev = card->dev;
-	struct snd_soc_dai_link *dai_link;
+	struct snd_soc_dai_link *link;
+	unsigned int count = 0;
+	int ret;
 
-	np_dai = of_get_child_by_name(node, "dai_link");
-	if (!np_dai) {
-		pr_err("%s: can't find dai-link node", __func__);
+	for_each_available_child_of_node_scoped(node, np)
+		if (aoc_of_is_link(np))
+			count++;
+	if (!count) {
+		dev_err(dev, "no DAI links\n");
 		return -EINVAL;
 	}
 
-	count = (int)of_get_available_child_count(np_dai);
-	if (count <= 0) {
-		pr_err("%s: count %d invalid", __func__, count);
-		ret = -EINVAL;
-		goto err;
-	}
+	link = devm_kcalloc(dev, count, sizeof(*link), GFP_KERNEL);
+	if (!link)
+		return -ENOMEM;
+	card->dai_link = link;
+	card->num_links = 0;
 
-	dai_link = devm_kzalloc(dev, sizeof(struct snd_soc_dai_link) * count,
-				GFP_KERNEL);
-	if (!dai_link) {
-		pr_err("%s: fail to allocate memory for dai_link", __func__);
-		ret = -ENOMEM;
-		goto err;
-	}
-
-	card->num_links = count;
-	card->dai_link = dai_link;
-
-	count = 0;
-	for_each_available_child_of_node (np_dai, np) {
-		if (count >= card->num_links) {
-			pr_err("%s: dai link num is full %u", __func__, count);
+	for_each_available_child_of_node_scoped(node, np) {
+		if (!aoc_of_is_link(np))
+			continue;
+		if (card->num_links == count)
 			break;
-		}
 
-		ret = of_parse_one_dai(np, card->dev, dai_link);
-		if (ret) {
-			if (ret == -EPROBE_DEFER) {
-				pr_info("%s: register sound card later",
-					__func__);
-			} else {
-				/*
-				 * If any dai link error, then
-				 * sound card should be fail
-				 */
-				pr_err("%s: fail to parse %s", __func__,
-					np->name);
-			}
-			break;
-		}
-#ifdef DUMP_DAI_LINK_INFO
-		pr_info("dai: %s\n", dai_link->name);
-		pr_info("id: %u\n", (uint32_t)dai_link->id);
-		pr_info("playback-only %u capture-only %u\n", dai_link->playback_only,
-			dai_link->capture_only);
-		pr_info("no-pcm: %u\n", dai_link->no_pcm);
-		pr_info("dynamic: %u\n", dai_link->dynamic);
-		pr_info("\n");
-#endif
-		dai_link++;
-		count++;
+		/* counted first, so that put_dai_links() releases a partial one */
+		card->num_links++;
+		ret = aoc_of_parse_one_link(dev, np, link);
+		if (ret)
+			goto err;
+		link++;
 	}
-	if (ret < 0)
-		goto err;
 
-	card->num_links = count;
 	ret = aoc_sort_dai_links(dev, card);
-	of_node_put(np_dai);
-	return ret;
-
-err:
-	put_dai_links(card);
-	of_node_put(np_dai);
-	return ret;
-}
-
-static int of_parse_one_codec_cfg(struct device_node *node,
-	struct snd_soc_codec_conf *codec_cfg)
-{
-	int ret = 0;
-	struct device_node *of_node;
-
-	if (!node || !codec_cfg)
-		return -EINVAL;
-
-	of_node = of_parse_phandle(node, "of_node", 0);
-	if (!of_node) {
-		pr_err("%s: fail to get of_node for %s", __func__, node->name);
-		ret = -EINVAL;
+	if (ret)
 		goto err;
-	}
-
-	codec_cfg->dlc.of_node = of_node;
-
-	ret = of_property_read_string(node, "prefix", &codec_cfg->name_prefix);
-	if (ret) {
-		pr_err("%s: fail to get prefix for %s %d", __func__, node->name,
-		       ret);
-		goto err;
-	}
 	return 0;
 
 err:
-	return ret;
-}
-
-static int aoc_of_parse_codec_conf(struct device_node *node,
-	struct snd_soc_card *card)
-{
-	int ret = 0, count;
-	struct device_node *np_cfg;
-	struct device_node *np = NULL;
-	struct snd_soc_codec_conf *codec_cfg;
-	struct device *dev = card->dev;
-
-	np_cfg = of_get_child_by_name(node, "codec_cfg");
-	if (!np_cfg) {
-		pr_info("%s: can't find codec cfg node", __func__);
-		return 0;
-	}
-
-	count = (int)of_get_available_child_count(np_cfg);
-	if (count <= 0) {
-		pr_err("%s: count %d invalid", __func__, count);
-		ret = -EINVAL;
-		goto err;
-	}
-
-	codec_cfg = devm_kzalloc(dev, sizeof(struct snd_soc_codec_conf) * count,
-				 GFP_KERNEL);
-	if (!codec_cfg) {
-		pr_err("%s: fail to allocate memory for codec_cfg", __func__);
-		ret = -ENOMEM;
-		goto err;
-	}
-
-	card->num_configs = count;
-	card->codec_conf = codec_cfg;
-
-	count = 0;
-	for_each_available_child_of_node (np_cfg, np) {
-		if (count >= card->num_configs) {
-			pr_err("%s: conf num is full %u", __func__, count);
-			break;
-		}
-
-		ret = of_parse_one_codec_cfg(np, codec_cfg);
-		if (ret) {
-			memset(codec_cfg, 0, sizeof(*codec_cfg));
-			continue;
-		}
-
-		codec_cfg++;
-		count++;
-	}
-	card->num_configs = count;
-	ret = 0;
-
-err:
-	of_node_put(np_cfg);
+	put_dai_links(card);
 	return ret;
 }
 
@@ -1737,12 +1603,6 @@ static int aoc_snd_card_parse_of(struct device_node *node,
 		goto err;
 	}
 
-	ret = aoc_of_parse_codec_conf(node, card);
-	if (ret) {
-		pr_err("%s: fail to parse codec conf %d", __func__, ret);
-		goto err;
-	}
-
 	ret = aoc_of_parse_hs_jack(node, pdata);
 	if (ret) {
 		pr_err("%s: fail to parse hs jack %d", __func__, ret);
@@ -1761,7 +1621,7 @@ static int aoc_snd_card_parse_of(struct device_node *node,
 		goto err;
 	}
 
-	ret = snd_soc_of_parse_card_name(card, "aoc-card-name");
+	ret = snd_soc_of_parse_card_name(card, "model");
 	if (ret) {
 		pr_err("%s: fail to parse snd card name %d", __func__, ret);
 		goto err;
@@ -2159,9 +2019,8 @@ static void aoc_snd_card_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id aoc_snd_of_match[] = {
-	{
-		.compatible = "google-aoc-snd-card",
-	},
+	{ .compatible = "google,gs201-aoc-sound" },
+	{ .compatible = "google,zumapro-aoc-sound" },
 	{},
 };
 MODULE_DEVICE_TABLE(of, aoc_snd_of_match);
