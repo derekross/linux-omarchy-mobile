@@ -1,0 +1,453 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Google Pixel 9 Pro XL (komodo) board identification.
+ *
+ * Boot, storage, display and USB2 paths are described here. Experimental
+ * touch, Type-C, WLAN and GPU devices remain disabled.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/clock/google,zumapro-acpm.h>
+#include <dt-bindings/input/linux-event-codes.h>
+#include "../exynos-pinctrl.h"
+#include "zumapro.dtsi"
+/* SoC reservations remain source-derived. Komodo's display handoff is added
+ * below from the live address and geometry measured on the phone.
+ */
+#include "zumapro-reserved-memory.dtsi"
+
+/ {
+	model = "Google Pixel 9 Pro XL";
+	compatible = "google,zumapro-komodo", "google,zumapro";
+
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		key-power {
+			label = "Power";
+			linux,code = <KEY_POWER>;
+			gpios = <&gpa4 0 GPIO_ACTIVE_LOW>;
+			wakeup-source;
+		};
+
+		key-volume-down {
+			label = "Volume Down";
+			linux,code = <KEY_VOLUMEDOWN>;
+			gpios = <&gpa4 1 GPIO_ACTIVE_LOW>;
+		};
+
+		key-volume-up {
+			label = "Volume Up";
+			linux,code = <KEY_VOLUMEUP>;
+			gpios = <&gpa6 2 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	/* Zumapro's UFS VCC switch is GPIO GPP0[1]. */
+	ufs_vcc: regulator-ufs-vcc {
+		compatible = "regulator-fixed";
+		regulator-name = "ufs-vcc";
+		gpio = <&gpp0 1 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-boot-on;
+		regulator-always-on;
+	};
+
+	wlan_reg_on: regulator-wlan-reg-on {
+		compatible = "regulator-fixed";
+		regulator-name = "wlan-reg-on";
+		gpio = <&gph3 4 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <150000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&komodo_wlan_reg_on_pins>;
+		status = "disabled";
+	};
+
+	/* The phone reports package mode 0; Google's tuple identifies FOPLP. */
+	soc_compatible {
+		A0_FOPLP {
+			product_id = <0x9875>;
+			major = <0>;
+			minor = <0>;
+			pkg_mode = <0>;
+		};
+
+		A1_FOPLP {
+			product_id = <0x9875>;
+			major = <0>;
+			minor = <1>;
+			pkg_mode = <0>;
+		};
+
+		A0_IPOP {
+			product_id = <0x9875>;
+			major = <0>;
+			minor = <0>;
+			pkg_mode = <1>;
+		};
+
+		A1_IPOP {
+			product_id = <0x9875>;
+			major = <0>;
+			minor = <1>;
+			pkg_mode = <1>;
+		};
+	};
+
+	chosen {
+		bootargs = "clk_ignore_unused pd_ignore_unused panic=10 mem_sleep_default=s2idle";
+	};
+
+	komodo_gpu_opp: opp-table-gpu {
+		compatible = "operating-points-v2";
+		status = "disabled";
+
+		opp-150000000 {
+			opp-hz = /bits/ 64 <150000000>;
+			opp-suspend;
+		};
+
+		opp-302000000 {
+			opp-hz = /bits/ 64 <302000000>;
+		};
+	};
+};
+
+/ {
+	reserved-memory {
+		komodo_boot_fb: framebuffer@fac00000 {
+			reg = <0x0 0xfac00000 (1344 * 2992 * 4)>;
+			no-map;
+		};
+
+		komodo_display_pool: display-pool {
+			compatible = "shared-dma-pool";
+			reusable;
+			size = <0x04000000>;
+			alignment = <0x0 0x00200000>;
+			alloc-ranges = <0x0 0xc4000000 0x10000000>;
+		};
+
+		/*
+		 * All of the Wi-Fi chip's DMA buffers come from this pool. It keeps
+		 * driver bugs away from the rest of RAM; it does not confine the
+		 * chip's own firmware, as the HSI2 System MMU and S2MPU see PCIe and
+		 * UFS on the same VID and cannot enforce on it.
+		 */
+		wifi_dma_pool: wifi-dma-pool {
+			compatible = "restricted-dma-pool";
+			size = <0x01000000>;
+			alignment = <0x0 0x00200000>;
+			alloc-ranges = <0x0 0x80000000 0x80000000>;
+		};
+
+	};
+};
+
+&decon0 {
+	compatible = "google,zumapro-decon";
+	memory-region = <&komodo_display_pool>, <&komodo_boot_fb>;
+	memory-region-names = "pool", "boot-framebuffer";
+	status = "okay";
+};
+
+/* Service both boot-enabled cluster watchdogs during early Linux startup. */
+&pmu_system_controller {
+	status = "okay";
+};
+
+/* The watchdog clocks are supplied by these disabled-by-default CMUs. */
+&cmu_top {
+	status = "okay";
+};
+
+&cmu_misc {
+	status = "okay";
+};
+
+&watchdog_cl0 {
+	status = "okay";
+};
+
+&watchdog_cl1 {
+	status = "okay";
+};
+
+/* UFS with this supply was exercised in rescue and persistent boots. */
+&sysreg_ufs {
+	status = "okay";
+};
+
+&pinctrl_hsi2ufs {
+	status = "okay";
+};
+
+&ufs {
+	vcc-supply = <&ufs_vcc>;
+	status = "okay";
+};
+
+&ufs_phy {
+	status = "okay";
+};
+
+/* UFS's core and UniPro clocks are exported by the HSI2 CMU. */
+&cmu_hsi2 {
+	status = "okay";
+};
+
+/* ACPM owns the PMIC rails used by the USB2 PHY and the disabled touch node. */
+&acpm_ipc {
+	status = "okay";
+
+	pmic-1 {
+		compatible = "samsung,s2mpg14-pmic";
+
+		regulators {
+			eusb_vdd: ldo8m {
+				regulator-name = "eusb-vdd";
+			};
+
+			eusb_vdda12: ldo9m {
+				regulator-name = "eusb-vdda12";
+			};
+
+			touch_avdd: ldo4m {
+				regulator-name = "touch-avdd";
+				regulator-min-microvolt = <3300000>;
+				regulator-max-microvolt = <3300000>;
+			};
+
+			touch_vdd: ldo25m {
+				regulator-name = "touch-vdd";
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+			};
+		};
+	};
+};
+
+&ap2apm_mailbox {
+	status = "okay";
+};
+
+&apm_sram {
+	status = "okay";
+};
+
+&cmu_apm {
+	status = "okay";
+};
+
+&cmu_hsi0 {
+	status = "okay";
+};
+
+&cmu_peric0 {
+	status = "okay";
+};
+
+&sysreg_apm {
+	status = "okay";
+};
+
+&sysreg_hsi0 {
+	status = "okay";
+};
+
+&sysreg_peric0 {
+	status = "okay";
+};
+
+&pinctrl_alive {
+	status = "okay";
+
+	komodo_usb_pd_irq: usb-pd-irq-pins {
+		samsung,pins = "gpa8-3";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
+		samsung,pin-drv = <0>;
+	};
+};
+
+&pinctrl_custom_alive {
+	status = "okay";
+};
+
+&pinctrl_peric0 {
+	status = "okay";
+
+	komodo_hsi2c6_pins: hsi2c6-bus-pins {
+		samsung,pins = "gpp12-0", "gpp12-1";
+		samsung,pin-function = <3>;
+		samsung,pin-pud = <3>;
+		samsung,pin-drv = <0>;
+	};
+
+	komodo_touch_reset: touch-reset-pins {
+		samsung,pins = "gpp1-1";
+		samsung,pin-function = <1>;
+		samsung,pin-val = <0>;
+	};
+};
+
+&pinctrl_hsi2 {
+	status = "okay";
+
+	komodo_wlan_reg_on_pins: wlan-reg-on-pins {
+		samsung,pins = "gph3-4";
+		samsung,pin-function = <2>;
+		samsung,pin-pud = <0>;
+		samsung,pin-con-pdn = <3>;
+		samsung,pin-pud-pdn = <0>;
+		samsung,pin-drv = <2>;
+	};
+};
+
+&gpa4 {
+	interrupt-controller;
+	#interrupt-cells = <2>;
+	interrupts = <GIC_SPI 28 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 29 IRQ_TYPE_LEVEL_HIGH>;
+};
+
+&gpa6 {
+	interrupt-controller;
+	#interrupt-cells = <2>;
+	interrupts = <GIC_SPI 30 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 31 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 32 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 33 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 34 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 35 IRQ_TYPE_LEVEL_HIGH>;
+};
+
+&gpa8 {
+	interrupt-controller;
+	#interrupt-cells = <2>;
+	interrupt-parent = <&gic>;
+	interrupts = <0 44 4>, <0 45 4>, <0 46 4>, <0 47 4>;
+};
+
+&gpn0 {
+	interrupt-controller;
+	#interrupt-cells = <2>;
+	interrupts = <0 0 4>;
+};
+
+&usi6 {
+	status = "okay";
+};
+
+&hsi2c6 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&komodo_hsi2c6_pins>;
+	status = "okay";
+
+	tcpc@25 {
+		compatible = "maxim,max77759-tcpci", "maxim,max33359";
+		reg = <0x25>;
+		interrupt-parent = <&gpa8>;
+		interrupts = <3 8>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&komodo_usb_pd_irq>;
+		status = "disabled";
+
+		connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			data-role = "dual";
+			power-role = "sink";
+			try-power-role = "sink";
+		};
+	};
+};
+
+&usi2_hsi0 {
+	status = "okay";
+};
+
+&spi20 {
+	status = "okay";
+
+	touchscreen@0 {
+		compatible = "syna,s3908";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+		interrupt-parent = <&gpn0>;
+		interrupts = <0 8>;
+		reset-gpios = <&gpp1 1 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&komodo_touch_reset>;
+		avdd-supply = <&touch_avdd>;
+		vdd-supply = <&touch_vdd>;
+		status = "disabled";
+	};
+};
+
+&usb {
+	clocks = <&cmu_hsi0 CLK_GOUT_HSI0_USB_LINK>,
+		 <&cmu_hsi0 CLK_MOUT_HSI0_USB20_REF>,
+		 <&cmu_hsi0 CLK_GOUT_HSI0_USB_SUSPEND>,
+		 <&cmu_hsi0 CLK_GOUT_HSI0_USB_SUBCTL>;
+	clock-names = "bus_early", "ref", "suspend", "subctl";
+	dr_mode = "peripheral";
+	maximum-speed = "high-speed";
+	snps,dis-u2-freeclk-exists-quirk;
+	snps,usb2-gadget-lpm-disable;
+	status = "okay";
+};
+
+&usb_hsphy {
+	vdd-supply = <&eusb_vdd>;
+	vdda12-supply = <&eusb_vdda12>;
+	status = "okay";
+};
+
+&usbdrd_phy {
+	status = "okay";
+};
+
+&pcie_1 {
+	status = "disabled";
+	max-link-speed = <3>;
+
+	pcie@0,0 {
+		compatible = "pciclass,0604";
+		device_type = "pci";
+		reg = <0x0 0x0 0x0 0x0 0x0>;
+		bus-range = <0x01 0xff>;
+		#address-cells = <3>;
+		#size-cells = <2>;
+		ranges;
+		vpcie3v3-supply = <&wlan_reg_on>;
+		aspm-no-l0s;
+		aspm-no-l1;
+		status = "disabled";
+
+		wifi@0,0 {
+			compatible = "pci14e4,4438";
+			reg = <0x10000 0x0 0x0 0x0 0x0>;
+			brcm,board-type = "google,zumapro-komodo";
+			memory-region = <&wifi_dma_pool>;
+			status = "disabled";
+		};
+	};
+};
+
+&pcie_1_phy {
+	status = "disabled";
+};
+
+&gpu {
+	clocks = <&acpm_ipc ZUMAPRO_CLK_ACPM_GPU>,
+		 <&cmu_g3d CLK_GOUT_G3D_COREGROUP>,
+		 <&cmu_g3d CLK_GOUT_G3D_STACKS>;
+	operating-points-v2 = <&komodo_gpu_opp>;
+	status = "disabled";
+};

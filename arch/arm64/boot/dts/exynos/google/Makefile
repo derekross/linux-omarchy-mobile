@@ -11,6 +11,7 @@ dtb-$(CONFIG_ARCH_EXYNOS) += \
 	zuma-akita.dtb \
 	zuma-husky.dtb \
 	zumapro-comet.dtb \
+	zumapro-komodo.dtb \
 	zumapro-tegu.dtb
 
 # ABL applies board overlays, so keep symbols for labels
@@ -24,4 +25,5 @@ DTC_FLAGS_gs201-panther += -@
 DTC_FLAGS_zuma-akita += -@
 DTC_FLAGS_zuma-husky += -@
 DTC_FLAGS_zumapro-comet += -@
+DTC_FLAGS_zumapro-komodo += -@
 DTC_FLAGS_zumapro-tegu += -@
