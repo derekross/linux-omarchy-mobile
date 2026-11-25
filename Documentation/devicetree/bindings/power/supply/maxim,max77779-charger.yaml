@@ -30,7 +30,8 @@ properties:
   interrupts:
     maxItems: 1
     description: The charger's interrupt, through the PMIC's interrupt
-      controller.
+      controller (maxim,max77779-pmic), whose cells name the chip's
+      interrupt sources; the charger is source 2.
 
 required:
   - compatible
