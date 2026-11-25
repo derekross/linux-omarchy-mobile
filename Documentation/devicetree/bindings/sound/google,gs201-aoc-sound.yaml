@@ -1,0 +1,117 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/sound/google,gs201-aoc-sound.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Google Tensor AoC sound card
+
+maintainers:
+  - W4HO <87742609+W4HO-ham@users.noreply.github.com>
+
+description:
+  The sound card of the AoC, the audio and sensor DSP of Tensor SoCs. Its
+  front ends are the AoC's entry points, and its back ends are the AoC's
+  ports to the amplifiers, microphones, Bluetooth, USB and the modem. Every
+  link runs on an AoC DAI, named by the AoC node and one cell from
+  include/dt-bindings/sound/google,aoc.h. The driver derives the rest of a
+  link from that cell, as Google's device trees set it.
+
+allOf:
+  - $ref: sound-card-common.yaml#
+
+properties:
+  compatible:
+    enum:
+      - google,gs201-aoc-sound
+      - google,zumapro-aoc-sound
+
+patternProperties:
+  "^[a-z0-9-]+-dai-link$":
+    type: object
+    description: A DAI link, a front end or a back end by its AoC DAI.
+    additionalProperties: false
+
+    properties:
+      link-name:
+        $ref: /schemas/types.yaml#/definitions/string
+        description:
+          The link's stream name, which names its PCM device and which UCM
+          profiles match.
+
+      dai-format:
+        description: The back end's format on the wire.
+        enum: [i2s, dsp_a, dsp_b, left_j, right_j]
+
+      bitclock-inversion:
+        description: The back end's bit clock is inverted.
+        type: boolean
+
+      cpu:
+        type: object
+        description: The AoC DAI.
+        additionalProperties: false
+        properties:
+          sound-dai:
+            maxItems: 1
+        required:
+          - sound-dai
+
+      codec:
+        type: object
+        description: The back end's codecs.
+        additionalProperties: false
+        properties:
+          sound-dai:
+            minItems: 1
+            maxItems: 4
+        required:
+          - sound-dai
+
+    required:
+      - link-name
+      - cpu
+
+required:
+  - compatible
+  - model
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/sound/google,aoc.h>
+
+    sound {
+        compatible = "google,zumapro-aoc-sound";
+        model = "google,tegu-aoc-snd-card";
+
+        fe-ep1-rx-dai-link {
+            link-name = "EP1 playback";
+
+            cpu {
+                sound-dai = <&aoc AOC_PORT_EP1_PLAYBACK>;
+            };
+        };
+
+        fe-ep1-tx-dai-link {
+            link-name = "EP1 capture";
+
+            cpu {
+                sound-dai = <&aoc AOC_PORT_EP1_CAPTURE>;
+            };
+        };
+
+        be-tdm0-rx-dai-link {
+            link-name = "TDM_0_RX Playback";
+            dai-format = "dsp_a";
+
+            cpu {
+                sound-dai = <&aoc AOC_PORT_TDM_0_RX>;
+            };
+
+            codec {
+                sound-dai = <&amp_top>, <&amp_bottom>;
+            };
+        };
+    };
