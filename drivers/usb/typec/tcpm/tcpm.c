@@ -8077,7 +8077,12 @@ static void tcpm_port_unregister_pd(struct tcpm_port *port)
 	for (i = 0; i < port->pd_count; i++) {
 		usb_power_delivery_unregister_capabilities(port->pd_list[i]->sink_cap);
 		usb_power_delivery_unregister_capabilities(port->pd_list[i]->source_cap);
-		devm_kfree(port->dev, port->pd_list[i]);
+		/*
+		 * pd_list[i] is devm memory of port->dev: it goes when the device
+		 * does. Freeing it here with devm_kfree() warns when the port is
+		 * unregistered from a devres action of that same device, as
+		 * tcpci_maxim does, because devres has already taken the entry.
+		 */
 		port->pd_list[i] = NULL;
 		usb_power_delivery_unregister(port->pds[i]);
 		port->pds[i] = NULL;
