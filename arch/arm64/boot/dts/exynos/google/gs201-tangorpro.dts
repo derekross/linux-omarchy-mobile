@@ -4,8 +4,9 @@
  *
  * USB (NCM + ACM), the cluster watchdogs from gs201.dtsi, a
  * simple-framebuffer on the buffer the bootloader leaves the panel
- * scanning out, UFS, the three keys and the GPU. The panel driver,
- * backlight and touch stay disabled. The tablet has no modem.
+ * scanning out, UFS, the three keys, the GPU and the MAX77759's I2C bus.
+ * The panel driver, backlight and touch stay disabled. The tablet has no
+ * modem.
  */
 
 /dts-v1/;
@@ -183,4 +184,24 @@
 		touchscreen-size-y = <2560>;
 		status = "disabled";
 	};
+};
+
+/*
+ * MAX77759 (charger, Type-C port controller, fuel gauge) on USI13, as on
+ * the Pixel 7 and Pixel 7 Pro: Google's tablet tree takes it unchanged
+ * from gs201-cloudripper-battery.dtsi and gs201-common-typec.dtsi (TCPC
+ * 0x25, PMIC 0x66, fuel gauge 0x36, charger 0x69, bus pins gpp25-0/1,
+ * 400 kHz). Its devices are not described here: the Type-C port
+ * controller would take over VBUS and the data role from the forced-VBUS
+ * setup the USB PHY uses, and the USB link is our only way into the
+ * tablet.
+ */
+&usi13 {
+	samsung,mode = <USI_MODE_I2C>;
+	status = "okay";
+};
+
+&hsi2c_13 {
+	clock-frequency = <400000>;
+	status = "okay";
 };
