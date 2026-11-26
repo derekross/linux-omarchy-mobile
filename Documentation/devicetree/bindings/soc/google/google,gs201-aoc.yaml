@@ -145,13 +145,13 @@ allOf:
         mboxes:
           minItems: 48
         clocks: false
-        sensor-1v8-supply: false
-        sensor-3v3-supply: false
       required:
         - google,sysmmu
         - interrupts
         - interrupt-names
         - mboxes
+        - sensor-1v8-supply
+        - sensor-3v3-supply
   - if:
       properties:
         compatible:
