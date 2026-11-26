@@ -144,8 +144,8 @@
 
 	/*
 	 * Goodix optical under-display fingerprint sensor (stock's goodixfp
-	 * node). Trusty owns its SPI bus; Linux only switches its reset and
-	 * interrupt lines. Disabled until the fingerprint bring-up gates: it
+	 * node). Trusty owns its SPI bus; Linux only switches its supply, reset
+	 * and interrupt lines. Disabled until the fingerprint bring-up gates: it
 	 * needs Trusty and its fingerprint application.
 	 */
 	fingerprint {
@@ -153,6 +153,7 @@
 		interrupt-parent = <&gpa7>;
 		interrupts = <3 IRQ_TYPE_EDGE_RISING>;
 		reset-gpios = <&gpp1 0 GPIO_ACTIVE_LOW>;
+		vdd-supply = <&ldo15s>;
 		pinctrl-0 = <&fp_irq &fp_reset>;
 		pinctrl-names = "default";
 		status = "disabled";
@@ -264,10 +265,12 @@
 	};
 
 	/*
-	 * The sub PMIC (S2MPG15), for the sensors' two rails and the GNSS
-	 * receiver's three. The ranges are stock's and nothing sets a voltage
-	 * at probe: the AoC switches the sensor rails, and the GNSS driver will
-	 * switch its own. Only these rails are described; every other rail of
+	 * The sub PMIC (S2MPG15), for the sensors' two rails, the GNSS
+	 * receiver's three and the fingerprint sensor's one. Nothing sets a
+	 * voltage at probe (the ops have no setter), so a rail whose selector
+	 * reads outside its range fails the whole probe. The AoC switches the
+	 * sensor rails, the GNSS driver will switch its own and goodix-fp the
+	 * fingerprint's. Only these rails are described; every other rail of
 	 * the chip is left as the bootloader set it. No interrupt.
 	 */
 	pmic-2 {
@@ -305,6 +308,17 @@
 				regulator-name = "vdd_gnss_aux";
 				regulator-min-microvolt = <1600000>;
 				regulator-max-microvolt = <1950000>;
+			};
+
+			/*
+			 * L15S_UDFPS_AVDD: the fingerprint sensor's analog supply
+			 * (3.3 V on stock), with the 7 Pro's range. Stock keeps it
+			 * always on; here goodix-fp switches it, as on the 7 Pro.
+			 */
+			ldo15s: ldo15s {
+				regulator-name = "vdd_udfps";
+				regulator-min-microvolt = <2500000>;
+				regulator-max-microvolt = <3300000>;
 			};
 		};
 	};
