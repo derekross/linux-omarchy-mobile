@@ -248,18 +248,30 @@
 	};
 
 	/*
-	 * The sub PMIC (S2MPG15), for the GNSS receiver's three rails. On
-	 * stock these are always on, which is why the ranges below are stock's
-	 * and nothing sets a voltage at probe: the GNSS driver will switch
-	 * them. Only these rails are described; every other rail of the chip
-	 * is left as the bootloader set it. No interrupt. Disabled until it
-	 * has been tried on the phone.
+	 * The sub PMIC (S2MPG15), for the sensors' two rails and the GNSS
+	 * receiver's three. The ranges are stock's and nothing sets a voltage
+	 * at probe: the AoC switches the sensor rails, and the GNSS driver will
+	 * switch its own. Only these rails are described; every other rail of
+	 * the chip is left as the bootloader set it. No interrupt.
 	 */
 	pmic-2 {
 		compatible = "samsung,s2mpg15-pmic";
-		status = "disabled";
 
 		regulators {
+			/* L5S_PROX: the sensors' 3.3 V. */
+			sensor_3v3: ldo5s {
+				regulator-name = "sensor-3v3";
+				regulator-min-microvolt = <2500000>;
+				regulator-max-microvolt = <3300000>;
+			};
+
+			/* L7S_SENSORS_FPS: the sensors' 1.8 V (stock: also fingerprint). */
+			sensor_1v8: ldo7s {
+				regulator-name = "sensor-1v8";
+				regulator-min-microvolt = <1600000>;
+				regulator-max-microvolt = <1950000>;
+			};
+
 			/* L9S_GNSS_CORE, L10S_GNSS_RF and L11S_GNSS_AUX. */
 			ldo9s: ldo9s {
 				regulator-name = "vdd_gnss_core";
@@ -874,6 +886,8 @@
 &aoc {
 	google,board-id = <0x40202>;
 	google,board-rev = <0x10000>;
+	sensor-1v8-supply = <&sensor_1v8>;
+	sensor-3v3-supply = <&sensor_3v3>;
 	status = "okay";
 };
 
