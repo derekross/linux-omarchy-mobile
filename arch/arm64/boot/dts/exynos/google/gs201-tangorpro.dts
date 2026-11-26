@@ -4,8 +4,8 @@
  *
  * USB (NCM + ACM), the cluster watchdogs from gs201.dtsi, a
  * simple-framebuffer on the buffer the bootloader leaves the panel
- * scanning out, UFS and the three keys. The panel driver, backlight,
- * touch and the GPU stay disabled. The tablet has no modem.
+ * scanning out, UFS, the three keys and the GPU. The panel driver,
+ * backlight and touch stay disabled. The tablet has no modem.
  */
 
 /dts-v1/;
@@ -121,6 +121,11 @@
 			no-map;
 		};
 	};
+};
+
+&gpu {
+	/* No mali-supply: the G3D rails follow the PMU power domain and ACPM. */
+	status = "okay";
 };
 
 &ufs_0 {
