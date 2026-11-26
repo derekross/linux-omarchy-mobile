@@ -56,6 +56,8 @@
 #define  ZP_IMG_CTL_LINK_CH		GENMASK(15, 12)
 #define  ZP_IMG_CTL_LINK		GENMASK(27, 24)
 #define ZP_IMG_FRAME_ID			0x09c
+#define ZP_IMG_LOCH_EN_STATUS		0x0a8	/* the link in the low bits */
+#define  ZP_IMG_LOCH_EN_STATUS_ACTIVE	BIT(8)
 #define ZP_IMG_SQ_CONFIG_ID_LSB		0x108
 #define ZP_IMG_SQ_CONFIG_ID_MSB		0x10c
 #define ZP_IMG_SQ_BASE_ADDR_LSB		0x110
