@@ -99,6 +99,7 @@ struct nt37290 {
 	bool display_off;
 	bool pixel_off;
 	bool lhbm;
+	bool lhbm_configured;
 };
 
 static const struct regulator_bulk_data nt37290_supplies[] = {
@@ -122,6 +123,68 @@ static void nt37290_dsc_init(struct mipi_dsi_multi_context *ctx)
 				     0x89, 0x28, 0x00, 0x1e, 0xd2, 0x00, 0x02,
 				     0x25, 0x02, 0xc5, 0x00, 0x07, 0x03, 0x97,
 				     0x03, 0x64, 0x10, 0xf0);
+}
+
+/*
+ * Local high brightness mode setup (Google's nt37290_lhbm_on_setting_cmds,
+ * DVT1+ path): enables the LHBM engine, places the circle at x=720, y=2361
+ * in panel pixels, and loads the 0x87 calibration tables.
+ */
+static void nt37290_lhbm_init(struct mipi_dsi_multi_context *ctx)
+{
+	/* enable LHBM */
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x88, 0x01);
+	/* circle center: x=720, y=2361 */
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x01);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x88, 0x02, 0xd0, 0x09, 0x39);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x15);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x0a, 0x86);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x17);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x0f, 0xff);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x19);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x01, 0x4f, 0x06, 0x45, 0x0b,
+				     0x98, 0x01, 0x96, 0x08, 0x19, 0x0a, 0xfd,
+				     0x01, 0x55, 0x05, 0x84);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x3d);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x01, 0x4a);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x3f);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x08, 0xbb);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x41);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x08, 0xf4, 0x0c, 0xab, 0x00,
+				     0xd4, 0x08, 0x80, 0x09, 0x91, 0x0a, 0x87,
+				     0x04, 0x1d, 0x0b, 0x9c);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x65);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x07, 0x68);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x67);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x01, 0x1c);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x69);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x0b, 0x3c, 0x0d, 0x16, 0x04,
+				     0x32, 0x07, 0x83, 0x0d, 0x92, 0x0c, 0x87,
+				     0x07, 0x4b, 0x07, 0x18);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x29);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x09, 0xbe);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x2b);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x0d, 0x95);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x2d);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x0e, 0x45, 0x07, 0xce, 0x04,
+				     0x18, 0x03, 0x47, 0x0b, 0x52, 0x00, 0x7c,
+				     0x0d, 0x90, 0x0a, 0x8b);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x51);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x02, 0x10);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x53);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x07, 0x9d);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x55);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x01, 0x11, 0x04, 0x28, 0x00,
+				     0xf0, 0x0b, 0x8c, 0x0c, 0xc0, 0x04, 0x0f,
+				     0x05, 0x1f, 0x0e, 0x89);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x79);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x07, 0x8c);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x7b);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x0c, 0xe2);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x6f, 0x7d);
+	mipi_dsi_dcs_write_seq_multi(ctx, 0x87, 0x09, 0x08, 0x02, 0xf9, 0x01,
+				     0x08, 0x0d, 0x17, 0x04, 0x6b, 0x00, 0xd0,
+				     0x04, 0x77, 0x05, 0x7d);
 }
 
 static inline struct nt37290 *to_nt37290(struct drm_panel *panel)
@@ -318,6 +381,7 @@ static int nt37290_prepare(struct drm_panel *panel)
 
 	nt37290_init(&dsi_ctx);
 	nt37290_dsc_init(&dsi_ctx);
+	nt37290_lhbm_init(&dsi_ctx);
 	/* WQHD output selection and the enable-path DSC sequence */
 	nt37290_dsc_wqhd(&dsi_ctx);
 	/* the vendor driver cold-starts at 60 Hz */
@@ -333,6 +397,7 @@ static int nt37290_prepare(struct drm_panel *panel)
 	ctx->prepared = true;
 	ctx->display_off = true;
 	ctx->pixel_off = false;
+	ctx->lhbm_configured = true;
 
 	return 0;
 }
@@ -378,6 +443,7 @@ static int nt37290_unprepare(struct drm_panel *panel)
 
 	/* the panel loses its registers: only prepare() brings it back */
 	ctx->prepared = false;
+	ctx->lhbm_configured = false;
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
 	regulator_bulk_disable(ARRAY_SIZE(nt37290_supplies), ctx->supplies);
 
@@ -479,6 +545,17 @@ static int nt37290_set_lhbm(struct nt37290 *ctx, bool on)
 		u8 val2 = level & 0xff;
 		u8 dbv_payload[] = { 0xdf, val1, val2, val1, val2,
 				     val1, val2 };
+
+		/*
+		 * After a bootloader handover the panel was not cold-inited
+		 * by us, so load the LHBM circle geometry and calibration
+		 * tables once before the first activation.
+		 */
+		if (!ctx->lhbm_configured) {
+			nt37290_lhbm_init(&dsi_ctx);
+			if (!dsi_ctx.accum_err)
+				ctx->lhbm_configured = true;
+		}
 
 		nt37290_page(&dsi_ctx, 0x00);
 		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x4c);
@@ -835,6 +912,7 @@ static int nt37290_probe(struct mipi_dsi_device *dsi)
 				     "failed to register backlight\n");
 	ctx->bl = bl;
 	ctx->panel.backlight = bl;
+	ctx->dbv = NT37290_DEFAULT_BRIGHTNESS;
 	/* after the backlight, so the timer is cancelled before it goes away */
 	ctx->lhbm_timeout_ms = NT37290_LHBM_TIMEOUT_MS;
 	ret = devm_delayed_work_autocancel(dev, &ctx->lhbm_off_work,
