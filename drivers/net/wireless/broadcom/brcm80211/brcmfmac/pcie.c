@@ -1386,9 +1386,9 @@ static void brcmf_pcie_rx_process(struct brcmf_pciedev_info *devinfo)
  * BCM4389 on INTx: completions were seen to go unprocessed until a later
  * interrupt (ioctl timeouts, a control ring that looks stuck). Broadcom's
  * driver re-runs its interrupt work after INTx with DMA'd indices
- * (dhd_bus_handle_intx_ahead_dma_indices()). Do the same, more often: after
- * each interrupt and each doorbell, look at the D2H rings every 10 ms for
- * the next 500 ms.
+ * (dhd_bus_handle_intx_ahead_dma_indices()), for any chip. Do the same, more
+ * often: after each interrupt and each doorbell, look at the D2H rings every
+ * 10 ms for the next 500 ms.
  */
 #define BRCMF_PCIE_POLL_MS	10
 #define BRCMF_PCIE_POLL_COUNT	50
@@ -3032,7 +3032,13 @@ static void brcmf_pcie_setup(struct device *dev, int ret,
 	ret = brcmf_pcie_request_irq(devinfo);
 	if (ret)
 		goto fail;
-	devinfo->poll_enabled = brcmf_pcie_is_4389_family(devinfo);
+	/*
+	 * Broadcom's condition for the re-poll is INTx with DMA'd ring indices,
+	 * whatever the chip; the BCM4389 family polls whatever the interrupt.
+	 */
+	devinfo->poll_enabled = brcmf_pcie_is_4389_family(devinfo) ||
+				(!devinfo->pdev->msi_enabled &&
+				 devinfo->dma_idx_sz);
 
 	/* Notify early firmware before its deferred TX-buffer allocation. */
 	if (brcmf_pcie_early_hostready(devinfo))
