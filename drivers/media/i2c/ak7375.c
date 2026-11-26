@@ -350,6 +350,13 @@ static int __maybe_unused ak7375_vcm_resume(struct device *dev)
 	if (tries)
 		dev_info(dev, "answered after %u retries\n", tries);
 
+	/*
+	 * The first position write right after leaving standby can be
+	 * refused (NAK): seen on comet's ultrawide actuator, which then
+	 * kept its reset position. Give it one control step's time.
+	 */
+	usleep_range(cdef->ctrl_delay_us, cdef->ctrl_delay_us + 10);
+
 	for (val = ak7375_dev->focus->val % cdef->ctrl_steps;
 	     val <= ak7375_dev->focus->val;
 	     val += cdef->ctrl_steps) {
