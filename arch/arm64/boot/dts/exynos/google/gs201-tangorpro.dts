@@ -2,10 +2,10 @@
 /*
  * Google Pixel Tablet (tangorpro) - first-light board file.
  *
- * USB (NCM + ACM), the cluster watchdogs from gs201.dtsi and a
+ * USB (NCM + ACM), the cluster watchdogs from gs201.dtsi, a
  * simple-framebuffer on the buffer the bootloader leaves the panel
- * scanning out. The panel driver, backlight, touch, the GPU and UFS stay
- * disabled. The tablet has no modem.
+ * scanning out, and UFS. The panel driver, backlight, touch and the GPU
+ * stay disabled. The tablet has no modem.
  */
 
 /dts-v1/;
@@ -24,7 +24,7 @@
 
 	chosen {
 		/* ABL requires bootargs to exist; it appends its own after these. */
-		bootargs = "console=tty0 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init";
+		bootargs = "console=tty0 panic=10 clk_ignore_unused pd_ignore_unused rdinit=/init omamobile.ufs-probe";
 		#address-cells = <2>;
 		#size-cells = <1>;
 		ranges;
@@ -47,6 +47,19 @@
 			stride = <(1600 * 4)>;
 			format = "a8r8g8b8";
 		};
+	};
+
+	/*
+	 * UFS VCC. Google's shared gs201-ufs.dtsi drives it from GPIO gpp0-1
+	 * (boot-on) and tangorpro does not override it; with no gs201 GPIO
+	 * regulator wiring here yet, describe it as always on, as the
+	 * bootloader leaves it (as on panther).
+	 */
+	ufs_0_fixed_vcc_reg: regulator-ufs-vcc {
+		compatible = "regulator-fixed";
+		regulator-name = "ufs-vcc";
+		regulator-always-on;
+		regulator-boot-on;
 	};
 
 	reserved-memory {
@@ -72,6 +85,15 @@
 			no-map;
 		};
 	};
+};
+
+&ufs_0 {
+	vcc-supply = <&ufs_0_fixed_vcc_reg>;
+	status = "okay";
+};
+
+&ufs_0_phy {
+	status = "okay";
 };
 
 &usbdrd31_phy {
