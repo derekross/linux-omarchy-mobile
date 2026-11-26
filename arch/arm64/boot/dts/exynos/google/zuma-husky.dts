@@ -142,6 +142,22 @@
 		};
 	};
 
+	/*
+	 * Goodix optical under-display fingerprint sensor (stock's goodixfp
+	 * node). Trusty owns its SPI bus; Linux only switches its reset and
+	 * interrupt lines. Disabled until the fingerprint bring-up gates: it
+	 * needs Trusty and its fingerprint application.
+	 */
+	fingerprint {
+		compatible = "goodix,g7-udfps";
+		interrupt-parent = <&gpa7>;
+		interrupts = <3 IRQ_TYPE_EDGE_RISING>;
+		reset-gpios = <&gpp1 0 GPIO_ACTIVE_LOW>;
+		pinctrl-0 = <&fp_irq &fp_reset>;
+		pinctrl-names = "default";
+		status = "disabled";
+	};
+
 	gpio-keys {
 		compatible = "gpio-keys";
 		pinctrl-0 = <&key_voldown>, <&key_volup>, <&key_power>;
@@ -444,6 +460,13 @@
 		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
 		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
 	};
+
+	fp_irq: fp-irq-pins {
+		samsung,pins = "gpa7-3";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_UP>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
 };
 
 &pinctrl_custom_alive {
@@ -493,6 +516,14 @@
 };
 
 &pinctrl_peric0 {
+	fp_reset: fp-reset-pins {
+		samsung,pins = "gpp1-0";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
+		samsung,pin-pud-pdn = <GS101_PIN_PULL_NONE>;
+	};
+
 	amp_top_rst: amp-top-rst-pins {
 		samsung,pins = "gpp1-1";
 		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
