@@ -1632,6 +1632,15 @@ static int bcm_serdev_probe(struct serdev_device *serdev)
 			bcmdev->oper_speed = data->max_speed;
 	}
 
+	/*
+	 * A controller with a host-wake line can wake the host, so its links
+	 * can stay up through system sleep, as a phone's do. Without this the
+	 * core's suspend notifier disconnects every link before each sleep,
+	 * and a headset reconnects all its profiles at once after the wake.
+	 */
+	if (bcmdev->irq > 0)
+		set_bit(HCI_UART_NO_SUSPEND_NOTIFIER, &bcmdev->serdev_hu.flags);
+
 	return hci_uart_register_device(&bcmdev->serdev_hu, &bcm_proto);
 }
 
