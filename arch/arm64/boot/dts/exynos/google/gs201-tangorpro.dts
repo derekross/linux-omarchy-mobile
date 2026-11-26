@@ -5,8 +5,8 @@
  * USB (NCM + ACM), the cluster watchdogs from gs201.dtsi, a
  * simple-framebuffer on the buffer the bootloader leaves the panel
  * scanning out, UFS, the three keys, the GPU and the MAX77759's I2C bus.
- * The panel driver, backlight and touch stay disabled. The tablet has no
- * modem.
+ * The panel driver, backlight, touch and the fuel gauge stay disabled. The
+ * tablet has no modem.
  */
 
 /dts-v1/;
@@ -49,6 +49,19 @@
 			stride = <(1600 * 4)>;
 			format = "a8r8g8b8";
 		};
+	};
+
+	/*
+	 * Google's tangorpro tree: google,chg-battery-capacity 6900 (mAh) in
+	 * gs201-tangorpro-battery.dtsi, google,fv-max-uv 4400000 in
+	 * gs201-tangorpro-charging.dtsi, and 3.2 V empty (VEmpty 0xa05f of
+	 * its gauge models).
+	 */
+	battery: battery {
+		compatible = "simple-battery";
+		charge-full-design-microamp-hours = <6900000>;
+		voltage-max-design-microvolt = <4400000>;
+		voltage-min-design-microvolt = <3200000>;
 	};
 
 	/*
@@ -191,10 +204,9 @@
  * the Pixel 7 and Pixel 7 Pro: Google's tablet tree takes it unchanged
  * from gs201-cloudripper-battery.dtsi and gs201-common-typec.dtsi (TCPC
  * 0x25, PMIC 0x66, fuel gauge 0x36, charger 0x69, bus pins gpp25-0/1,
- * 400 kHz). Its devices are not described here: the Type-C port
- * controller would take over VBUS and the data role from the forced-VBUS
- * setup the USB PHY uses, and the USB link is our only way into the
- * tablet.
+ * 400 kHz). Only the fuel gauge is described: the Type-C port controller
+ * would take over VBUS and the data role from the forced-VBUS setup the
+ * USB PHY uses, and the USB link is our only way into the tablet.
  */
 &usi13 {
 	samsung,mode = <USI_MODE_I2C>;
@@ -204,4 +216,80 @@
 &hsi2c_13 {
 	clock-frequency = <400000>;
 	status = "okay";
+
+	/*
+	 * The fuel gauge, from gs201-cloudripper-battery.dtsi as the tablet
+	 * includes it: FG_INT_L on gpa9-3 (XEINT_23), low, pulled up, and
+	 * maxim,rsense-default = <500> (10 uOhm units), 5 mOhm.
+	 *
+	 * Battery model for the pack with a 1 kOhm ID resistor, from Google's
+	 * gs201-tangorpro-battery-data.dtsi (cos-a1-1k, model version 2;
+	 * batt-id-1-atl in its charging tables). Its 48 table words are also
+	 * those of default-a1-0k, the model stock falls back to for an
+	 * unknown pack. The pack with a 5 kOhm ID resistor (hpt-a1-5k) has its
+	 * own model; which pack this tablet has is read from the gauge before
+	 * the first boot with this node, and battery-5k.dtso swaps the model.
+	 * TaskPeriod 0x2d00 makes one capacity LSB 2 mAh with 5 mOhm:
+	 * DesignCap 0x0dcc = 7064 mAh.
+	 *
+	 * Disabled: on a power-on reset the driver writes this model into
+	 * the gauge's RAM. An overlay turns it on for a gated boot.
+	 */
+	fuel_gauge: fuel-gauge@36 {
+		compatible = "maxim,max77759-fg";
+		reg = <0x36>;
+		interrupts-extended = <&gpa9 3 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-0 = <&if_pmic_fg_int>;
+		pinctrl-names = "default";
+		shunt-resistor-micro-ohms = <5000>;
+		monitored-battery = <&battery>;
+		status = "disabled";
+
+		maxim,fg-model = /bits/ 16 <
+			0x9ff0 0xb620 0xb7f0 0xb9a0 0xbb90 0xbce0 0xbe00 0xbf70
+			0xc000 0xc0c0 0xc3c0 0xc710 0xca60 0xcd90 0xd420 0xda20
+			0x0080 0x0d40 0x0e00 0x0e10 0x12e0 0x1a40 0x1470 0x16b0
+			0x11c0 0x0a80 0x0840 0x08a0 0x08c0 0x06f0 0x0720 0x0720
+			0x0200 0x0200 0x0200 0x0200 0x0200 0x0200 0x0200 0x0200
+			0x0200 0x0200 0x0200 0x0200 0x0200 0x0200 0x0200 0x0200
+		>;
+		maxim,fg-params = /bits/ 16 <
+			0xf060	/* IAvgEmpty */
+			0x2038	/* RelaxCfg */
+			0x260e	/* LearnCfg */
+			0x4217	/* Config: external thermistor, TEx clear */
+			0x0090	/* Config2 */
+			0x5f00	/* FullSOCThr */
+			0x0dcc	/* FullCapRep */
+			0x0dcc	/* DesignCap */
+			0x3200	/* dPAcc */
+			0x0373	/* dQAcc */
+			0x0dcc	/* FullCapNom */
+			0xa05f	/* VEmpty: 3.2 V empty, 3.8 V recovery */
+			0x0f00	/* QRTable00 */
+			0x0780	/* QRTable10 */
+			0x0400	/* QRTable20 */
+			0x0280	/* QRTable30 */
+			0x06c0	/* RComp0 */
+			0x1102	/* TempCo */
+			0x0463	/* IChgTerm */
+			0xee0c	/* TGain */
+			0x1df9	/* TOff */
+			0x0012	/* Curve */
+			0x3870	/* MiscCfg */
+			0x1900	/* AtRate */
+			0x2441	/* ConvgCfg */
+			0xc623	/* FilterCfg */
+			0x2d00	/* TaskPeriod */
+		>;
+	};
+};
+
+&pinctrl_gpio_alive {
+	if_pmic_fg_int: if-pmic-fg-int-pins {
+		samsung,pins = "gpa9-3";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_UP>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
 };
