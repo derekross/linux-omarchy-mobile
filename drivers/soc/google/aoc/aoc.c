@@ -1186,8 +1186,11 @@ static ssize_t sensor_power_enable_store(struct device *dev,
 
 		if (ret)
 			return ret;
-		/* Once the firmware is submitted, only a reboot cycles the rails */
-		if (prvdata->firmware_submitted)
+		/*
+		 * Where the firmware manages the MMU (zumapro) it is never
+		 * reloaded, so once it is submitted only a reboot cycles the rails.
+		 */
+		if (prvdata->soc->firmware_managed_mmu && prvdata->firmware_submitted)
 			return -EBUSY;
 		ret = aoc_sensor_power_set(&prvdata->sensor_power, !!val);
 		return ret ? ret : count;
@@ -1251,6 +1254,7 @@ static const struct aoc_soc_data gs201_aoc_data = {
  * reads the chip id as on gs201, and sets its SSMT to bypass.
  */
 static const struct aoc_soc_data zuma_aoc_data = {
+	.ordered_sensor_supplies = true,
 	.merge_subrevision_into_type = true,
 	.configure_ssmt = true,
 	.chipid_main_reg = 0x10,
@@ -1698,7 +1702,8 @@ void reset_sensor_power(struct aoc_prvdata *prvdata, bool is_init)
 	if (prvdata->soc->ordered_sensor_supplies) {
 		int ret;
 
-		if (prvdata->firmware_submitted) {
+		/* zuma reloads its firmware on a restart and cycles the rails */
+		if (prvdata->soc->firmware_managed_mmu && prvdata->firmware_submitted) {
 			dev_err(prvdata->dev, "sensor rails stay on while the firmware runs\n");
 			return;
 		}

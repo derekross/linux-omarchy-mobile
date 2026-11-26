@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Ordered ownership of the sensor supplies used by the Zumapro AoC. */
+/* Ordered ownership of the sensor supplies used by the zuma and zumapro AoC. */
 
 #include <linux/bitops.h>
 #include <linux/device.h>
