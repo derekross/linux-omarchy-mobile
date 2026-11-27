@@ -126,12 +126,9 @@ static const struct snd_soc_component_driver aoc_nohost_component = {
 static int aoc_nohost_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct device_node *np = dev->of_node;
 	int err = 0;
 
 	pr_debug("%s", __func__);
-	if (!np)
-		return -EINVAL;
 
 	err = devm_snd_soc_register_component(dev, &aoc_nohost_component, NULL, 0);
 	if (err)
@@ -140,19 +137,10 @@ static int aoc_nohost_probe(struct platform_device *pdev)
 	return err;
 }
 
-static const struct of_device_id aoc_nohost_of_match[] = {
-	{
-		.compatible = "google-aoc-snd-nohost",
-	},
-	{},
-};
-MODULE_DEVICE_TABLE(of, aoc_nohost_of_match);
-
 static struct platform_driver aoc_nohost_drv = {
 	.driver =
 	{
-		.name = "google-aoc-snd-nohost",
-		.of_match_table = aoc_nohost_of_match,
+		.name = AOC_NOHOST_DRV_NAME,
 	},
 	.probe = aoc_nohost_probe,
 };

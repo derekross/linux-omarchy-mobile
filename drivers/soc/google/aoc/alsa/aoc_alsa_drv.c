@@ -10,6 +10,9 @@
  */
 
 #include <linux/module.h>
+#include <linux/of.h>
+#include <linux/of_platform.h>
+#include <linux/platform_device.h>
 #include <linux/string.h>
 #include "aoc_alsa_drv.h"
 #include "aoc_alsa.h"
@@ -290,6 +293,84 @@ void free_audio_state_client(struct aoc_state_client_t *client)
 }
 EXPORT_SYMBOL_GPL(free_audio_state_client);
 
+/*
+ * The sound card's links name their DAIs by the AoC's own node
+ * (<&aoc AOC_PORT_...>). The path is registered on a child of the AoC
+ * device: ASoC takes the node of a component whose device has none from
+ * its parent. The components that serve the front ends' PCMs have no node
+ * at all; the card finds them by these device names.
+ */
+static const struct of_device_id aoc_of_ids[] = {
+	{ .compatible = "google,gs201-aoc" },
+	{ .compatible = "google,zumapro-aoc" },
+	{}
+};
+
+static const char *const aoc_pcm_dev_names[] = {
+	AOC_PCM_DRV_NAME,
+	AOC_VOICE_DRV_NAME,
+	AOC_COMPR_DRV_NAME,
+	AOC_NOHOST_DRV_NAME,
+	AOC_VOIP_DRV_NAME,
+	AOC_INCALL_DRV_NAME,
+};
+
+/* The path's device first, then the PCM components' */
+static struct platform_device *aoc_snd_devs[ARRAY_SIZE(aoc_pcm_dev_names) + 1];
+
+static void aoc_snd_del_devices(void)
+{
+	int i;
+
+	for (i = ARRAY_SIZE(aoc_snd_devs) - 1; i >= 0; i--) {
+		platform_device_unregister(aoc_snd_devs[i]);
+		aoc_snd_devs[i] = NULL;
+	}
+}
+
+static int aoc_snd_add_devices(void)
+{
+	struct platform_device_info info = {
+		.name = AOC_PATH_DRV_NAME,
+		.id = PLATFORM_DEVID_NONE,
+	};
+	struct platform_device *aoc, *pdev;
+	struct device_node *np;
+	int i;
+
+	np = of_find_matching_node(NULL, aoc_of_ids);
+	if (!np) {
+		pr_err("no AoC node for the sound card's DAIs\n");
+		return -ENODEV;
+	}
+	aoc = of_find_device_by_node(np);
+	of_node_put(np);
+	if (!aoc) {
+		pr_err("no AoC device for the sound card's DAIs\n");
+		return -ENODEV;
+	}
+
+	info.parent = &aoc->dev;
+	pdev = platform_device_register_full(&info);
+	put_device(&aoc->dev);
+	if (IS_ERR(pdev))
+		return PTR_ERR(pdev);
+	aoc_snd_devs[0] = pdev;
+
+	for (i = 0; i < ARRAY_SIZE(aoc_pcm_dev_names); i++) {
+		pdev = platform_device_register_simple(aoc_pcm_dev_names[i],
+						       PLATFORM_DEVID_NONE,
+						       NULL, 0);
+		if (IS_ERR(pdev)) {
+			aoc_snd_del_devices();
+			return PTR_ERR(pdev);
+		}
+		aoc_snd_devs[i + 1] = pdev;
+	}
+
+	return 0;
+}
+
 static int snd_aoc_alsa_probe(void)
 {
 	int err;
@@ -348,8 +429,16 @@ static int snd_aoc_alsa_probe(void)
 		goto err_dp;
 	}
 
+	err = aoc_snd_add_devices();
+	if (err) {
+		pr_err("ERR: fail to add the aoc sound devices %d\n", err);
+		goto err_devices;
+	}
+
 	return 0;
 
+err_devices:
+	aoc_dp_exit();
 err_dp:
 	aoc_usb_exit();
 err_usb:
@@ -369,9 +458,10 @@ err_voice:
 	return err;
 }
 
-/* Undoes snd_aoc_alsa_probe(): every platform driver it registered. */
+/* Undoes snd_aoc_alsa_probe(): its devices and every platform driver. */
 static void snd_aoc_alsa_remove(void)
 {
+	aoc_snd_del_devices();
 	aoc_dp_exit();
 	aoc_usb_exit();
 	aoc_voip_exit();

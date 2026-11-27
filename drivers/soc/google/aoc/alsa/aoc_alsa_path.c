@@ -2438,12 +2438,9 @@ static const struct snd_soc_component_driver aoc_component = {
 static int aoc_path_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct device_node *np = dev->of_node;
 	int ret = 0;
 
 	pr_info("%s", __func__);
-	if (!np)
-		return -EINVAL;
 
 	ret = devm_snd_soc_register_component(dev, &aoc_component, aoc_dai_drv,
 					      ARRAY_SIZE(aoc_dai_drv));
@@ -2455,18 +2452,9 @@ static int aoc_path_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static const struct of_device_id aoc_path_of_match[] = {
-	{
-		.compatible = "google-aoc-path",
-	},
-	{},
-};
-MODULE_DEVICE_TABLE(of, aoc_path_of_match);
-
 static struct platform_driver aoc_path_drv = {
 	.driver = {
-		.name = "google-aoc-path",
-		.of_match_table = aoc_path_of_match,
+		.name = AOC_PATH_DRV_NAME,
 	},
 	.probe = aoc_path_probe,
 };

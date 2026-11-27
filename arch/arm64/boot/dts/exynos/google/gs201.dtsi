@@ -1790,6 +1790,7 @@
 				 <&aoc_mbox_p6 4>, <&aoc_mbox_p6 5>, <&aoc_mbox_p6 6>, <&aoc_mbox_p6 7>,
 				 <&aoc_mbox_p6 8>, <&aoc_mbox_p6 9>, <&aoc_mbox_p6 10>, <&aoc_mbox_p6 11>,
 				 <&aoc_mbox_p6 12>, <&aoc_mbox_p6 13>, <&aoc_mbox_p6 14>, <&aoc_mbox_p6 15>;
+			#sound-dai-cells = <1>;
 			status = "disabled";
 		};
 

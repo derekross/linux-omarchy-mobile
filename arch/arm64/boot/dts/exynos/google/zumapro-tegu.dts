@@ -12,6 +12,7 @@
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/linux-event-codes.h>
 #include <dt-bindings/leds/common.h>
+#include <dt-bindings/sound/google,aoc.h>
 #include <dt-bindings/usb/pd.h>
 #include "../exynos-pinctrl.h"
 #include "zumapro.dtsi"
@@ -187,6 +188,470 @@
 		gpio = <&gph3 4 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
 		startup-delay-us = <150000>;
+	};
+
+	/*
+	 * The AoC sound card with stock's DAI links, the two TAS2572s on
+	 * TDM 0. The haptics codec and the DisplayPort links are left out.
+	 * The model is not "google,aoc-snd-card": the 7 Pro's UCM profile and
+	 * WirePlumber rules match that name. The node name is part of the
+	 * PipeWire node names, so it stays sound-aoc.
+	 */
+	sound-aoc {
+		compatible = "google,zumapro-aoc-sound";
+		model = "google,tegu-aoc-snd-card";
+
+		fe-ep1-rx-dai-link {
+			link-name = "EP1 playback";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_EP1_PLAYBACK>;
+			};
+		};
+
+		fe-ep2-rx-dai-link {
+			link-name = "EP2 playback";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_EP2_PLAYBACK>;
+			};
+		};
+
+		fe-ep3-rx-dai-link {
+			link-name = "EP3 playback";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_EP3_PLAYBACK>;
+			};
+		};
+
+		fe-ep4-rx-dai-link {
+			link-name = "EP4 playback";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_EP4_PLAYBACK>;
+			};
+		};
+
+		fe-ep5-rx-dai-link {
+			link-name = "EP5 playback";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_EP5_PLAYBACK>;
+			};
+		};
+
+		fe-ep6-rx-dai-link {
+			link-name = "EP6 playback";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_EP6_PLAYBACK>;
+			};
+		};
+
+		fe-ep7-rx-dai-link {
+			link-name = "EP7 playback";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_EP7_PLAYBACK>;
+			};
+		};
+
+		fe-ep8-rx-dai-link {
+			link-name = "EP8 playback";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_EP8_PLAYBACK>;
+			};
+		};
+
+		fe-ep1-tx-dai-link {
+			link-name = "EP1 capture";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_EP1_CAPTURE>;
+			};
+		};
+
+		fe-ep2-tx-dai-link {
+			link-name = "EP2 capture";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_EP2_CAPTURE>;
+			};
+		};
+
+		fe-ep3-tx-dai-link {
+			link-name = "EP3 capture";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_EP3_CAPTURE>;
+			};
+		};
+
+		fe-ep4-tx-dai-link {
+			link-name = "EP4 capture";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_EP4_CAPTURE>;
+			};
+		};
+
+		fe-ep5-tx-dai-link {
+			link-name = "EP5 capture";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_EP5_CAPTURE>;
+			};
+		};
+
+		fe-ep6-tx-dai-link {
+			link-name = "EP6 capture";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_EP6_CAPTURE>;
+			};
+		};
+
+		fe-nohost1-rx-dai-link {
+			link-name = "nohost1 playback";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_NOHOST1_PLAYBACK>;
+			};
+		};
+
+		fe-nohost1-tx-dai-link {
+			link-name = "nohost1 capture";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_NOHOST1_CAPTURE>;
+			};
+		};
+
+		fe-voip-rx-dai-link {
+			link-name = "audio_voip_rx";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_VOIP_PLAYBACK>;
+			};
+		};
+
+		fe-voip-tx-dai-link {
+			link-name = "audio_voip_tx";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_VOIP_CAPTURE>;
+			};
+		};
+
+		fe-incall-pb0-rx-dai-link {
+			link-name = "audio_incall_pb_0";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_INCALL0_PLAYBACK>;
+			};
+		};
+
+		fe-incall-pb1-rx-dai-link {
+			link-name = "audio_incall_pb_1";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_INCALL1_PLAYBACK>;
+			};
+		};
+
+		fe-incall-cap0-tx-dai-link {
+			link-name = "audio_incall_cap_0";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_INCALL0_CAPTURE>;
+			};
+		};
+
+		fe-incall-cap1-tx-dai-link {
+			link-name = "audio_incall_cap_1";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_INCALL1_CAPTURE>;
+			};
+		};
+
+		fe-incall-cap2-tx-dai-link {
+			link-name = "audio_incall_cap_2";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_INCALL2_CAPTURE>;
+			};
+		};
+
+		fe-raw-rx-dai-link {
+			link-name = "audio_raw";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_RAW_PLAYBACK>;
+			};
+		};
+
+		fe-haptic-nohost-rx-dai-link {
+			link-name = "haptic nohost playback";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_HAPTIC_NOHOST_PLAYBACK>;
+			};
+		};
+
+		fe-hifi-rx-dai-link {
+			link-name = "audio_hifiout";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_HIFI_PLAYBACK>;
+			};
+		};
+
+		fe-hifi-tx-dai-link {
+			link-name = "audio_hifiin";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_HIFI_CAPTURE>;
+			};
+		};
+
+		fe-android-aec-tx-dai-link {
+			link-name = "audio_android_aec";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_ANDROID_AEC_CAPTURE>;
+			};
+		};
+
+		fe-us-rx-dai-link {
+			link-name = "audio_ultrasonic";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_ULTRASONIC_PLAYBACK>;
+			};
+		};
+
+		fe-incall-pb2-rx-dai-link {
+			link-name = "audio_incall_pb_2";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_INCALL2_PLAYBACK>;
+			};
+		};
+
+		fe-ims-rx-dai-link {
+			link-name = "audio_immersive";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_IMMERSIVE_PLAYBACK>;
+			};
+		};
+
+		fe-capture-inject-rx-dai-link {
+			link-name = "audio_capture_inject";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_CAPTURE_INJECT_PLAYBACK>;
+			};
+		};
+
+		fe-hotword-tap-tx-dai-link {
+			link-name = "audio_hotword_tap";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_HOTWORD_TAP_CAPTURE>;
+			};
+		};
+
+		be-i2s0-rx-dai-link {
+			link-name = "I2S_0_RX Playback";
+			dai-format = "i2s";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_I2S_0_RX>;
+			};
+		};
+
+		be-i2s0-tx-dai-link {
+			link-name = "I2S_0_TX Capture";
+			dai-format = "i2s";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_I2S_0_TX>;
+			};
+		};
+
+		be-i2s1-rx-dai-link {
+			link-name = "I2S_1_RX Playback";
+			dai-format = "i2s";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_I2S_1_RX>;
+			};
+		};
+
+		be-i2s1-tx-dai-link {
+			link-name = "I2S_1_TX Capture";
+			dai-format = "i2s";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_I2S_1_TX>;
+			};
+		};
+
+		be-i2s2-rx-dai-link {
+			link-name = "I2S_2_RX Playback";
+			dai-format = "i2s";
+			bitclock-inversion;
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_I2S_2_RX>;
+			};
+		};
+
+		be-i2s2-tx-dai-link {
+			link-name = "I2S_2_TX Capture";
+			dai-format = "i2s";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_I2S_2_TX>;
+			};
+		};
+
+		be-tdm0-rx-dai-link {
+			link-name = "TDM_0_RX Playback";
+			dai-format = "dsp_a";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_TDM_0_RX>;
+			};
+
+			codec {
+				sound-dai = <&tas2572_top>, <&tas2572_bottom>;
+			};
+		};
+
+		be-tdm0-tx-dai-link {
+			link-name = "TDM_0_TX Capture";
+			dai-format = "dsp_a";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_TDM_0_TX>;
+			};
+
+			codec {
+				sound-dai = <&tas2572_top>, <&tas2572_bottom>;
+			};
+		};
+
+		be-tdm1-rx-dai-link {
+			link-name = "TDM_1_RX Playback";
+			dai-format = "i2s";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_TDM_1_RX>;
+			};
+		};
+
+		be-tdm1-tx-dai-link {
+			link-name = "TDM_1_TX Capture";
+			dai-format = "i2s";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_TDM_1_TX>;
+			};
+		};
+
+		be-internal-mic-tx-dai-link {
+			link-name = "INTERNAL_MIC_TX Capture";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_INTERNAL_MIC_TX>;
+			};
+		};
+
+		be-internal-mic-us-tx-dai-link {
+			link-name = "INTERNAL_MIC_US_TX Capture";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_INTERNAL_MIC_US_TX>;
+			};
+		};
+
+		be-bt-rx-dai-link {
+			link-name = "BT_RX Playback";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_BT_RX>;
+			};
+		};
+
+		be-bt-tx-dai-link {
+			link-name = "BT_TX Capture";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_BT_TX>;
+			};
+		};
+
+		be-usb-rx-dai-link {
+			link-name = "USB_RX Playback";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_USB_RX>;
+			};
+		};
+
+		be-usb-tx-dai-link {
+			link-name = "USB_TX Capture";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_USB_TX>;
+			};
+		};
+
+		be-incall-rx-dai-link {
+			link-name = "INCALL_RX Playback";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_INCALL_RX>;
+			};
+		};
+
+		be-incall-tx-dai-link {
+			link-name = "INCALL_TX Capture";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_INCALL_TX>;
+			};
+		};
+
+		be-haptic-rx-dai-link {
+			link-name = "HAPTIC_RX Playback";
+			dai-format = "dsp_a";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_HAPTIC_RX>;
+			};
+		};
+
+		be-eraser-tx-dai-link {
+			link-name = "ERASER_TX Capture";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_ERASER_TX>;
+			};
+		};
+
+		fe-incall-cap3-tx-dai-link {
+			link-name = "audio_incall_cap_3";
+
+			cpu {
+				sound-dai = <&aoc AOC_PORT_INCALL3_CAPTURE>;
+			};
+		};
 	};
 };
 
@@ -502,6 +967,7 @@
 		reg = <0x48>;
 		reset-gpios = <&gpp6 3 GPIO_ACTIVE_HIGH>;
 		#sound-dai-cells = <0>;
+		sound-name-prefix = "Top";
 	};
 
 	tas2572_bottom: amplifier@49 {
@@ -509,6 +975,7 @@
 		reg = <0x49>;
 		reset-gpios = <&gph2 1 GPIO_ACTIVE_HIGH>;
 		#sound-dai-cells = <0>;
+		sound-name-prefix = "Bottom";
 	};
 };
 

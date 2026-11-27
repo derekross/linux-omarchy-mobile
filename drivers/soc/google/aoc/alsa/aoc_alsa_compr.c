@@ -667,7 +667,7 @@ static int aoc_compr_pointer(struct snd_soc_component *component, struct snd_com
 	arg->pcm_io_frames = (current_sample - alsa_stream->compr_pcm_io_sample_base) *
 			     (long)arg->sampling_rate / AOC_COMPR_OFFLOAD_DEFAULT_SR;
 
-	pr_debug("compr ptr -total bytes: %llu copied: %u diff:%llu,sampes=%u,fs=%d,base=%llu\n",
+	pr_debug("compr ptr -total bytes: %llu copied: %llu diff:%llu,sampes=%llu,fs=%d,base=%llu\n",
 		 runtime->total_bytes_available, arg->copied_total,
 		 runtime->total_bytes_available - arg->copied_total, arg->pcm_io_frames,
 		 arg->sampling_rate, alsa_stream->compr_pcm_io_sample_base);
@@ -953,13 +953,9 @@ static const struct snd_soc_platform_driver aoc_compr_platform = {
 static int aoc_compr_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct device_node *np = dev->of_node;
 	int err = 0;
 
 	pr_debug("%s", __func__);
-
-	if (!np)
-		return -EINVAL;
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 18, 0))
 	err = devm_snd_soc_register_component(dev, &aoc_compr_component, NULL,
@@ -975,21 +971,11 @@ static int aoc_compr_probe(struct platform_device *pdev)
 	return err;
 }
 
-static const struct of_device_id aoc_compr_of_match[] = {
-	{
-		.compatible = "google-aoc-snd-compr",
-	},
-	{},
-};
-MODULE_DEVICE_TABLE(of, aoc_compr_of_match);
-
 static struct platform_driver aoc_compr_drv = {
-    .driver =
-        {
-            .name = "google-aoc-snd-compr",
-            .of_match_table = aoc_compr_of_match,
-        },
-    .probe = aoc_compr_probe,
+	.driver = {
+		.name = AOC_COMPR_DRV_NAME,
+	},
+	.probe = aoc_compr_probe,
 };
 
 int aoc_compr_init(void)

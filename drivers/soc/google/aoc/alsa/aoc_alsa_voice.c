@@ -334,12 +334,9 @@ static const struct snd_soc_component_driver aoc_pcm_component = {
 static int aoc_pcm_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct device_node *np = dev->of_node;
 	int err = 0;
 
 	pr_debug("%s", __func__);
-	if (!np)
-		return -EINVAL;
 
 	err = devm_snd_soc_register_component(dev, &aoc_pcm_component, NULL, 0);
 	if (err)
@@ -348,21 +345,11 @@ static int aoc_pcm_probe(struct platform_device *pdev)
 	return err;
 }
 
-static const struct of_device_id aoc_voice_of_match[] = {
-	{
-		.compatible = "google-aoc-snd-voice",
-	},
-	{},
-};
-MODULE_DEVICE_TABLE(of, aoc_voice_of_match);
-
 static struct platform_driver aoc_pcm_drv = {
-    .driver =
-        {
-            .name = "google-aoc-snd-voice",
-            .of_match_table = aoc_voice_of_match,
-        },
-    .probe = aoc_pcm_probe,
+	.driver = {
+		.name = AOC_VOICE_DRV_NAME,
+	},
+	.probe = aoc_pcm_probe,
 };
 
 int aoc_voice_init(void)

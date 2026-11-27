@@ -37,6 +37,20 @@
 struct snd_usb_audio;
 
 #define AOC_SND_CARD "aoc-snd-card"
+
+/*
+ * The AoC path (the DAIs) and the components that serve the front ends' PCMs
+ * have no device tree nodes: aoc_alsa_dev_util creates their devices, the
+ * path's as a child of the AoC so that <&aoc PORT> names its DAIs, and the
+ * card names its links' platforms by these device names.
+ */
+#define AOC_PATH_DRV_NAME "google-aoc-path"
+#define AOC_PCM_DRV_NAME "google-aoc-snd-pcm"
+#define AOC_VOICE_DRV_NAME "google-aoc-snd-voice"
+#define AOC_COMPR_DRV_NAME "google-aoc-snd-compr"
+#define AOC_NOHOST_DRV_NAME "google-aoc-snd-nohost"
+#define AOC_VOIP_DRV_NAME "google-aoc-snd-voip"
+#define AOC_INCALL_DRV_NAME "google-aoc-snd-incall"
 #define ALSA_AOC_CMD "alsa-aoc"
 #define CMD_INPUT_CHANNEL "audio_input_control"
 #define CMD_OUTPUT_CHANNEL "audio_output_control"

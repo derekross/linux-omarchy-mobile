@@ -84,6 +84,12 @@ properties:
     description: the board's GNSS receiver, passed to the firmware
       (kAOCGnssType)
 
+  "#sound-dai-cells":
+    const: 1
+    description: the AoC's DAIs, front ends on its entry points and back
+      ends on its ports, numbered as in
+      include/dt-bindings/sound/google,aoc.h
+
 required:
   - compatible
   - reg
