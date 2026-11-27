@@ -1096,6 +1096,16 @@ static int rpmh_rsc_probe(struct platform_device *pdev)
 	else
 		drv->regs = rpmh_rsc_reg_offset_ver_2_7;
 
+	/*
+	 * A read the RSC never answers keeps its TCS busy for good, since
+	 * only the completion interrupt frees it, and every later request
+	 * then waits for a TCS that never comes back.
+	 */
+	drv->no_read = of_property_read_bool(dn, "qcom,no-read-support");
+	if (drv->no_read)
+		dev_info(&pdev->dev, "RSC v%u.%u: reads disabled\n",
+			 drv->ver.major, drv->ver.minor);
+
 	ret = rpmh_probe_tcs_config(pdev, drv);
 	if (ret)
 		return ret;

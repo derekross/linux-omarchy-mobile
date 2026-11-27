@@ -265,7 +265,7 @@ static int _rpmh_regulator_vrm_get_voltage(struct regulator_dev *rdev, int *uV)
 	ret = rpmh_read(vreg->dev, &cmd);
 	if (!ret)
 		*uV = (cmd.data & RPMH_REGULATOR_VOLTAGE_MASK) * 1000;
-	else
+	else if (ret != -EOPNOTSUPP)
 		dev_err(vreg->dev, "failed to read VOLTAGE ret = %d\n", ret);
 
 	return ret;
@@ -596,6 +596,8 @@ static int rpmh_regulator_determine_initial_mode(struct rpmh_vreg *vreg)
 	int sts;
 
 	ret = rpmh_read(vreg->dev, &cmd);
+	if (ret == -EOPNOTSUPP)
+		return 0;
 	if (ret) {
 		dev_err(vreg->dev, "failed to read ENABLE status ret = %d\n", ret);
 
