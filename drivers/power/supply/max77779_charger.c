@@ -17,6 +17,7 @@
 #include <linux/bitfield.h>
 #include <linux/bits.h>
 #include <linux/i2c.h>
+#include <linux/jiffies.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -43,6 +44,12 @@
 #define  MAX77779_CHGIN_ILIM		GENMASK(6, 0)
 
 #define MAX77779_POLL_MS		10000
+/*
+ * How long an external OTG boost can go on driving CHGIN after a reset: the
+ * Pixel 9a's RT9470 keeps its OTG bit through a warm reset, and its own
+ * watchdog ends it after 40 s.
+ */
+#define MAX77779_OTG_LEFT_MS		45000
 
 /* CHG_DETAILS_01.CHG_DTLS */
 enum {
@@ -66,6 +73,9 @@ struct max77779_charger {
 	/* the OTG boost that sources VBUS: optional, external */
 	struct regulator *boost;
 	bool otg;
+	/* found in standby at probe: an OTG session a reset cut short */
+	bool otg_left;
+	unsigned long otg_left_until;
 };
 
 static bool max77779_charger_readable(struct device *dev, unsigned int reg)
@@ -249,6 +259,7 @@ static int max77779_charger_set_property(struct power_supply *psy,
 			if (ret)
 				return ret;
 			chg->held = hold;
+			chg->otg_left = false;
 		}
 		chg->behaviour = val->intval;
 	}
@@ -287,7 +298,10 @@ static const struct power_supply_desc max77779_charger_desc = {
 /*
  * VBUS for a device on the USB-C port, from an external boost (the Pixel 9a's
  * RT9470): the charger is put in standby first and then the boost is enabled,
- * as Google's ext-otg-only use case does. The charger's own boost mode (0xa)
+ * as Google's ext-otg-only use case does. That order is why the boost is
+ * enabled from here and is not this regulator's supply: a supply is enabled
+ * before the regulator's own enable op runs, which would put the boost on
+ * CHGIN with the charger still charging. The charger's own boost mode (0xa)
  * is not used: nothing here has run it.
  */
 static int max77779_charger_otg_enable(struct regulator_dev *rdev)
@@ -318,6 +332,8 @@ static int max77779_charger_otg_enable(struct regulator_dev *rdev)
 		return ret;
 	}
 	WRITE_ONCE(chg->otg, true);
+	/* A new session: the mode is otg_disable()'s to put back now. */
+	chg->otg_left = false;
 	/* online and status follow chg->otg */
 	power_supply_changed(chg->psy);
 
@@ -367,6 +383,35 @@ static const struct regulator_desc max77779_charger_otg_desc = {
 	.n_voltages = 1,
 };
 
+/*
+ * Standby found at probe is an OTG session that a reset cut short (see
+ * probe). Go back to charging and buck, as otg_disable() would have, but only
+ * once CHGIN and WCIN show no input: the external boost can outlive the reset
+ * and go on driving CHGIN until its own watchdog stops it, and charging is
+ * not turned on into the phone's own boost. Once MAX77779_OTG_LEFT_MS have
+ * passed the boost is off whatever it was doing, so an input still there is
+ * a charger, and charging it is.
+ */
+static void max77779_charger_end_left_otg(struct max77779_charger *chg,
+					  bool input)
+{
+	guard(mutex)(&chg->lock);
+	if (!chg->otg_left)
+		return;
+	if (input && time_before(jiffies, chg->otg_left_until))
+		return;
+	/* A failed write is tried again at the next poll. */
+	if (max77779_charger_set_mode(chg, chg->held ? MAX77779_MODE_BUCK :
+				      MAX77779_MODE_CHG_BUCK))
+		return;
+	chg->otg_left = false;
+	dev_info(chg->dev,
+		 "back to charging and buck after the OTG session a reset cut short: %s\n",
+		 input ? "the boost's time is up, the input is a charger" :
+			 "no input on CHGIN");
+	power_supply_changed(chg->psy);
+}
+
 /* Tell the gauge and userspace when the input or the charge state changes. */
 static void max77779_charger_poll(struct work_struct *work)
 {
@@ -376,6 +421,9 @@ static void max77779_charger_poll(struct work_struct *work)
 
 	if (!regmap_read(chg->map, MAX77779_CHG_INT_OK, &ok) &&
 	    !regmap_read(chg->map, MAX77779_CHG_DETAILS_01, &dtls)) {
+		if (READ_ONCE(chg->otg_left))
+			max77779_charger_end_left_otg(chg,
+						      ok & MAX77779_INPUT_OK);
 		now = (ok & MAX77779_INPUT_OK) << 8 |
 		      FIELD_GET(MAX77779_CHG_DTLS, dtls);
 		if (now != chg->last) {
@@ -395,7 +443,7 @@ static void max77779_charger_restore(void *data)
 
 	if (chg->otg)
 		regulator_disable(chg->boost);
-	if (chg->held || chg->otg)
+	if (chg->held || chg->otg || chg->otg_left)
 		max77779_charger_set_mode(chg, MAX77779_MODE_CHG_BUCK);
 }
 
@@ -446,6 +494,22 @@ static int max77779_charger_probe(struct i2c_client *client)
 	if (mode == MAX77779_MODE_BUCK) {
 		chg->held = true;
 		chg->behaviour = POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE;
+	} else if (mode == MAX77779_MODE_OFF) {
+		/*
+		 * Standby is what otg_enable() leaves while the boost sources
+		 * VBUS, and like an inhibit it survives a warm reset. A reset
+		 * that skipped .shutdown with VBUS out ends up here, and
+		 * nothing else would write the mode again: no charging from
+		 * anything plugged in later, until a cold power-off. So it is
+		 * taken for an OTG session cut short, and the poll ends it
+		 * (max77779_charger_end_left_otg()).
+		 */
+		chg->otg_left = true;
+		chg->otg_left_until = jiffies +
+				      msecs_to_jiffies(MAX77779_OTG_LEFT_MS);
+		dev_warn(dev,
+			 "found in standby, as a reset during an OTG session leaves it: charging again once CHGIN has no input, or after %u s, the longest an external boost can still be driving it\n",
+			 MAX77779_OTG_LEFT_MS / 1000);
 	} else if (mode != MAX77779_MODE_CHG_BUCK) {
 		dev_warn(dev, "found in mode %#x, not charging and buck\n", mode);
 	}
