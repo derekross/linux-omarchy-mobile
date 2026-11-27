@@ -982,6 +982,17 @@ config DRM_PANEL_SAMSUNG_DB7430
 	  DB7430 DPI display controller used in such devices as the
 	  LMS397KF04 480x800 DPI panel.
 
+config DRM_PANEL_SAMSUNG_EA8074
+	tristate "Samsung EA8074 1080x2248 DSI command mode panel"
+	depends on OF
+	depends on DRM_MIPI_DSI
+	depends on BACKLIGHT_CLASS_DEVICE
+	help
+	  Say Y here to enable the Samsung EA8074 AMOLED panel driver.
+	  The panel has a 1080x2248 resolution and uses a command-mode
+	  MIPI DSI interface. It is found in Xiaomi Mi 8 devices.
+	  Backlight brightness is controlled through DCS commands.
+
 config DRM_PANEL_SAMSUNG_LD9040
 	tristate "Samsung LD9040 RGB/SPI panel"
 	depends on OF && SPI
