@@ -41,6 +41,7 @@
 #include <linux/input/touchscreen.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/regulator/consumer.h>
 #include <linux/spi/spi.h>
 #include <linux/unaligned.h>
@@ -48,8 +49,6 @@
 #define FT3658_REG_TOUCH_DATA	0x01
 #define FT3658_REG_CHIP_ID	0xa3
 #define FT3658_REG_FW_VER	0xa6
-
-#define FT3658_CHIP_ID		0x56
 
 #define FT3658_READ_CMD		0xa0
 #define FT3658_STATUS_ERR	0xa0
@@ -74,7 +73,26 @@
 #define FT3658_READY_MS		20
 #define FT3658_CS_HIGH_US	150
 
+/*
+ * The chip id the controller answers with, per part. The FT8756's comes
+ * from the vendor's own tree, which gives it as the touch controller's
+ * family id (focaltech,family-id = <0xf0>); it has not been read off the
+ * chip yet.
+ */
+struct ft3658_match_data {
+	u8 chip_id;
+};
+
+static const struct ft3658_match_data ft3658_match_ft3658 = {
+	.chip_id = 0x56,
+};
+
+static const struct ft3658_match_data ft3658_match_ft8756 = {
+	.chip_id = 0xf0,
+};
+
 struct ft3658 {
+	const struct ft3658_match_data *match;
 	struct spi_device *spi;
 	struct input_dev *input;
 	struct gpio_desc *reset_gpio;
@@ -173,7 +191,7 @@ static int ft3658_wait_ready(struct ft3658 *ts)
 
 	for (i = 0; i < FT3658_READY_TRIES; i++) {
 		ret = ft3658_read_reg(ts, FT3658_REG_CHIP_ID, &id);
-		if (!ret && id == FT3658_CHIP_ID)
+		if (!ret && id == ts->match->chip_id)
 			return 0;
 		msleep(FT3658_READY_MS);
 	}
@@ -241,6 +259,10 @@ static int ft3658_probe(struct spi_device *spi)
 	ts->spi = spi;
 	spi_set_drvdata(spi, ts);
 
+	ts->match = of_device_get_match_data(dev);
+	if (!ts->match)
+		return dev_err_probe(dev, -ENODEV, "no chip id for this controller\n");
+
 	spi->mode = SPI_MODE_0;
 	spi->bits_per_word = 8;
 	ret = spi_setup(spi);
@@ -273,13 +295,13 @@ static int ft3658_probe(struct spi_device *spi)
 	if (ret)
 		return ret;
 	ft3658_read_reg(ts, FT3658_REG_FW_VER, &fw);
-	dev_info(dev, "FT3658, chip id 0x%02x, firmware 0x%02x\n",
-		 FT3658_CHIP_ID, fw);
+	dev_info(dev, "chip id 0x%02x, firmware 0x%02x\n",
+		 ts->match->chip_id, fw);
 
 	ts->input = devm_input_allocate_device(dev);
 	if (!ts->input)
 		return -ENOMEM;
-	ts->input->name = "FocalTech FT3658";
+	ts->input->name = "FocalTech FT3658/FT8756";
 	ts->input->id.bustype = BUS_SPI;
 
 	input_set_capability(ts->input, EV_ABS, ABS_MT_POSITION_X);
@@ -304,13 +326,15 @@ static int ft3658_probe(struct spi_device *spi)
 }
 
 static const struct of_device_id ft3658_of_match[] = {
-	{ .compatible = "focaltech,ft3658" },
+	{ .compatible = "focaltech,ft3658", .data = &ft3658_match_ft3658 },
+	{ .compatible = "focaltech,ft8756", .data = &ft3658_match_ft8756 },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, ft3658_of_match);
 
 static const struct spi_device_id ft3658_spi_ids[] = {
 	{ "ft3658" },
+	{ "ft8756" },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, ft3658_spi_ids);
@@ -325,5 +349,5 @@ static struct spi_driver ft3658_driver = {
 };
 module_spi_driver(ft3658_driver);
 
-MODULE_DESCRIPTION("FocalTech FT3658 touchscreen driver");
+MODULE_DESCRIPTION("FocalTech FT3658/FT8756 touchscreen driver");
 MODULE_LICENSE("GPL");

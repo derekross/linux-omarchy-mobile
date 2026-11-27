@@ -386,6 +386,7 @@ static const struct of_device_id qcom_wdt_of_table[] = {
 	{ .compatible = "qcom,apss-wdt-ipq5332", .data = &match_data_ipq9574 },
 	{ .compatible = "qcom,apss-wdt-ipq5424", .data = &match_data_ipq5424 },
 	{ .compatible = "qcom,apss-wdt-ipq9574", .data = &match_data_ipq9574 },
+	{ .compatible = "qcom,apss-wdt-sm6125", .data = &match_data_kpss },
 	{ .compatible = "qcom,kpss-timer", .data = &match_data_apcs_tmr },
 	{ .compatible = "qcom,scss-timer", .data = &match_data_apcs_tmr },
 	{ .compatible = "qcom,kpss-wdt", .data = &match_data_kpss },
