@@ -195,6 +195,25 @@
 			alignment = <0x0 0x200000>;
 			alloc-ranges = <0x0 0x80000000 0x80000000>;
 		};
+
+		/*
+		 * MFC firmware, contexts and frames. The MFC takes 32-bit
+		 * addresses and the firmware rejects any buffer below its own
+		 * base, so they all come from one contiguous pool below 4 GiB,
+		 * firmware first. Reusable, so the pages serve movable
+		 * allocations while no video is decoded. Disabled, so phones
+		 * that don't turn the MFC on keep their memory map; the
+		 * overlay that enables the MFC enables this pool with it.
+		 */
+		mfc_pool: mfc-pool {
+			compatible = "shared-dma-pool";
+			reusable;
+			size = <0x10000000>;
+			/* read with the root's #address-cells (2), not #size-cells */
+			alignment = <0x0 0x200000>;
+			alloc-ranges = <0x0 0x80000000 0x80000000>;
+			status = "disabled";
+		};
 	};
 };
 
@@ -344,6 +363,15 @@
 			remote-endpoint = <&decon0_out>;
 		};
 	};
+};
+
+/*
+ * Off in zuma.dtsi: its System MMU isn't described, so the closed firmware
+ * can reach all memory below 4 GiB. omarchy-mobile's device/husky overlay
+ * enables it and mfc_pool for owners who want hardware video.
+ */
+&mfc {
+	memory-region = <&mfc_pool>;
 };
 
 /*
