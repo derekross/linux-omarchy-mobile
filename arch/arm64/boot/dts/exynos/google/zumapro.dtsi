@@ -101,11 +101,46 @@
 			};
 		};
 
+		idle-states {
+			entry-method = "psci";
+
+			hayes_cpu_sleep: cpu-hayes-sleep {
+				idle-state-name = "c2";
+				compatible = "arm,idle-state";
+				arm,psci-suspend-param = <0x0010000>;
+				local-timer-stop;
+				entry-latency-us = <70>;
+				exit-latency-us = <160>;
+				min-residency-us = <2000>;
+			};
+
+			hunter_cpu_sleep: cpu-hunter-sleep {
+				idle-state-name = "c2";
+				compatible = "arm,idle-state";
+				arm,psci-suspend-param = <0x0010000>;
+				local-timer-stop;
+				entry-latency-us = <150>;
+				exit-latency-us = <190>;
+				min-residency-us = <2500>;
+			};
+
+			hunterelp_cpu_sleep: cpu-hunterelp-sleep {
+				idle-state-name = "c2";
+				compatible = "arm,idle-state";
+				arm,psci-suspend-param = <0x0010000>;
+				local-timer-stop;
+				entry-latency-us = <235>;
+				exit-latency-us = <220>;
+				min-residency-us = <3500>;
+			};
+		};
+
 		cpu0: cpu@0 {
 			device_type = "cpu";
 			compatible = "arm,cortex-a520";
 			reg = <0x000>;
 			enable-method = "psci";
+			cpu-idle-states = <&hayes_cpu_sleep>;
 			capacity-dmips-mhz = <193>;
 			dynamic-power-coefficient = <70>;
 			#cooling-cells = <2>;
@@ -118,6 +153,7 @@
 			compatible = "arm,cortex-a520";
 			reg = <0x100>;
 			enable-method = "psci";
+			cpu-idle-states = <&hayes_cpu_sleep>;
 			capacity-dmips-mhz = <193>;
 			dynamic-power-coefficient = <70>;
 			#cooling-cells = <2>;
@@ -130,6 +166,7 @@
 			compatible = "arm,cortex-a520";
 			reg = <0x200>;
 			enable-method = "psci";
+			cpu-idle-states = <&hayes_cpu_sleep>;
 			capacity-dmips-mhz = <193>;
 			dynamic-power-coefficient = <70>;
 			#cooling-cells = <2>;
@@ -142,6 +179,7 @@
 			compatible = "arm,cortex-a520";
 			reg = <0x300>;
 			enable-method = "psci";
+			cpu-idle-states = <&hayes_cpu_sleep>;
 			capacity-dmips-mhz = <193>;
 			dynamic-power-coefficient = <70>;
 			#cooling-cells = <2>;
@@ -154,6 +192,7 @@
 			compatible = "arm,cortex-a720";
 			reg = <0x400>;
 			enable-method = "psci";
+			cpu-idle-states = <&hunter_cpu_sleep>;
 			capacity-dmips-mhz = <927>;
 			dynamic-power-coefficient = <513>;
 			#cooling-cells = <2>;
@@ -166,6 +205,7 @@
 			compatible = "arm,cortex-a720";
 			reg = <0x500>;
 			enable-method = "psci";
+			cpu-idle-states = <&hunter_cpu_sleep>;
 			capacity-dmips-mhz = <927>;
 			dynamic-power-coefficient = <513>;
 			#cooling-cells = <2>;
@@ -178,6 +218,7 @@
 			compatible = "arm,cortex-a720";
 			reg = <0x600>;
 			enable-method = "psci";
+			cpu-idle-states = <&hunter_cpu_sleep>;
 			capacity-dmips-mhz = <927>;
 			dynamic-power-coefficient = <513>;
 			#cooling-cells = <2>;
@@ -190,6 +231,7 @@
 			compatible = "arm,cortex-x4";
 			reg = <0x700>;
 			enable-method = "psci";
+			cpu-idle-states = <&hunterelp_cpu_sleep>;
 			capacity-dmips-mhz = <1024>;
 			dynamic-power-coefficient = <757>;
 			#cooling-cells = <2>;
@@ -278,50 +320,62 @@
 
 		opp-324000000 {
 			opp-hz = /bits/ 64 <324000000>;
+			opp-microwatt = <14600>;
 		};
 
 		opp-610000000 {
 			opp-hz = /bits/ 64 <610000000>;
+			opp-microwatt = <27500>;
 		};
 
 		opp-820000000 {
 			opp-hz = /bits/ 64 <820000000>;
+			opp-microwatt = <37000>;
 		};
 
 		opp-955000000 {
 			opp-hz = /bits/ 64 <955000000>;
+			opp-microwatt = <39000>;
 		};
 
 		opp-1098000000 {
 			opp-hz = /bits/ 64 <1098000000>;
+			opp-microwatt = <42000>;
 		};
 
 		opp-1197000000 {
 			opp-hz = /bits/ 64 <1197000000>;
+			opp-microwatt = <43000>;
 		};
 
 		opp-1328000000 {
 			opp-hz = /bits/ 64 <1328000000>;
+			opp-microwatt = <58000>;
 		};
 
 		opp-1425000000 {
 			opp-hz = /bits/ 64 <1425000000>;
+			opp-microwatt = <69000>;
 		};
 
 		opp-1548000000 {
 			opp-hz = /bits/ 64 <1548000000>;
+			opp-microwatt = <83000>;
 		};
 
 		opp-1696000000 {
 			opp-hz = /bits/ 64 <1696000000>;
+			opp-microwatt = <102000>;
 		};
 
 		opp-1849000000 {
 			opp-hz = /bits/ 64 <1849000000>;
+			opp-microwatt = <133000>;
 		};
 
 		opp-1950000000 {
 			opp-hz = /bits/ 64 <1950000000>;
+			opp-microwatt = <163000>;
 		};
 
 	};
@@ -332,62 +386,77 @@
 
 		opp-357000000 {
 			opp-hz = /bits/ 64 <357000000>;
+			opp-microwatt = <54000>;
 		};
 
 		opp-578000000 {
 			opp-hz = /bits/ 64 <578000000>;
+			opp-microwatt = <90000>;
 		};
 
 		opp-648000000 {
 			opp-hz = /bits/ 64 <648000000>;
+			opp-microwatt = <103000>;
 		};
 
 		opp-787000000 {
 			opp-hz = /bits/ 64 <787000000>;
+			opp-microwatt = <131000>;
 		};
 
 		opp-910000000 {
 			opp-hz = /bits/ 64 <910000000>;
+			opp-microwatt = <154000>;
 		};
 
 		opp-1065000000 {
 			opp-hz = /bits/ 64 <1065000000>;
+			opp-microwatt = <195000>;
 		};
 
 		opp-1221000000 {
 			opp-hz = /bits/ 64 <1221000000>;
+			opp-microwatt = <241000>;
 		};
 
 		opp-1328000000 {
 			opp-hz = /bits/ 64 <1328000000>;
+			opp-microwatt = <273000>;
 		};
 
 		opp-1418000000 {
 			opp-hz = /bits/ 64 <1418000000>;
+			opp-microwatt = <309000>;
 		};
 
 		opp-1549000000 {
 			opp-hz = /bits/ 64 <1549000000>;
+			opp-microwatt = <370000>;
 		};
 
 		opp-1795000000 {
 			opp-hz = /bits/ 64 <1795000000>;
+			opp-microwatt = <510000>;
 		};
 
 		opp-1945000000 {
 			opp-hz = /bits/ 64 <1945000000>;
+			opp-microwatt = <634000>;
 		};
 
 		opp-2130000000 {
 			opp-hz = /bits/ 64 <2130000000>;
+			opp-microwatt = <795000>;
 		};
 
 		opp-2245000000 {
 			opp-hz = /bits/ 64 <2245000000>;
+			opp-microwatt = <909000>;
 		};
 
 		opp-2367000000 {
 			opp-hz = /bits/ 64 <2367000000>;
+			opp-microwatt = <1072000>;
 		};
 
 		/* 2450 and 2600 MHz stay off: above the cluster's thermal headroom. */
@@ -399,50 +468,62 @@
 
 		opp-700000000 {
 			opp-hz = /bits/ 64 <700000000>;
+			opp-microwatt = <266000>;
 		};
 
 		opp-1164000000 {
 			opp-hz = /bits/ 64 <1164000000>;
+			opp-microwatt = <496000>;
 		};
 
 		opp-1396000000 {
 			opp-hz = /bits/ 64 <1396000000>;
+			opp-microwatt = <670000>;
 		};
 
 		opp-1557000000 {
 			opp-hz = /bits/ 64 <1557000000>;
+			opp-microwatt = <807000>;
 		};
 
 		opp-1745000000 {
 			opp-hz = /bits/ 64 <1745000000>;
+			opp-microwatt = <1020000>;
 		};
 
 		opp-1885000000 {
 			opp-hz = /bits/ 64 <1885000000>;
+			opp-microwatt = <1181000>;
 		};
 
 		opp-1999000000 {
 			opp-hz = /bits/ 64 <1999000000>;
+			opp-microwatt = <1317000>;
 		};
 
 		opp-2147000000 {
 			opp-hz = /bits/ 64 <2147000000>;
+			opp-microwatt = <1579000>;
 		};
 
 		opp-2294000000 {
 			opp-hz = /bits/ 64 <2294000000>;
+			opp-microwatt = <1874000>;
 		};
 
 		opp-2363000000 {
 			opp-hz = /bits/ 64 <2363000000>;
+			opp-microwatt = <2027000>;
 		};
 
 		opp-2499000000 {
 			opp-hz = /bits/ 64 <2499000000>;
+			opp-microwatt = <2380000>;
 		};
 
 		opp-2687000000 {
 			opp-hz = /bits/ 64 <2687000000>;
+			opp-microwatt = <3092000>;
 		};
 
 		/*
