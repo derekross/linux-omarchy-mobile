@@ -71,16 +71,19 @@ static const int guard_temp_decic[GUARD_NBANDS + 1] = {
 };
 
 /**
- * struct guard_table - step-charging table of one battery
+ * struct guard_table - per-board charger settings: the step-charging table and quirks
  * @ntiers: number of voltage tiers in use, at most GUARD_MAX_TIERS
  * @cv_mv: tier j charges up to cv_mv[j]
  * @cc_pct: charge current per band and tier, in percent of the design
  *	    capacity; 0 means the band does not charge in that tier
+ * @chgin_debounce: report CHGIN at most once a second, see
+ *		    chgin_irq_handler(); off on boards that have not needed it
  */
 struct guard_table {
 	int ntiers;
 	u32 cv_mv[GUARD_MAX_TIERS];
 	u8 cc_pct[GUARD_NBANDS][GUARD_MAX_TIERS];
+	bool chgin_debounce;
 };
 
 /* Google's gs201 table, for every board without a table of its own */
@@ -114,6 +117,7 @@ static const struct guard_table guard_table_husky = {
 		{  50,  50,   0,  0 },	/* 46-48 C */
 		{  30,   0,   0,  0 },	/* 48-55 C */
 	},
+	.chgin_debounce = true,
 };
 
 #define FOREACH_IRQ(S)			\
@@ -867,7 +871,7 @@ static int max77759_init_irqhandler(struct max77759_charger *chg)
 
 		if (i == BAT_OILO)
 			thread_fn = bat_oilo_irq_handler;
-		else if (i == CHGIN)
+		else if (i == CHGIN && chg->guard_table->chgin_debounce)
 			thread_fn = chgin_irq_handler;
 		else
 			thread_fn = irq_handler;
@@ -1483,29 +1487,34 @@ static int max77759_charger_probe(struct platform_device *pdev)
 	if (ret)
 		return dev_err_probe(dev, ret, "Failed to initialize psy work\n");
 
-	chg->chgin_ws = wakeup_source_register(dev, "max77759-chgin");
-	if (!chg->chgin_ws) {
-		dev_err(dev, "Failed to register CHGIN wakeup source\n");
-		return -ENOMEM;
+	chg->guard_table = guard_select_table();
+
+	/* Only boards that need it get the CHGIN debounce and its wakeup source */
+	if (chg->guard_table->chgin_debounce) {
+		chg->chgin_ws = wakeup_source_register(dev, "max77759-chgin");
+		if (!chg->chgin_ws) {
+			dev_err(dev, "Failed to register CHGIN wakeup source\n");
+			return -ENOMEM;
+		}
+
+		ret = devm_add_action_or_reset(dev, max77759_chgin_ws_unregister,
+					       chg->chgin_ws);
+		if (ret)
+			return ret;
+
+		/* Before the IRQs: devm frees them before it cancels this */
+		ret = devm_delayed_work_autocancel(dev, &chg->chgin_work,
+						   chgin_work_item);
+		if (ret)
+			return dev_err_probe(dev, ret,
+					     "Failed to initialize CHGIN work\n");
 	}
-
-	ret = devm_add_action_or_reset(dev, max77759_chgin_ws_unregister,
-				       chg->chgin_ws);
-	if (ret)
-		return ret;
-
-	/* Before the IRQs: devm frees them before it cancels this */
-	ret = devm_delayed_work_autocancel(dev, &chg->chgin_work,
-					   chgin_work_item);
-	if (ret)
-		return dev_err_probe(dev, ret, "Failed to initialize CHGIN work\n");
 
 	/*
 	 * Before the notifier, which can kick the guard work: devm then
 	 * unregisters the notifier before it cancels the work.
 	 */
 	chg->guard_band = -2;
-	chg->guard_table = guard_select_table();
 	ret = devm_delayed_work_autocancel(dev, &chg->guard_work, guard_work_item);
 	if (ret)
 		return dev_err_probe(dev, ret, "Failed to initialize guard work\n");
