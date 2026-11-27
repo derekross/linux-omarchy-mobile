@@ -571,6 +571,52 @@
 		pinctrl-names = "default";
 		shunt-resistor-micro-ohms = <5000>;
 		monitored-battery = <&battery>;
+
+		/*
+		 * Battery model for the ATL pack (ID byte 0x17 of the pack's
+		 * EEPROM = 1), the one this phone has. From Google's
+		 * zuma-husky-battery-data.dtsi (atl-a1-1k, model version 5).
+		 * TaskPeriod 0x2d00 makes one capacity LSB 2 mAh with 5 mOhm:
+		 * DesignCap 0x09cf = 5022 mAh. The driver loads it only while
+		 * the gauge reports a power-on reset.
+		 */
+		maxim,fg-model = /bits/ 16 <
+			0xa500 0xb790 0xb920 0xba60 0xbc70 0xbe00 0xbea0 0xc0b0
+			0xc270 0xc5d0 0xc930 0xcc40 0xcf40 0xd340 0xd6b0 0xde40
+			0x01e0 0x0b00 0x0d00 0x1310 0x1710 0x1410 0x0f00 0x0b00
+			0x0910 0x0810 0x07b0 0x07e0 0x05b0 0x07f0 0x04f0 0x04f0
+			0x0200 0x0200 0x0200 0x0200 0x0200 0x0200 0x0200 0x0200
+			0x0200 0x0200 0x0200 0x0200 0x0200 0x0200 0x0200 0x0200
+		>;
+		maxim,fg-params = /bits/ 16 <
+			0xf060	/* IAvgEmpty */
+			0x1439	/* RelaxCfg */
+			0x260e	/* LearnCfg */
+			0x4217	/* Config */
+			0x0090	/* Config2 */
+			0x5f00	/* FullSOCThr */
+			0x09cf	/* FullCapRep */
+			0x09cf	/* DesignCap */
+			0x3200	/* dPAcc */
+			0x0273	/* dQAcc */
+			0x09cf	/* FullCapNom */
+			0xa561	/* VEmpty */
+			0x2400	/* QRTable00 */
+			0x0f80	/* QRTable10 */
+			0x0580	/* QRTable20 */
+			0x0480	/* QRTable30 */
+			0x03b0	/* RComp0 */
+			0x1402	/* TempCo */
+			0x0630	/* IChgTerm */
+			0xed51	/* TGain */
+			0x1eba	/* TOff */
+			0x0014	/* Curve */
+			0x6070	/* MiscCfg */
+			0x1900	/* AtRate */
+			0x2241	/* ConvgCfg */
+			0x0613	/* FilterCfg */
+			0x2d00	/* TaskPeriod */
+		>;
 	};
 
 	pmic@66 {
