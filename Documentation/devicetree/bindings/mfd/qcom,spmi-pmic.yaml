@@ -162,6 +162,10 @@ patternProperties:
       - $ref: /schemas/power/supply/qcom,pm8941-coincell.yaml#
       - $ref: /schemas/power/supply/qcom,pmi8998-charger.yaml#
 
+  "^fuel-gauge@[0-9a-f]+$":
+    type: object
+    $ref: /schemas/power/supply/qcom,pmi8998-fg.yaml#
+
   "gpio@[0-9a-f]+$":
     type: object
     $ref: /schemas/pinctrl/qcom,pmic-gpio.yaml#

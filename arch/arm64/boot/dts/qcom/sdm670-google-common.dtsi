@@ -573,6 +573,13 @@
 	status = "okay";
 };
 
+&pm660_fg {
+	monitored-battery = <&battery>;
+	power-supplies = <&pm660_charger>;
+
+	status = "okay";
+};
+
 &pm660_gpios {
 	cam_vio_pin: cam-vio-state {
 		pins = "gpio13";
