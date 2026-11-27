@@ -9,6 +9,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/jiffies.h>
 #include <linux/module.h>
+#include <linux/soc/google/gs201-aoc.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
@@ -28,6 +29,7 @@ struct pwrseq_qcom_wcn_pdata {
 };
 
 struct pwrseq_qcom_wcn_ctx {
+	struct device *dev;
 	struct pwrseq_device *pwrseq;
 	struct device_node *of_node;
 	const struct pwrseq_qcom_wcn_pdata *pdata;
@@ -200,8 +202,15 @@ static const struct pwrseq_unit_data pwrseq_qcom_wcn6855_bt_unit_data = {
 static int pwrseq_qcom_wcn_wlan_enable(struct pwrseq_device *pwrseq)
 {
 	struct pwrseq_qcom_wcn_ctx *ctx = pwrseq_device_get_drvdata(pwrseq);
+	int ret;
 
 	pwrseq_qcom_wcn_ensure_gpio_delay(ctx);
+	ret = gs201_aoc_require_online(ctx->dev);
+	if (ret)
+		return ret;
+	if (of_find_property(ctx->of_node, "google,aoc", NULL))
+		dev_info(ctx->dev, "AoC online; asserting WLAN_EN\n");
+
 	gpiod_set_value_cansleep(ctx->wlan_gpio, 1);
 	ctx->last_gpio_enable_jf = jiffies;
 
@@ -461,11 +470,17 @@ static int pwrseq_qcom_wcn_probe(struct platform_device *pdev)
 	struct pwrseq_config config;
 	int i, ret;
 
+	/* The GPIO acquisition below preserves its level: defer before that too. */
+	ret = gs201_aoc_require_online(dev);
+	if (ret)
+		return dev_err_probe(dev, ret, "AoC firmware is not online\n");
+
 	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
 
 	ctx->of_node = dev->of_node;
+	ctx->dev = dev;
 
 	ctx->pdata = device_get_match_data(dev);
 	if (!ctx->pdata)
@@ -504,7 +519,8 @@ static int pwrseq_qcom_wcn_probe(struct platform_device *pdev)
 	 * the link down handling is implemented in the controller driver.
 	 */
 	ctx->wlan_gpio = devm_gpiod_get_optional(dev, "wlan-enable",
-						 GPIOD_ASIS);
+			 of_find_property(dev->of_node, "google,aoc", NULL) ?
+			 GPIOD_OUT_LOW : GPIOD_ASIS);
 	if (IS_ERR(ctx->wlan_gpio))
 		return dev_err_probe(dev, PTR_ERR(ctx->wlan_gpio),
 				     "Failed to get the WLAN enable GPIO\n");

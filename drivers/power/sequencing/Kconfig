@@ -17,6 +17,7 @@ config POWER_SEQUENCING_QCOM_WCN
 	tristate "Qualcomm WCN family PMU driver"
 	default m if ARCH_QCOM
 	depends on OF || COMPILE_TEST
+	depends on GS201_AOC || !GS201_AOC
 	help
 	  Say Y here to enable the power sequencing driver for Qualcomm
 	  WCN Bluetooth/WLAN chipsets.

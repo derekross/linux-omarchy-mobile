@@ -31,6 +31,12 @@ properties:
   vdd-supply:
     description: VDD supply regulator handle
 
+  google,aoc:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description:
+      AoC supplying the WLAN boot strap. Its firmware must be online before
+      acquiring the enable GPIO or enabling the WLAN target.
+
   vddaon-supply:
     description: VDD_AON supply regulator handle
 
