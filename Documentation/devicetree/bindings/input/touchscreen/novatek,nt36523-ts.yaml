@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/input/touchscreen/novatek,nt36523-ts.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Novatek NT36523 SPI touch controller
+
+maintainers:
+  - abhisheksreesaila <abhishek.sreesaila@gmail.com>
+
+description:
+  The touch half of the Novatek NT36523 touch and display driver chip, on
+  SPI, as in the Google Pixel Tablet. The NT36523 and NT36523N revisions
+  share this binding; the driver tells them apart by the chip id. The chip has no flash; the host loads
+  its firmware after every reset. It reports up to ten touches. The display
+  half is a separate device on the DSI bus, and the I2C Novatek
+  controllers are covered by novatek,nvt-ts.yaml.
+
+allOf:
+  - $ref: /schemas/spi/spi-peripheral-props.yaml#
+  - $ref: touchscreen.yaml#
+
+properties:
+  compatible:
+    const: novatek,nt36523-ts
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+
+  reset-gpios:
+    description: Touch reset (TP_RESX), active low
+    maxItems: 1
+
+  vio-supply:
+    description:
+      Digital I/O supply (1.8 V). The chip shares it with its display
+      half, so a board whose display keeps it on may leave it out.
+
+  firmware-name:
+    maxItems: 1
+    description:
+      The firmware image to load. It is matched to the display panel the
+      chip is bonded to.
+
+  spi-max-frequency: true
+
+required:
+  - compatible
+  - reg
+  - interrupts
+  - firmware-name
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/gpio/gpio.h>
+    #include <dt-bindings/interrupt-controller/irq.h>
+
+    spi {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        touchscreen@0 {
+            compatible = "novatek,nt36523-ts";
+            reg = <0>;
+            spi-max-frequency = <15000000>;
+            interrupt-parent = <&gpa7>;
+            interrupts = <0 IRQ_TYPE_EDGE_RISING>;
+            reset-gpios = <&gpp23 2 GPIO_ACTIVE_LOW>;
+            firmware-name = "novatek/nt36523n-tangorpro-boe.bin";
+            touchscreen-size-x = <1600>;
+            touchscreen-size-y = <2560>;
+        };
+    };

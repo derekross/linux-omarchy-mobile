@@ -702,6 +702,20 @@ config TOUCHSCREEN_NOVATEK_NVT_TS
 	  To compile this driver as a module, choose M here: the
 	  module will be called novatek-nvt-ts.
 
+config TOUCHSCREEN_NOVATEK_NT36523
+	tristate "Novatek NT36523 SPI touchscreen"
+	depends on SPI
+	depends on GPIOLIB || COMPILE_TEST
+	help
+	  Say Y here if you have a Novatek NT36523 or NT36523N touch and display
+	  driver chip on SPI, such as the one in the Google Pixel Tablet.
+	  The chip has no flash; the driver loads its firmware at probe.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called novatek-nt36523.
+
 config TOUCHSCREEN_IMAGIS
 	tristate "Imagis touchscreen support"
 	depends on I2C
