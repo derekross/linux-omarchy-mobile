@@ -598,6 +598,16 @@ int gs_dsim_set_refresh_rate(struct gs_dsim *dsim, unsigned int hz)
 }
 EXPORT_SYMBOL_GPL(gs_dsim_set_refresh_rate);
 
+int gs_dsim_panel_get_modes(struct gs_dsim *dsim,
+			    struct drm_connector *connector)
+{
+	if (!dsim->panel)
+		return 0;
+
+	return drm_panel_get_modes(dsim->panel, connector);
+}
+EXPORT_SYMBOL_GPL(gs_dsim_panel_get_modes);
+
 /**
  * gs_dsim_panel_sleep - switch the panel off and put it to sleep
  * @dsim: the DSIM
