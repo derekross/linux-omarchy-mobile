@@ -181,7 +181,7 @@ struct max77759_charger {
 	/* Temperature guard */
 	struct delayed_work guard_work;
 	bool guard_active;
-	int guard_band;		/* -1: charging inhibited */
+	int guard_band;		/* -1: inhibited, -2: no reading yet */
 	bool guard_no_reading;	/* inhibited for want of a reading */
 	int guard_tier;
 	const struct guard_table *guard_table;
@@ -1072,7 +1072,7 @@ static int guard_next_band(const struct guard_table *tbl, int cur, int decic)
 {
 	int band = guard_classify(decic);
 
-	/* First reading (cur -2): take it as it is */
+	/* First reading, or none since (cur -2): take it as it is */
 	if (cur < -1 || band == cur ||
 	    guard_band_score(tbl, band) < guard_band_score(tbl, cur))
 		return band;
@@ -1302,14 +1302,20 @@ static void guard_work_item(struct work_struct *work)
 	band = read_ok ? guard_next_band(tbl, chg->guard_band, decic) : -1;
 
 	if (band < 0) {
-		if (chg->guard_band != -1 && !read_ok)
+		if (!read_ok && !READ_ONCE(chg->inhibit))
 			dev_warn(chg->dev, "no reading from %s: charging inhibited\n",
 				 guard_psy);
-		else if (chg->guard_band != -1)
+		else if (read_ok && chg->guard_band != -1)
 			dev_info(chg->dev, "battery %s%d.%d C: charging inhibited\n",
 				 decic < 0 ? "-" : "", abs(decic) / 10,
 				 abs(decic) % 10);
-		chg->guard_band = -1;
+		/*
+		 * Without a reading there is no band to hold on to: take the
+		 * next reading as it is (-2), or a battery near a band edge
+		 * never clears the hysteresis and stays inhibited. An inhibit
+		 * for a reading out of range (-1) keeps its hysteresis.
+		 */
+		chg->guard_band = (read_ok || chg->guard_band == -1) ? -1 : -2;
 		guard_set_inhibit(chg, true);
 		goto out;
 	}
