@@ -1,0 +1,454 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Google Pixel 9 Pro Fold (comet).
+ *
+ * Bootloader selector values from Google's GPL zumapro device tree.
+ * Copyright 2023 Google LLC.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/clock/google,zumapro-acpm.h>
+#include <dt-bindings/input/linux-event-codes.h>
+#include "../exynos-pinctrl.h"
+#include "zumapro.dtsi"
+#include "zumapro-reserved-memory.dtsi"
+#include "zumapro-comet-haptics-torch.dtsi"
+#include "zumapro-comet-nfc.dtsi"
+#include "zumapro-comet-battery.dtsi"
+#include "zumapro-comet-dvfs.dtsi"
+
+/ {
+	model = "Google Pixel 9 Pro Fold";
+	compatible = "google,zumapro-comet", "google,zumapro";
+
+	chosen {
+		/*
+		 * ABL requires bootargs to exist and appends its own after
+		 * these. It also appends console=null, so a panic is silent:
+		 * panic=10 resets the phone by itself.
+		 * The firmware advertises PSCI SYSTEM_SUSPEND, but Linux has no
+		 * Tensor SoC sleep sequence for "deep": suspend to idle only.
+		 */
+		bootargs = "clk_ignore_unused pd_ignore_unused panic=10 mem_sleep_default=s2idle";
+	};
+
+	/*
+	 * ABL picks the base DTB by matching these children against the
+	 * SoC's product id, revision and package. Comet stock images include FOPLP and IPOP parts.
+	 */
+	soc_compatible {
+		A0_FOPLP {
+			product_id = <0x9875>;
+			major = <0>;
+			minor = <0>;
+			pkg_mode = <0>;
+		};
+
+		A1_FOPLP {
+			product_id = <0x9875>;
+			major = <0>;
+			minor = <1>;
+			pkg_mode = <0>;
+		};
+
+		A0_IPOP {
+			product_id = <0x9875>;
+			major = <0>;
+			minor = <0>;
+			pkg_mode = <1>;
+		};
+
+		A1_IPOP {
+			product_id = <0x9875>;
+			major = <0>;
+			minor = <1>;
+			pkg_mode = <1>;
+		};
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		key-power {
+			label = "Power";
+			linux,code = <KEY_POWER>;
+			gpios = <&gpa4 0 GPIO_ACTIVE_LOW>;
+			wakeup-source;
+		};
+
+		key-volume-down {
+			label = "Volume Down";
+			linux,code = <KEY_VOLUMEDOWN>;
+			gpios = <&gpa4 1 GPIO_ACTIVE_LOW>;
+		};
+
+		key-volume-up {
+			label = "Volume Up";
+			linux,code = <KEY_VOLUMEUP>;
+			gpios = <&gpa6 2 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	/*
+	 * The fold sensor: a TI DRV5032 Hall-effect switch on gpa2-3 that
+	 * closes as the two halves come together, active low with no pull
+	 * (Google's zuma-comet-hall-sensor.dtsi). It is one GPIO whose state
+	 * is a lid switch, so gpio-keys reports it. Google's node also names
+	 * interrupts = <4 0> on gpa2, but its driver takes the interrupt from
+	 * the GPIO; gpa2-3 is the pin. A device of its own, so the keys above
+	 * are unchanged and a desktop can match it by name.
+	 */
+	comet_hall: hall-keys {
+		compatible = "gpio-keys";
+		label = "Comet Hall";
+		pinctrl-names = "default";
+		pinctrl-0 = <&comet_hall_pin>;
+		status = "disabled";
+
+		switch-lid {
+			label = "Hall Sensor";
+			gpios = <&gpa2 3 GPIO_ACTIVE_LOW>;
+			linux,input-type = <EV_SW>;
+			linux,code = <SW_LID>;
+		};
+	};
+
+	/*
+	 * Shader rates from Google's GPL zuma-gpu.dtsi gpu_dvfs_table_v2,
+	 * which comet inherits; ACPM pairs each with its L2 rate and owns the
+	 * voltages. The top level, 940 MHz, is the highest comet runs.
+	 */
+	gpu_opp: opp-table-gpu {
+		compatible = "operating-points-v2";
+
+		opp-150000000 {
+			opp-hz = /bits/ 64 <150000000>;
+			opp-suspend;
+		};
+
+		opp-302000000 {
+			opp-hz = /bits/ 64 <302000000>;
+		};
+
+		opp-337000000 {
+			opp-hz = /bits/ 64 <337000000>;
+		};
+
+		opp-376000000 {
+			opp-hz = /bits/ 64 <376000000>;
+		};
+
+		opp-419000000 {
+			opp-hz = /bits/ 64 <419000000>;
+		};
+
+		opp-467000000 {
+			opp-hz = /bits/ 64 <467000000>;
+		};
+
+		opp-521000000 {
+			opp-hz = /bits/ 64 <521000000>;
+		};
+
+		opp-580000000 {
+			opp-hz = /bits/ 64 <580000000>;
+		};
+
+		opp-649000000 {
+			opp-hz = /bits/ 64 <649000000>;
+		};
+
+		opp-723000000 {
+			opp-hz = /bits/ 64 <723000000>;
+		};
+
+		opp-807000000 {
+			opp-hz = /bits/ 64 <807000000>;
+		};
+
+		opp-850000000 {
+			opp-hz = /bits/ 64 <850000000>;
+		};
+
+		opp-890000000 {
+			opp-hz = /bits/ 64 <890000000>;
+		};
+
+		opp-940000000 {
+			opp-hz = /bits/ 64 <940000000>;
+		};
+	};
+
+	/* UFS VCC, switched by gpp0-1 as on stock. */
+	ufs_vcc: regulator-ufs-vcc {
+		compatible = "regulator-fixed";
+		regulator-name = "ufs-vcc";
+		gpio = <&gpp0 1 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-boot-on;
+		regulator-always-on;
+	};
+};
+
+/*
+ * Further firmware carve-outs, as the bootloader's DT on comet reserves them,
+ * without the three ABL inserts itself (see zuma.dtsi).
+ * The GSA's protected region stays at the SoC's size: comet's bootloader DT
+ * asks for 4 MiB, which would overlap the separate GSA log region.
+ */
+&{/reserved-memory} {
+	abl@f8800000 {
+		reg = <0x0 0xf8800000 0x01000000>;
+		no-map;
+	};
+
+};
+
+&acpm_ipc {
+	status = "okay";
+
+	main_pmic: pmic-1 {
+		compatible = "samsung,s2mpg14-pmic";
+
+		regulators {
+			/* The eUSB2 PHY's supplies; it switches them itself. */
+			eusb_vdd: ldo8m {
+				regulator-name = "eusb-vdd";
+			};
+
+			eusb_vdda12: ldo9m {
+				regulator-name = "eusb-vdda12";
+			};
+		};
+	};
+};
+
+&ap2apm_mailbox {
+	status = "okay";
+};
+
+&apm_sram {
+	status = "okay";
+};
+
+&cmu_apm {
+	status = "okay";
+};
+
+&cmu_hsi0 {
+	status = "okay";
+};
+
+&cmu_hsi1 {
+	status = "okay";
+};
+
+&cmu_hsi2 {
+	status = "okay";
+};
+
+&cmu_misc {
+	status = "okay";
+};
+
+&cmu_peric0 {
+	status = "okay";
+};
+
+&cmu_peric1 {
+	status = "okay";
+};
+
+&cmu_top {
+	status = "okay";
+};
+
+/*
+ * The GPU, disabled: its core clock is ACPM's, which also sets the
+ * voltage, and the coregroup and stacks clocks are CMU_G3D's gates.
+ */
+&gpu {
+	clocks = <&acpm_ipc ZUMAPRO_CLK_ACPM_GPU>,
+		 <&cmu_g3d CLK_GOUT_G3D_COREGROUP>,
+		 <&cmu_g3d CLK_GOUT_G3D_STACKS>;
+	operating-points-v2 = <&gpu_opp>;
+};
+
+/* The keys' banks raise their own interrupts. */
+&gpa4 {
+	interrupt-controller;
+	#interrupt-cells = <2>;
+	interrupts = <GIC_SPI 28 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 29 IRQ_TYPE_LEVEL_HIGH>;
+};
+
+&gpa6 {
+	interrupt-controller;
+	#interrupt-cells = <2>;
+	interrupts = <GIC_SPI 30 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 31 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 32 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 33 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 34 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 35 IRQ_TYPE_LEVEL_HIGH>;
+};
+
+/* The fold sensor's bank: wakeup EINTs, one GIC SPI per pin. */
+&gpa2 {
+	interrupt-controller;
+	#interrupt-cells = <2>;
+	interrupts = <GIC_SPI 20 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 21 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 22 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 23 IRQ_TYPE_LEVEL_HIGH>;
+};
+
+&pinctrl_alive {
+	status = "okay";
+
+	comet_hall_pin: hall-sensor-pins {
+		samsung,pins = "gpa2-3";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
+};
+
+&pinctrl_custom_alive {
+	status = "okay";
+};
+
+&pinctrl_far_alive {
+	status = "okay";
+};
+
+&pinctrl_hsi1 {
+	status = "okay";
+};
+
+&pinctrl_hsi2 {
+	status = "okay";
+};
+
+&pinctrl_hsi2ufs {
+	status = "okay";
+};
+
+&pinctrl_peric0 {
+	status = "okay";
+};
+
+&pinctrl_peric1 {
+	status = "okay";
+};
+
+&pmu_system_controller {
+	status = "okay";
+};
+
+&reboot_mode {
+	status = "okay";
+};
+
+&sysreg_apm {
+	status = "okay";
+};
+
+&sysreg_hsi0 {
+	status = "okay";
+};
+
+&sysreg_peric0 {
+	status = "okay";
+};
+
+&sysreg_peric1 {
+	status = "okay";
+};
+
+&sysreg_ufs {
+	status = "okay";
+};
+
+/*
+ * Built-in UFS attaches the disks before init runs. The init's storage
+ * guard marks partitions read-only as soon as it starts, leaving only
+ * slot B's boot images and userdata writable.
+ */
+&ufs {
+	vcc-supply = <&ufs_vcc>;
+	status = "okay";
+};
+
+&ufs_phy {
+	status = "okay";
+};
+
+/* USB 2.0 peripheral, with the same controller setup as the Pixel 9a. */
+&usb {
+	clocks = <&cmu_hsi0 CLK_GOUT_HSI0_USB_LINK>,
+		 <&cmu_hsi0 CLK_MOUT_HSI0_USB20_REF>,
+		 <&cmu_hsi0 CLK_GOUT_HSI0_USB_SUSPEND>,
+		 <&cmu_hsi0 CLK_GOUT_HSI0_USB_SUBCTL>;
+	clock-names = "bus_early", "ref", "suspend", "subctl";
+	dr_mode = "peripheral";
+	maximum-speed = "high-speed";
+	snps,dis-u2-freeclk-exists-quirk;
+	snps,usb2-gadget-lpm-disable;
+	status = "okay";
+};
+
+&usb_hsphy {
+	vdd-supply = <&eusb_vdd>;
+	vdda12-supply = <&eusb_vdda12>;
+	status = "okay";
+};
+
+&usbdrd_phy {
+	status = "okay";
+};
+
+&watchdog_cl0 {
+	status = "okay";
+};
+
+&watchdog_cl1 {
+	status = "okay";
+};
+
+/* Stock's ramoops layout for zumapro: console and pmsg, 2 MiB each. */
+&ramoops_reserved {
+	compatible = "ramoops";
+	console-size = <0x200000>;
+	pmsg-size = <0x200000>;
+};
+
+/*
+ * The I2C buses with board devices: USI6 (the MAX77779), USI9 (haptics,
+ * torch, NFC) and USI10 (the second gauge). Every client stays disabled.
+ */
+&usi6 {
+	status = "okay";
+};
+
+&hsi2c6 {
+	status = "okay";
+};
+
+&usi9 {
+	status = "okay";
+};
+
+&hsi2c9 {
+	status = "okay";
+};
+
+&usi10 {
+	status = "okay";
+};
+
+&hsi2c10 {
+	status = "okay";
+};

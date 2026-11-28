@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Google Pixel 9 Pro Fold (comet): the haptics and the torch, both disabled.
+ *
+ * A Cirrus Logic CS40L26A (0x43) and a TI LM3644 (0x63) share USI9's I2C bus
+ * (HSI2C9, gpp19-4/5), as in Google's GPL board files for comet. The Pixel 9a
+ * has the same haptics wiring and puts its torch on USI4 instead; the nodes
+ * follow its board file. Both devices stay disabled.
+ */
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/leds/common.h>
+#include "../exynos-pinctrl.h"
+
+&hsi2c9 {
+	/* Stock runs this bus at 950 kHz; start slow. */
+	clock-frequency = <100000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&hsi2c9_bus>;
+
+	/* The haptics: a CS40L26A on comet's LRA, with Google's limits for it. */
+	haptics: haptic-driver@43 {
+		compatible = "cirrus,cs40l26a";
+		reg = <0x43>;
+		interrupt-parent = <&gpa6>;
+		interrupts = <3 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&gph2 3 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&haptic_reset>;
+		cirrus,boost-peak-microamp = <2500000>;
+		cirrus,boost-ctl-microvolt = <11000000>;
+		cirrus,lra-f0-hz = <160>;
+		cirrus,lra-redc-micro-ohms = <13000000>;
+		cirrus,vpbr-threshold-microvolt = <3008000>;
+		status = "disabled";
+	};
+
+	/* The torch: a TI LM3644, both LED outputs on one white LED. */
+	torch: led-controller@63 {
+		compatible = "ti,lm3644";
+		reg = <0x63>;
+		enable-gpios = <&gpp24 1 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&torch_enable>;
+		status = "disabled";
+
+		led {
+			function = LED_FUNCTION_TORCH;
+			color = <LED_COLOR_ID_WHITE>;
+			led-sources = <1 2>;
+			/* Our own bring-up cap, not a stock value. */
+			led-max-microamp = <50000>;
+		};
+	};
+};
+
+&pinctrl_hsi1 {
+	haptic_reset: haptic-reset-pins {
+		samsung,pins = "gph2-3";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
+};
+
+&pinctrl_peric1 {
+	hsi2c9_bus: hsi2c9-bus-pins {
+		samsung,pins = "gpp19-4", "gpp19-5";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
+
+	torch_enable: torch-enable-pins {
+		samsung,pins = "gpp24-1";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <0>;
+	};
+};
