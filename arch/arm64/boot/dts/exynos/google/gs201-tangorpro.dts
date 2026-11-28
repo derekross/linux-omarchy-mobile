@@ -1,0 +1,413 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Google Pixel Tablet (tangorpro) - first-light board file.
+ *
+ * USB (NCM + ACM), the cluster watchdogs from gs201.dtsi, a
+ * simple-framebuffer on the buffer the bootloader leaves the panel
+ * scanning out, UFS, the three keys, the GPU and the MAX77759's I2C bus.
+ * The panel driver, backlight, touch, the fuel gauge and Wi-Fi stay
+ * disabled. The tablet has no modem.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/input/input.h>
+#include "gs201.dtsi"
+
+/ {
+	model = "Google Pixel Tablet";
+	compatible = "google,gs201-tangorpro", "google,gs201";
+
+	/*
+	 * ABL's base-DTB match: product id 0x09855000 | major revision (B0 is
+	 * 1), as on the other gs201 Pixels.
+	 */
+	soc_id = <0x09855001 0x0>;
+
+	chosen {
+		/* ABL requires bootargs to exist; it appends its own after these. */
+		bootargs = "console=tty0 panic=10 reboot=warm clk_ignore_unused pd_ignore_unused rdinit=/init omamobile.ufs-probe";
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+
+		/*
+		 * ABL hands the display over at 0xfac00000 (the 20 MiB
+		 * fb_handover region in Google's tangorpro display tree). The
+		 * LCD runs in DSI video mode, so DECON keeps scanning the
+		 * buffer with no trigger. There is no panel driver, so no panel
+		 * phandle; the size comes from this node: 1600 x 2560
+		 * portrait, ARGB8888 assumed as on panther until DPP0's
+		 * registers are read on this tablet.
+		 */
+		framebuffer0: framebuffer@fac00000 {
+			compatible = "simple-framebuffer";
+			reg = <0x0 0xfac00000 (1600 * 2560 * 4)>;
+			memory-region = <&cont_splash_mem>;
+			width = <1600>;
+			height = <2560>;
+			stride = <(1600 * 4)>;
+			format = "a8r8g8b8";
+		};
+	};
+
+	/*
+	 * Google's tangorpro tree: google,chg-battery-capacity 6900 (mAh) in
+	 * gs201-tangorpro-battery.dtsi, google,fv-max-uv 4400000 in
+	 * gs201-tangorpro-charging.dtsi, and 3.2 V empty (VEmpty 0xa05f of
+	 * its gauge models).
+	 */
+	battery: battery {
+		compatible = "simple-battery";
+		charge-full-design-microamp-hours = <6900000>;
+		voltage-max-design-microvolt = <4400000>;
+		voltage-min-design-microvolt = <3200000>;
+	};
+
+	/*
+	 * Google's shared gs201-common.dtsi pins, which tangorpro does not
+	 * override: the same as panther's and cheetah's.
+	 */
+	gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-0 = <&key_voldown>, <&key_volup>, <&key_power>;
+		pinctrl-names = "default";
+
+		button-vol-down {
+			label = "KEY_VOLUMEDOWN";
+			linux,code = <KEY_VOLUMEDOWN>;
+			gpios = <&gpa10 1 GPIO_ACTIVE_LOW>;
+			wakeup-source;
+		};
+
+		button-vol-up {
+			label = "KEY_VOLUMEUP";
+			linux,code = <KEY_VOLUMEUP>;
+			gpios = <&gpa8 5 GPIO_ACTIVE_LOW>;
+			wakeup-source;
+		};
+
+		/*
+		 * PMIC_PWRON_OD_L: the S2MPG12 PWRONB line, also wired to the
+		 * SoC. The PMIC's own long-press reset is unaffected.
+		 */
+		button-power {
+			label = "KEY_POWER";
+			linux,code = <KEY_POWER>;
+			gpios = <&gpa10 0 GPIO_ACTIVE_LOW>;
+			wakeup-source;
+		};
+	};
+
+	/*
+	 * UFS VCC. Google's shared gs201-ufs.dtsi drives it from GPIO gpp0-1
+	 * (boot-on) and tangorpro does not override it; with no gs201 GPIO
+	 * regulator wiring here yet, describe it as always on, as the
+	 * bootloader leaves it (as on panther).
+	 */
+	ufs_0_fixed_vcc_reg: regulator-ufs-vcc {
+		compatible = "regulator-fixed";
+		regulator-name = "ufs-vcc";
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	/*
+	 * WL_REG_ON of the BCM43752, gph2-4 as on the Pixel 7 (Google's
+	 * tangorpro tree includes the same gs201-cloudripper-wlan.dtsi and
+	 * does not override it). Google raises it and waits 200 ms before
+	 * training the link (WIFI_TURNON_DELAY in its dhd43752p driver).
+	 * Modelled as the root port's supply so the PCI pwrctrl core switches
+	 * it around link training. Disabled until the Wi-Fi overlay.
+	 */
+	wlan_pwr: regulator-wlan {
+		compatible = "regulator-fixed";
+		regulator-name = "wlan-reg-on";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		gpio = <&gph2 4 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <200000>;
+		pinctrl-0 = <&wlan_reg_on>;
+		pinctrl-names = "default";
+		status = "disabled";
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+
+		/*
+		 * All of the Wi-Fi chip's DMA buffers come from this pool, as on
+		 * the Pixel 7. It keeps driver bugs and stray pointers away from
+		 * the rest of RAM; it does not stop the chip's own firmware from
+		 * reaching other memory (the HSI2 SysMMU and S2MPU see the PCIe
+		 * and UFS masters on the same VID, so neither can confine it
+		 * alone). Placed by the kernel below 4 GiB, clear of the stock
+		 * carve-outs gs201.dtsi reserves; tangorpro adds none of its own
+		 * there besides the display handover below. Disabled, so it
+		 * costs no RAM, until the Wi-Fi overlay.
+		 */
+		wifi_dma_pool: wifi-dma-pool {
+			compatible = "restricted-dma-pool";
+			size = <0x1000000>;
+			alignment = <0x0 0x200000>;
+			alloc-ranges = <0x0 0x80000000 0x80000000>;
+			status = "disabled";
+		};
+
+		/*
+		 * Stock's region and layout (ramoops_mem@fd3ff000 in Google's
+		 * gs201-rmem.dtsi, which tangorpro does not override), so a log
+		 * from this kernel can be read after a warm reboot into slot A.
+		 */
+		ramoops@fd3ff000 {
+			compatible = "ramoops";
+			reg = <0x0 0xfd3ff000 0x400000>;
+			console-size = <0x200000>;
+			pmsg-size = <0x200000>;
+		};
+
+		/* The whole handover region, as stock reserves it. */
+		cont_splash_mem: splash@fac00000 {
+			reg = <0x0 0xfac00000 0x1400000>;
+			no-map;
+		};
+	};
+};
+
+&gpu {
+	/* No mali-supply: the G3D rails follow the PMU power domain and ACPM. */
+	status = "okay";
+};
+
+&ufs_0 {
+	vcc-supply = <&ufs_0_fixed_vcc_reg>;
+	status = "okay";
+};
+
+&ufs_0_phy {
+	status = "okay";
+};
+
+&usbdrd31_phy {
+	status = "okay";
+};
+
+&usb_dwc3 {
+	status = "okay";
+};
+
+/*
+ * Touchscreen: the touch half of the panel's Novatek NT36523N touch and
+ * display driver chip, on USI0 SPI with the Pixel 7's pins (chip select
+ * gpp20-3, interrupt gpa7-0, reset gpp23-2), per Google's GPL
+ * gs201-tangorpro-touch.dtsi and gs201-common-touch.dtsi: 15 MHz, 1 us
+ * from chip select to the clock (cs-clock-delay), interrupt on the rising
+ * edge, no pull on the interrupt or reset lines. It has no supply of its
+ * own: Google's tablet tree gives the Pixel 7's touch rails, LDO25M and
+ * LDO26M, to the backlight enable and the pogo accessory detect, and its
+ * touch driver switches no regulator; the chip runs from the panel's
+ * rails, which the bootloader leaves on. Flashless: the driver loads the
+ * firmware that matches the panel (BOE here; the CSOT panel takes
+ * novatek/nt36523n-tangorpro-csot.bin). Disabled until the touch overlay.
+ */
+&usi0 {
+	samsung,mode = <USI_MODE_SPI>;
+};
+
+&spi_0 {
+	pinctrl-0 = <&spi0_bus &spi0_miso &spi0_cs_gpio>;
+	cs-gpios = <&gpp20 3 GPIO_ACTIVE_LOW>;
+	num-cs = <1>;
+
+	touchscreen: touchscreen@0 {
+		compatible = "novatek,nt36523-ts";
+		reg = <0>;
+		spi-max-frequency = <15000000>;
+		spi-cs-setup-delay-ns = <1000>;
+		interrupt-parent = <&gpa7>;
+		interrupts = <0 IRQ_TYPE_EDGE_RISING>;
+		reset-gpios = <&gpp23 2 GPIO_ACTIVE_LOW>;
+		pinctrl-0 = <&ts_irq &ts_reset>;
+		pinctrl-names = "default";
+		firmware-name = "novatek/nt36523n-tangorpro-boe.bin";
+		touchscreen-size-x = <1600>;
+		touchscreen-size-y = <2560>;
+		status = "disabled";
+	};
+};
+
+/*
+ * MAX77759 (charger, Type-C port controller, fuel gauge) on USI13, as on
+ * the Pixel 7 and Pixel 7 Pro: Google's tablet tree takes it unchanged
+ * from gs201-cloudripper-battery.dtsi and gs201-common-typec.dtsi (TCPC
+ * 0x25, PMIC 0x66, fuel gauge 0x36, charger 0x69, bus pins gpp25-0/1,
+ * 400 kHz). Only the fuel gauge is described: the Type-C port controller
+ * would take over VBUS and the data role from the forced-VBUS setup the
+ * USB PHY uses, and the USB link is our only way into the tablet.
+ */
+&usi13 {
+	samsung,mode = <USI_MODE_I2C>;
+	status = "okay";
+};
+
+&hsi2c_13 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	/*
+	 * The fuel gauge, from gs201-cloudripper-battery.dtsi as the tablet
+	 * includes it: FG_INT_L on gpa9-3 (XEINT_23), low, pulled up, and
+	 * maxim,rsense-default = <500> (10 uOhm units), 5 mOhm.
+	 *
+	 * Battery model for the pack with a 1 kOhm ID resistor, from Google's
+	 * gs201-tangorpro-battery-data.dtsi (cos-a1-1k, model version 2;
+	 * batt-id-1-atl in its charging tables). Its 48 table words are also
+	 * those of default-a1-0k, the model stock falls back to for an
+	 * unknown pack. The pack with a 5 kOhm ID resistor (hpt-a1-5k) has its
+	 * own model; which pack this tablet has is read from the gauge before
+	 * the first boot with this node, and battery-5k.dtso swaps the model.
+	 * TaskPeriod 0x2d00 makes one capacity LSB 2 mAh with 5 mOhm:
+	 * DesignCap 0x0dcc = 7064 mAh.
+	 *
+	 * Disabled: on a power-on reset the driver writes this model into
+	 * the gauge's RAM. An overlay turns it on for a gated boot.
+	 */
+	fuel_gauge: fuel-gauge@36 {
+		compatible = "maxim,max77759-fg";
+		reg = <0x36>;
+		interrupts-extended = <&gpa9 3 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-0 = <&if_pmic_fg_int>;
+		pinctrl-names = "default";
+		shunt-resistor-micro-ohms = <5000>;
+		monitored-battery = <&battery>;
+		status = "disabled";
+
+		maxim,fg-model = /bits/ 16 <
+			0x9ff0 0xb620 0xb7f0 0xb9a0 0xbb90 0xbce0 0xbe00 0xbf70
+			0xc000 0xc0c0 0xc3c0 0xc710 0xca60 0xcd90 0xd420 0xda20
+			0x0080 0x0d40 0x0e00 0x0e10 0x12e0 0x1a40 0x1470 0x16b0
+			0x11c0 0x0a80 0x0840 0x08a0 0x08c0 0x06f0 0x0720 0x0720
+			0x0200 0x0200 0x0200 0x0200 0x0200 0x0200 0x0200 0x0200
+			0x0200 0x0200 0x0200 0x0200 0x0200 0x0200 0x0200 0x0200
+		>;
+		maxim,fg-params = /bits/ 16 <
+			0xf060	/* IAvgEmpty */
+			0x2038	/* RelaxCfg */
+			0x260e	/* LearnCfg */
+			0x4217	/* Config: external thermistor, TEx clear */
+			0x0090	/* Config2 */
+			0x5f00	/* FullSOCThr */
+			0x0dcc	/* FullCapRep */
+			0x0dcc	/* DesignCap */
+			0x3200	/* dPAcc */
+			0x0373	/* dQAcc */
+			0x0dcc	/* FullCapNom */
+			0xa05f	/* VEmpty: 3.2 V empty, 3.8 V recovery */
+			0x0f00	/* QRTable00 */
+			0x0780	/* QRTable10 */
+			0x0400	/* QRTable20 */
+			0x0280	/* QRTable30 */
+			0x06c0	/* RComp0 */
+			0x1102	/* TempCo */
+			0x0463	/* IChgTerm */
+			0xee0c	/* TGain */
+			0x1df9	/* TOff */
+			0x0012	/* Curve */
+			0x3870	/* MiscCfg */
+			0x1900	/* AtRate */
+			0x2441	/* ConvgCfg */
+			0xc623	/* FilterCfg */
+			0x2d00	/* TaskPeriod */
+		>;
+	};
+};
+
+&pinctrl_gpio_alive {
+	if_pmic_fg_int: if-pmic-fg-int-pins {
+		samsung,pins = "gpa9-3";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_UP>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+};
+
+/*
+ * Wi-Fi: a BCM43752 (vendor firmware tag "4362b0-roml"; Google's driver,
+ * dhd43752p, binds PCI 14e4:449d) on PCIe GEN4A_1, the Pixel 7's Wi-Fi
+ * lines. One lane at Gen1: Google's gs201-tangorpro-wlan.dtsi lowers the
+ * shared tree's Gen2 for this board. The chip's 0.85 V and 1.8 V PCIe rails
+ * (S2MPG13 LDO3 and LDO18) are always on in Google's tree and this one
+ * leaves them as the bootloader does. Its DMA buffers come from
+ * wifi_dma_pool. pcie_1 and its PHY stay disabled until the Wi-Fi overlay.
+ */
+&pcie_1 {
+	pinctrl-0 = <&pcie1_clkreq>, <&pcie1_perst>, <&wlan_dev_wake>,
+		    <&wlan_host_wake>;
+	pinctrl-names = "default";
+	max-link-speed = <1>;
+
+	pcie@0,0 {
+		compatible = "pciclass,0604";
+		device_type = "pci";
+		reg = <0x0 0x0 0x0 0x0 0x0>;
+		bus-range = <0x01 0xff>;
+		#address-cells = <3>;
+		#size-cells = <2>;
+		ranges;
+		vpcie3v3-supply = <&wlan_pwr>;
+
+		wifi@0,0 {
+			compatible = "pci14e4,449d";
+			reg = <0x10000 0x0 0x0 0x0 0x0>;
+			brcm,board-type = "google,gs201-tangorpro";
+			memory-region = <&wifi_dma_pool>;
+		};
+	};
+};
+
+/*
+ * The window for the PCIe System MMU. The node stays disabled: the PCIe and
+ * UFS masters share its VID 0, so it cannot confine the Wi-Fi chip without
+ * also confining storage.
+ */
+&pcie_1_sysmmu {
+	google,dma-window = <&wifi_dma_pool>;
+};
+
+/*
+ * The Wi-Fi pins, per Google's gs201-cloudripper-wlan.dtsi, which the
+ * tablet's MP overlay (board id 0x30706) carries unchanged. Samsung pinctrl
+ * takes pin groups only at its own probe, so they live here even though the
+ * HSI2 controller stays disabled until the Wi-Fi overlay.
+ */
+&pinctrl_far_alive {
+	wlan_host_wake: wlan-host-wake-pins {
+		samsung,pins = "gpa6-1";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_DOWN>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+};
+
+&pinctrl_hsi2 {
+	wlan_reg_on: wlan-reg-on-pins {
+		samsung,pins = "gph2-4";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
+		samsung,pin-pud-pdn = <GS101_PIN_PULL_NONE>;
+	};
+
+	wlan_dev_wake: wlan-dev-wake-pins {
+		samsung,pins = "gph2-5";
+		samsung,pin-function = <GS101_PIN_FUNC_INPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_DOWN>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
+		samsung,pin-pud-pdn = <GS101_PIN_PULL_DOWN>;
+	};
+};
