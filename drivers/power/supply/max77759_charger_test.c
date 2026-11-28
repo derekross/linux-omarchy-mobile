@@ -204,6 +204,13 @@ static void guard_test_husky_table(struct kunit *test)
 	guard_test_table(test, &guard_table_husky, 4, cv_mv, cc_pct);
 }
 
+/* The CHGIN debounce is husky's alone; every other board keeps the old path */
+static void guard_test_chgin_debounce(struct kunit *test)
+{
+	KUNIT_EXPECT_FALSE(test, guard_table_default.chgin_debounce);
+	KUNIT_EXPECT_TRUE(test, guard_table_husky.chgin_debounce);
+}
+
 struct guard_limit_case {
 	int band;
 	int tier;
@@ -814,6 +821,7 @@ static struct kunit_case guard_test_cases[] = {
 	KUNIT_CASE(guard_test_tier_steps_husky),
 	KUNIT_CASE(guard_test_default_table),
 	KUNIT_CASE(guard_test_husky_table),
+	KUNIT_CASE(guard_test_chgin_debounce),
 	KUNIT_CASE(guard_test_limits_default),
 	KUNIT_CASE(guard_test_limits_husky),
 	KUNIT_CASE(guard_test_limits_capped),
