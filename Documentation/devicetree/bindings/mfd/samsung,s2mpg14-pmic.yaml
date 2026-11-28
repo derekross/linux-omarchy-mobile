@@ -35,6 +35,31 @@ properties:
 
   wakeup-source: true
 
+  gpio:
+    type: object
+    description:
+      The PMIC's six general purpose pins. On the Pixel 9a one switches
+      the main camera's digital supply.
+
+    properties:
+      compatible:
+        const: samsung,s2mpg14-gpio
+
+      gpio-controller: true
+
+      '#gpio-cells':
+        const: 2
+
+      gpio-line-names:
+        maxItems: 6
+
+    required:
+      - compatible
+      - gpio-controller
+      - '#gpio-cells'
+
+    additionalProperties: false
+
   regulators:
     type: object
     $ref: /schemas/regulator/samsung,s2mpg14-regulator.yaml
@@ -59,6 +84,12 @@ examples:
         interrupts = <GIC_SPI 74 IRQ_TYPE_LEVEL_HIGH>;
         google,vgpio2ap-sysreg = <&sysreg_vgpio2ap>;
         wakeup-source;
+
+        gpio {
+            compatible = "samsung,s2mpg14-gpio";
+            gpio-controller;
+            #gpio-cells = <2>;
+        };
 
         regulators {
             ldo4m {
