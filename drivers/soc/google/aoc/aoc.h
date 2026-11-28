@@ -95,7 +95,8 @@ typedef int (*aoc_map_handler)(u32 handle, phys_addr_t p, size_t size,
  * What differs between Tensor generations: where the AoC's PCU and GPIO
  * blocks sit in its address space, the chip id layout, the sensor supplies,
  * whether Linux sets up the AoC's S2MPU and System MMU or the authenticated
- * firmware owns its protection, and the forced-VNOM default.
+ * firmware owns its protection, whether its SSMT is set to bypass, and the
+ * forced-VNOM default.
  */
 struct aoc_soc_data {
 	bool ordered_sensor_supplies;
@@ -103,6 +104,7 @@ struct aoc_soc_data {
 	bool merge_subrevision_into_type;
 	bool force_vnom_default;
 	bool zero_heaps;
+	bool configure_ssmt;
 	u32 chipid_main_reg;
 	u32 chipid_main_shift;
 	u32 pcu_base;

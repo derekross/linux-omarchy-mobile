@@ -59,6 +59,29 @@
 	 * this node will never have. 70x155 mm is HK3_WIDTH_MM and
 	 * HK3_HEIGHT_MM in Google's panel-gs-hk3.c for the Pixel 8 Pro.
 	 */
+	/*
+	 * The speaker amplifiers' supplies, fixed stand-ins until there is a
+	 * driver for the PMIC rails the bootloader leaves on: VA is 1.8 V, VP
+	 * sits directly on VSYS (stock: V_SYS_DUMMY).
+	 */
+	amp_va: regulator-amp-va {
+		compatible = "regulator-fixed";
+		regulator-name = "amp-va";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	amp_vp: regulator-amp-vp {
+		compatible = "regulator-fixed";
+		regulator-name = "amp-vp";
+		regulator-min-microvolt = <4200000>;
+		regulator-max-microvolt = <4200000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
 	panel0: panel {
 		status = "disabled";
 		width-mm = <70>;
@@ -117,6 +140,23 @@
 			stride = <(1344 * 4)>;
 			format = "a8r8g8b8";
 		};
+	};
+
+	/*
+	 * Goodix optical under-display fingerprint sensor (stock's goodixfp
+	 * node). Trusty owns its SPI bus; Linux only switches its supply, reset
+	 * and interrupt lines. Disabled until the fingerprint bring-up gates: it
+	 * needs Trusty and its fingerprint application.
+	 */
+	fingerprint {
+		compatible = "goodix,g7-udfps";
+		interrupt-parent = <&gpa7>;
+		interrupts = <3 IRQ_TYPE_EDGE_RISING>;
+		reset-gpios = <&gpp1 0 GPIO_ACTIVE_LOW>;
+		vdd-supply = <&ldo15s>;
+		pinctrl-0 = <&fp_irq &fp_reset>;
+		pinctrl-names = "default";
+		status = "disabled";
 	};
 
 	gpio-keys {
@@ -225,18 +265,32 @@
 	};
 
 	/*
-	 * The sub PMIC (S2MPG15), for the GNSS receiver's three rails. On
-	 * stock these are always on, which is why the ranges below are stock's
-	 * and nothing sets a voltage at probe: the GNSS driver will switch
-	 * them. Only these rails are described; every other rail of the chip
-	 * is left as the bootloader set it. No interrupt. Disabled until it
-	 * has been tried on the phone.
+	 * The sub PMIC (S2MPG15), for the sensors' two rails, the GNSS
+	 * receiver's three and the fingerprint sensor's one. Nothing sets a
+	 * voltage at probe (the ops have no setter), so a rail whose selector
+	 * reads outside its range fails the whole probe. The AoC switches the
+	 * sensor rails, the GNSS driver will switch its own and goodix-fp the
+	 * fingerprint's. Only these rails are described; every other rail of
+	 * the chip is left as the bootloader set it. No interrupt.
 	 */
 	pmic-2 {
 		compatible = "samsung,s2mpg15-pmic";
-		status = "disabled";
 
 		regulators {
+			/* L5S_PROX: the sensors' 3.3 V. */
+			sensor_3v3: ldo5s {
+				regulator-name = "sensor-3v3";
+				regulator-min-microvolt = <2500000>;
+				regulator-max-microvolt = <3300000>;
+			};
+
+			/* L7S_SENSORS_FPS: the sensors' 1.8 V (stock: also fingerprint). */
+			sensor_1v8: ldo7s {
+				regulator-name = "sensor-1v8";
+				regulator-min-microvolt = <1600000>;
+				regulator-max-microvolt = <1950000>;
+			};
+
 			/* L9S_GNSS_CORE, L10S_GNSS_RF and L11S_GNSS_AUX. */
 			ldo9s: ldo9s {
 				regulator-name = "vdd_gnss_core";
@@ -254,6 +308,17 @@
 				regulator-name = "vdd_gnss_aux";
 				regulator-min-microvolt = <1600000>;
 				regulator-max-microvolt = <1950000>;
+			};
+
+			/*
+			 * L15S_UDFPS_AVDD: the fingerprint sensor's analog supply
+			 * (3.3 V on stock), with the 7 Pro's range. Stock keeps it
+			 * always on; here goodix-fp switches it, as on the 7 Pro.
+			 */
+			ldo15s: ldo15s {
+				regulator-name = "vdd_udfps";
+				regulator-min-microvolt = <2500000>;
+				regulator-max-microvolt = <3300000>;
 			};
 		};
 	};
@@ -395,6 +460,37 @@
 		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
 		samsung,pin-pud-pdn = <GS101_PIN_PULL_NONE>;
 	};
+
+	amp_top_irq: amp-top-irq-pins {
+		samsung,pins = "gpa5-2";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+	};
+};
+
+&pinctrl_gpio_alive {
+	amp_bottom_irq: amp-bottom-irq-pins {
+		samsung,pins = "gpa7-2";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+	};
+
+	fp_irq: fp-irq-pins {
+		samsung,pins = "gpa7-3";
+		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
+		samsung,pin-pud = <GS101_PIN_PULL_UP>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+};
+
+&pinctrl_custom_alive {
+	/* The bottom amplifier's chip select is a GPIO. */
+	amp_bottom_cs: amp-bottom-cs-pins {
+		samsung,pins = "gpn1-0";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_5_MA>;
+	};
 };
 
 &pinctrl_hsi2 {
@@ -434,6 +530,21 @@
 };
 
 &pinctrl_peric0 {
+	fp_reset: fp-reset-pins {
+		samsung,pins = "gpp1-0";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-con-pdn = <GS101_PIN_PDN_PREV>;
+		samsung,pin-pud-pdn = <GS101_PIN_PULL_NONE>;
+	};
+
+	amp_top_rst: amp-top-rst-pins {
+		samsung,pins = "gpp1-1";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
 	gnss_mcu_req: gnss-mcu-req-pins {
 		samsung,pins = "gpp4-3";
 		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
@@ -666,6 +777,13 @@
 &pinctrl_hsi1 {
 	status = "okay";
 
+	amp_bottom_rst: amp-bottom-rst-pins {
+		samsung,pins = "gph2-1";
+		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
+		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
+	};
+
 	nfc_en: nfc-en-pins {
 		samsung,pins = "gph1-6";
 		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
@@ -800,6 +918,123 @@
 		status = "disabled";
 
 		/* Stock's value; whether 26 MHz needs it is not known. */
+		controller-data {
+			samsung,spi-feedback-delay = <1>;
+		};
+	};
+};
+
+/*
+ * The AoC, the audio and sensor DSP. Its firmware is loaded and started from
+ * sysfs, not at probe; the board id and revision are stock's for this board.
+ */
+&aoc {
+	google,board-id = <0x40202>;
+	google,board-rev = <0x10000>;
+	sensor-1v8-supply = <&sensor_1v8>;
+	sensor-3v3-supply = <&sensor_3v3>;
+	status = "okay";
+};
+
+&aoc_mbox_a32 {
+	status = "okay";
+};
+
+&aoc_mbox_f1 {
+	status = "okay";
+};
+
+&aoc_mbox_p6 {
+	status = "okay";
+};
+
+&aoc_sysmmu {
+	status = "okay";
+};
+
+&gsa {
+	status = "okay";
+};
+
+&trusty {
+	status = "okay";
+};
+
+/*
+ * Speaker amplifiers: two Cirrus Logic CS35L41 on HSI0 USI1 SPI (Google's
+ * spi_19, zuma-shusky-audio.dtsi). Chip select 0, the controller's own, is
+ * the top speaker, which is also the earpiece; chip select 1, a GPIO, is the
+ * bottom loudspeaker. Their audio port (TDM) is wired to the AoC, so without
+ * the AoC sound card these nodes give register access only.
+ *
+ * The boost values are stock's but the peak current: 2.5 A (stock 3.5 A)
+ * until the speaker limits are confirmed on this phone. Stock's MISO
+ * feedback delay (1) is kept. The bus and the amplifiers stay disabled until
+ * a bring-up overlay enables them with the sound card.
+ */
+&spi19 {
+	pinctrl-0 = <&amp_bottom_cs>;
+	pinctrl-names = "default";
+	cs-gpios = <0>, <&gpn1 0 GPIO_ACTIVE_LOW>;
+	num-cs = <2>;
+
+	amp_top: amplifier@0 {
+		compatible = "cirrus,cs35l41";
+		reg = <0>;
+		spi-max-frequency = <25000000>;
+		#sound-dai-cells = <1>;
+		interrupts-extended = <&gpa5 2 IRQ_TYPE_LEVEL_HIGH>;
+		/* the driver drives 1 to release reset */
+		reset-gpios = <&gpp1 1 GPIO_ACTIVE_HIGH>;
+		pinctrl-0 = <&amp_top_irq &amp_top_rst>;
+		pinctrl-names = "default";
+		VA-supply = <&amp_va>;
+		VP-supply = <&amp_vp>;
+		sound-name-prefix = "Top";
+		cirrus,subsystem-id = "husky";
+		cirrus,boost-type = <0>;
+		cirrus,boost-peak-milliamp = <2500>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <4>;
+		cirrus,asp-sdout-hiz = <3>;
+		/* the stock protection firmware does not survive hibernation */
+		cirrus,dsp-no-hibernate;
+		/* GPIO2 = push-pull interrupt, active high */
+		cirrus,gpio2-src-select = <5>;
+		cirrus,gpio2-output-enable;
+		status = "disabled";
+
+		controller-data {
+			samsung,spi-feedback-delay = <1>;
+		};
+	};
+
+	amp_bottom: amplifier@1 {
+		compatible = "cirrus,cs35l41";
+		reg = <1>;
+		spi-max-frequency = <25000000>;
+		#sound-dai-cells = <1>;
+		interrupts-extended = <&gpa7 2 IRQ_TYPE_LEVEL_HIGH>;
+		/* the driver drives 1 to release reset */
+		reset-gpios = <&gph2 1 GPIO_ACTIVE_HIGH>;
+		pinctrl-0 = <&amp_bottom_irq &amp_bottom_rst>;
+		pinctrl-names = "default";
+		VA-supply = <&amp_va>;
+		VP-supply = <&amp_vp>;
+		sound-name-prefix = "Bottom";
+		cirrus,subsystem-id = "husky";
+		cirrus,boost-type = <0>;
+		cirrus,boost-peak-milliamp = <2500>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <4>;
+		cirrus,asp-sdout-hiz = <3>;
+		/* the stock protection firmware does not survive hibernation */
+		cirrus,dsp-no-hibernate;
+		/* GPIO2 = push-pull interrupt, active high */
+		cirrus,gpio2-src-select = <5>;
+		cirrus,gpio2-output-enable;
+		status = "disabled";
+
 		controller-data {
 			samsung,spi-feedback-delay = <1>;
 		};
