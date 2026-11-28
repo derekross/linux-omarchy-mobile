@@ -119,6 +119,7 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 	BRCMF_FW_ENTRY(BRCM_CC_43666_CHIP_ID, 0xFFFFFFF0, 4366C),
 	BRCMF_FW_ENTRY(BRCM_CC_4371_CHIP_ID, 0xFFFFFFFF, 4371),
 	BRCMF_FW_ENTRY(BRCM_CC_43752_CHIP_ID, 0xFFFFFFFF, 43752),
+	BRCMF_FW_ENTRY(BRCM_CC_43756_CHIP_ID, 0xFFFFFFFF, 43752),
 	BRCMF_FW_ENTRY(BRCM_CC_4377_CHIP_ID, 0xFFFFFFFF, 4377B3), /* revision ID 4 */
 	BRCMF_FW_ENTRY(BRCM_CC_4378_CHIP_ID, 0x0000000F, 4378B1), /* revision ID 3 */
 	BRCMF_FW_ENTRY(BRCM_CC_4378_CHIP_ID, 0xFFFFFFE0, 4378B3), /* revision ID 5 */
@@ -1384,9 +1385,9 @@ static void brcmf_pcie_rx_process(struct brcmf_pciedev_info *devinfo)
  * BCM4389 on INTx: completions were seen to go unprocessed until a later
  * interrupt (ioctl timeouts, a control ring that looks stuck). Broadcom's
  * driver re-runs its interrupt work after INTx with DMA'd indices
- * (dhd_bus_handle_intx_ahead_dma_indices()). Do the same, more often: after
- * each interrupt and each doorbell, look at the D2H rings every 10 ms for
- * the next 500 ms.
+ * (dhd_bus_handle_intx_ahead_dma_indices()), for any chip. Do the same, more
+ * often: after each interrupt and each doorbell, look at the D2H rings every
+ * 10 ms for the next 500 ms.
  */
 #define BRCMF_PCIE_POLL_MS	10
 #define BRCMF_PCIE_POLL_COUNT	50
@@ -3036,7 +3037,13 @@ static void brcmf_pcie_setup(struct device *dev, int ret,
 	ret = brcmf_pcie_request_irq(devinfo);
 	if (ret)
 		goto fail;
-	devinfo->poll_enabled = brcmf_pcie_is_4389_family(devinfo);
+	/*
+	 * Broadcom's condition for the re-poll is INTx with DMA'd ring indices,
+	 * whatever the chip; the BCM4389 family polls whatever the interrupt.
+	 */
+	devinfo->poll_enabled = brcmf_pcie_is_4389_family(devinfo) ||
+				(!devinfo->pdev->msi_enabled &&
+				 devinfo->dma_idx_sz);
 
 	/* Notify early firmware before its deferred TX-buffer allocation. */
 	if (brcmf_pcie_early_hostready(devinfo))
@@ -3720,6 +3727,8 @@ static const struct pci_device_id brcmf_pcie_devid_table[] = {
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4383_DEVICE_ID, WCC_SEED),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4398_DEVICE_ID, WCC_SEED),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_43752_DEVICE_ID, WCC_SEED),
+	/* A 4362-family chip (43751, 43752, 43756) with a blank OTP */
+	BRCMF_PCIE_DEVICE(BRCM_PCIE_4362_BLANK_DEVICE_ID, WCC_SEED),
 	BRCMF_PCIE_DEVICE(CY_PCIE_54591_DEVICE_ID, CYW),
 	{ /* end: all zeroes */ }
 };
