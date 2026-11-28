@@ -12,8 +12,8 @@ maintainers:
 description:
   The AoC is the audio and sensor DSP of Tensor SoCs. The AP loads its
   firmware into a reserved carve-out and the GSA authenticates and starts
-  it. On gs201 the AoC reaches memory through its own System MMU, which
-  Linux sets up. On zumapro (Tensor G4) the authenticated firmware owns
+  it. On gs201 and zuma (Tensor G3) the AoC reaches memory through its own
+  System MMU, which Linux sets up. On zumapro (Tensor G4) the authenticated firmware owns
   the AoC's memory protection, so Linux touches neither its S2MPU nor its
   System MMU.
 
@@ -21,6 +21,7 @@ properties:
   compatible:
     enum:
       - google,gs201-aoc
+      - google,zuma-aoc
       - google,zumapro-aoc
 
   reg:
@@ -120,7 +121,42 @@ allOf:
         - mboxes
         - sensor-1v8-supply
         - sensor-3v3-supply
-    else:
+  - if:
+      properties:
+        compatible:
+          const: google,zuma-aoc
+    then:
+      properties:
+        reg:
+          items:
+            - description: the AoC power request register (aoc_req) and its
+                acknowledge at +0x40
+            - description: the AoC's stage-2 MPU
+            - description: the chip id block, read for the firmware's boot
+                parameters
+            - description: the AoC's stream security unit (SSMT), set to
+                bypass before the firmware starts
+        reg-names:
+          items:
+            - const: aoc_req
+            - const: s2mpu
+            - const: chipid
+            - const: ssmt_aoc
+        mboxes:
+          minItems: 48
+        clocks: false
+      required:
+        - google,sysmmu
+        - interrupts
+        - interrupt-names
+        - mboxes
+        - sensor-1v8-supply
+        - sensor-3v3-supply
+  - if:
+      properties:
+        compatible:
+          const: google,gs201-aoc
+    then:
       properties:
         reg:
           minItems: 3

@@ -27,11 +27,12 @@ config GOOGLE_GSA_TRUSTY
 	  Google kernel uses.
 
 config GS201_AOC_SYSMMU
-	tristate "gs201 AoC System MMU static windows"
+	tristate "gs201 and zuma AoC System MMU static windows"
 	help
 	  Programs the AoC's System MMU with the fixed windows its firmware
-	  expects (from the firmware image header), as 1 MiB sections. Used by
-	  the AoC driver.
+	  expects (from the firmware image header), as 1 MiB sections, and on
+	  zuma's version 9 block as 4 KiB pages where a window needs them.
+	  Used by the AoC driver.
 
 config GS201_AOC_BOOT
 	tristate "gs201 AoC firmware boot (bring-up)"
@@ -74,7 +75,7 @@ config GS201_AOC
 	  Google's AoC core driver, ported: loads and authenticates the AoC
 	  firmware through the GSA, starts it, and exposes its services on the
 	  AoC bus. Firmware loading is triggered from sysfs (firmware), not at
-	  probe. Supports gs201 and zumapro (Tensor G4).
+	  probe. Supports gs201, zuma (Tensor G3) and zumapro (Tensor G4).
 
 config GS201_AOC_CHAR
 	tristate "gs201 AoC service character devices"

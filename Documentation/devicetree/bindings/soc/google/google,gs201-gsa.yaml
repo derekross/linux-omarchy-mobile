@@ -19,6 +19,7 @@ properties:
   compatible:
     enum:
       - google,gs201-gsa
+      - google,zuma-gsa
       - google,zumapro-gsa
 
   reg:

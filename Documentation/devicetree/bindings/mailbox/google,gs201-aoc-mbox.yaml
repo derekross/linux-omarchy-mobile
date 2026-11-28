@@ -19,6 +19,7 @@ properties:
   compatible:
     enum:
       - google,gs201-aoc-mbox
+      - google,zuma-aoc-mbox
       - google,zumapro-aoc-mbox
 
   reg:

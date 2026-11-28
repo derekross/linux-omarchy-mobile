@@ -17,6 +17,7 @@
 #include <linux/mailbox_controller.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/property.h>
 #include <linux/slab.h>
 
 /* Register offsets */
@@ -62,6 +63,11 @@ struct wc_mbox_prvdata {
 static const struct of_device_id wc_mbox_match[] = {
 	{
 		.compatible = "google,gs201-aoc-mbox",
+	},
+	{
+		.compatible = "google,zuma-aoc-mbox",
+		/* Google's zuma-aoc.dtsi: wc-mbox-non-wake-channels = <0xF000> */
+		.data = (void *)0xf000,
 	},
 	{
 		.compatible = "google,zumapro-aoc-mbox",
@@ -337,13 +343,16 @@ static int wc_mbox_probe(struct platform_device *pdev)
 	prvdata->shared_registers = 8;
 	prvdata->mbox = mbox;
 
+	/* The SoC's own mask; the device tree property, if there, replaces it */
+	prvdata->non_waking_services = (uintptr_t)device_get_match_data(dev);
+
 	ret = of_property_read_u32(dev->of_node, DT_NON_WAKE_CHANNEL_KEY, &non_wake_mask);
 	if (ret == 0) {
-		if (prvdata->non_waking_services > 0xffff)
-			dev_err(dev, "Invalid non-waking services mask %#10x",
-				prvdata->non_waking_services);
-
-		prvdata->non_waking_services = non_wake_mask;
+		if (non_wake_mask > 0xffff)
+			dev_err(dev, "Invalid non-waking services mask %#10x, ignored\n",
+				non_wake_mask);
+		else
+			prvdata->non_waking_services = non_wake_mask;
 	}
 
 	mbox->num_chans = MBOX_WC_INTERRUPTS;

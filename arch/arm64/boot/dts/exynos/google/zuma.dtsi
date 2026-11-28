@@ -669,6 +669,29 @@
 	};
 
 	/*
+	 * Trusty, the secure OS that runs from the bootloader's tzsw image; its
+	 * IPIs 8-15 are GIC SGIs 8-15 (Google's gs101-trusty.dtsi, shared by
+	 * zuma). The GSA's AoC commands go through it.
+	 */
+	trusty: trusty {
+		compatible = "android,trusty-smc-v1";
+		status = "disabled";
+
+		irq {
+			compatible = "android,trusty-irq-v1";
+			ipi-range = <8 15 8>;
+		};
+
+		log {
+			compatible = "android,trusty-log-v1";
+		};
+
+		virtio {
+			compatible = "android,trusty-virtio-v1";
+		};
+	};
+
+	/*
 	 * Fixed DRAM carve-outs from the live device tree, without the regions
 	 * ABL adds itself: pkvm_guest_firmware, sec_dram and sec_pt, and
 	 * debug_kinfo_reserved (in stock's base DTB, added by ABL to a tree
@@ -1063,6 +1086,34 @@
 			status = "disabled";
 		};
 
+		/* USI1 on HSI0: the SPI of the speaker amplifiers (Google's spi_19). */
+		usi1_hsi0: usi@111c00c0 {
+			compatible = "google,zuma-usi", "samsung,exynos850-usi";
+			reg = <0x111c00c0 0x20>;
+			clocks = <&cmu_hsi0 CLK_GOUT_HSI0_USI1_PCLK>,
+				 <&cmu_hsi0 CLK_GOUT_HSI0_USI1_IP>;
+			clock-names = "pclk", "ipclk";
+			samsung,sysreg = <&sysreg_hsi0 0x1018>;
+			samsung,mode = <USI_MODE_SPI>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+			status = "disabled";
+
+			spi19: spi@111c0000 {
+				compatible = "google,zuma-spi", "google,gs101-spi";
+				/* USI control starts at 0xc0; do not claim it twice. */
+				reg = <0x111c0000 0xc0>;
+				interrupts = <GIC_SPI 407 IRQ_TYPE_LEVEL_HIGH>;
+				clocks = <&cmu_hsi0 CLK_GOUT_HSI0_USI1_PCLK>,
+					 <&cmu_hsi0 CLK_GOUT_HSI0_USI1_IP>;
+				clock-names = "spi", "spi_busclk0";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				status = "disabled";
+			};
+		};
+
 		usi2_hsi0: usi@111d00c0 {
 			compatible = "google,zuma-usi", "samsung,exynos850-usi";
 			reg = <0x111d00c0 0x20>;
@@ -1275,6 +1326,30 @@
 			#mbox-cells = <0>;
 		};
 
+		aoc_mbox_a32: mailbox@15200000 {
+			compatible = "google,zuma-aoc-mbox";
+			reg = <0x15200000 0x1000>;
+			interrupts = <GIC_SPI 77 IRQ_TYPE_LEVEL_HIGH>;
+			#mbox-cells = <1>;
+			status = "disabled";
+		};
+
+		aoc_mbox_f1: mailbox@15220000 {
+			compatible = "google,zuma-aoc-mbox";
+			reg = <0x15220000 0x1000>;
+			interrupts = <GIC_SPI 78 IRQ_TYPE_LEVEL_HIGH>;
+			#mbox-cells = <1>;
+			status = "disabled";
+		};
+
+		aoc_mbox_p6: mailbox@15240000 {
+			compatible = "google,zuma-aoc-mbox";
+			reg = <0x15240000 0x1000>;
+			interrupts = <GIC_SPI 79 IRQ_TYPE_LEVEL_HIGH>;
+			#mbox-cells = <1>;
+			status = "disabled";
+		};
+
 		cmu_apm: clock-controller@15400000 {
 			compatible = "google,zuma-cmu-apm";
 			reg = <0x15400000 0x8000>;
@@ -1338,6 +1413,48 @@
 			};
 		};
 
+		/*
+		 * The AoC, the audio and sensor DSP (Google's zuma-aoc.dtsi). Linux
+		 * programs its System MMU and opens its S2MPU; the GSA
+		 * authenticates and starts its firmware.
+		 */
+		aoc: aoc@154b0000 {
+			compatible = "google,zuma-aoc";
+			reg = <0x154b0000 0x1000>, <0x190c0000 0x1000>,
+			      <0x10000000 0x100>, <0x19060000 0x5000>;
+			reg-names = "aoc_req", "s2mpu", "chipid", "ssmt_aoc";
+			interrupts = <GIC_SPI 130 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "watchdog";
+			memory-region = <&{/reserved-memory/aoc@94000000}>;
+			google,gsa = <&gsa>;
+			google,sysmmu = <&aoc_sysmmu>;
+			mboxes = <&aoc_mbox_a32 0>, <&aoc_mbox_a32 1>,
+				 <&aoc_mbox_a32 2>, <&aoc_mbox_a32 3>,
+				 <&aoc_mbox_a32 4>, <&aoc_mbox_a32 5>,
+				 <&aoc_mbox_a32 6>, <&aoc_mbox_a32 7>,
+				 <&aoc_mbox_a32 8>, <&aoc_mbox_a32 9>,
+				 <&aoc_mbox_a32 10>, <&aoc_mbox_a32 11>,
+				 <&aoc_mbox_a32 12>, <&aoc_mbox_a32 13>,
+				 <&aoc_mbox_a32 14>, <&aoc_mbox_a32 15>,
+				 <&aoc_mbox_f1 0>, <&aoc_mbox_f1 1>,
+				 <&aoc_mbox_f1 2>, <&aoc_mbox_f1 3>,
+				 <&aoc_mbox_f1 4>, <&aoc_mbox_f1 5>,
+				 <&aoc_mbox_f1 6>, <&aoc_mbox_f1 7>,
+				 <&aoc_mbox_f1 8>, <&aoc_mbox_f1 9>,
+				 <&aoc_mbox_f1 10>, <&aoc_mbox_f1 11>,
+				 <&aoc_mbox_f1 12>, <&aoc_mbox_f1 13>,
+				 <&aoc_mbox_f1 14>, <&aoc_mbox_f1 15>,
+				 <&aoc_mbox_p6 0>, <&aoc_mbox_p6 1>,
+				 <&aoc_mbox_p6 2>, <&aoc_mbox_p6 3>,
+				 <&aoc_mbox_p6 4>, <&aoc_mbox_p6 5>,
+				 <&aoc_mbox_p6 6>, <&aoc_mbox_p6 7>,
+				 <&aoc_mbox_p6 8>, <&aoc_mbox_p6 9>,
+				 <&aoc_mbox_p6 10>, <&aoc_mbox_p6 11>,
+				 <&aoc_mbox_p6 12>, <&aoc_mbox_p6 13>,
+				 <&aoc_mbox_p6 14>, <&aoc_mbox_p6 15>;
+			status = "disabled";
+		};
+
 		pinctrl_gpio_alive: pinctrl@154d0000 {
 			compatible = "google,zuma-pinctrl";
 			reg = <0x154d0000 0x1000>;
@@ -1375,6 +1492,22 @@
 			firmware-sram@0 {
 				reg = <0x0 0x58000>;
 			};
+		};
+
+		gsa: gsa@16490000 {
+			compatible = "google,zuma-gsa";
+			reg = <0x16490000 0x1000>, <0x16470000 0x10000>;
+			reg-names = "mbox", "s2mpu";
+			interrupts = <GIC_SPI 375 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+
+		/* Samsung's version 9 System MMU in front of the AoC (sysmmu_aoc). */
+		aoc_sysmmu: sysmmu@19090000 {
+			compatible = "google,zuma-aoc-sysmmu";
+			reg = <0x19090000 0x10000>;
+			interrupts = <GIC_SPI 132 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
 		};
 
 		dsi0: dsi@19440000 {

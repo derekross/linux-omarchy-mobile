@@ -5,7 +5,7 @@
  *
  * Register layout and parents derived from Google's GPL CMUCAL tables in
  * cal-if/zuma/cmucal-{sfr,node}.c, Copyright 2022 Samsung Electronics Co., Ltd.
- * Only the paths from CMU_TOP to HSI0's USI2 and to CMU_G3D are described,
+ * Only the paths from CMU_TOP to HSI0's USI1-USI3 and to CMU_G3D are described,
  * with CMU_APM's clocks for the APM mailbox, its SRAM and the always-on GPIO
  * banks, and the path from CMU_TOP to PERIC1's USI11 (the battery, charger
  * and USB-C I2C bus). PLLs, muxes and dividers keep their firmware settings,
@@ -258,6 +258,8 @@ static const struct samsung_mux_clock hsi0_muxes[] __initconst = {
 	      0x101c, 0, 1, 0, CLK_MUX_READ_ONLY),
 	MUX_F(CLK_MOUT_HSI0_USI3, "zuma_mout_hsi0_usi3", mout_hsi0_usi2_parents,
 	      0x1020, 0, 1, 0, CLK_MUX_READ_ONLY),
+	MUX_F(CLK_MOUT_HSI0_USI1, "zuma_mout_hsi0_usi1", mout_hsi0_usi2_parents,
+	      0x1018, 0, 1, 0, CLK_MUX_READ_ONLY),
 };
 
 static const struct samsung_div_clock hsi0_dividers[] __initconst = {
@@ -265,6 +267,8 @@ static const struct samsung_div_clock hsi0_dividers[] __initconst = {
 	    "zuma_gout_hsi0_usi2_source", 0x181c, 0, 4),
 	DIV(CLK_DOUT_HSI0_USI3, "zuma_dout_hsi0_usi3",
 	    "zuma_gout_hsi0_usi3_source", 0x1820, 0, 4),
+	DIV(CLK_DOUT_HSI0_USI1, "zuma_dout_hsi0_usi1",
+	    "zuma_gout_hsi0_usi1_source", 0x1818, 0, 4),
 };
 
 static const struct samsung_gate_clock hsi0_gates[] __initconst = {
@@ -282,6 +286,13 @@ static const struct samsung_gate_clock hsi0_gates[] __initconst = {
 	     CLK_IGNORE_UNUSED | CLK_SET_RATE_PARENT, 0),
 	GATE(CLK_GOUT_HSI0_USI3_PCLK, "zuma_gout_hsi0_usi3_pclk",
 	     "zuma_mout_hsi0_noc_local", 0x2108, 21, CLK_IGNORE_UNUSED, 0),
+	GATE(CLK_GOUT_HSI0_USI1_SOURCE, "zuma_gout_hsi0_usi1_source",
+	     "zuma_mout_hsi0_usi1", 0x211c, 21, CLK_IGNORE_UNUSED, 0),
+	GATE(CLK_GOUT_HSI0_USI1_IP, "zuma_gout_hsi0_usi1_ip",
+	     "zuma_dout_hsi0_usi1", 0x20f4, 21,
+	     CLK_IGNORE_UNUSED | CLK_SET_RATE_PARENT, 0),
+	GATE(CLK_GOUT_HSI0_USI1_PCLK, "zuma_gout_hsi0_usi1_pclk",
+	     "zuma_mout_hsi0_noc_local", 0x20f8, 21, CLK_IGNORE_UNUSED, 0),
 };
 
 /* Firmware-owned gates are observed, never switched. */
@@ -290,9 +301,9 @@ static const struct samsung_gate_clock hsi0_ro_gates[] __initconst = {
 	     0x204c, 21, CLK_IGNORE_UNUSED, 0),
 };
 
-/* The USI2 and USI3 gates run in manual mode; the rest of HSI0 is left alone. */
+/* The USI1, USI2 and USI3 gates run in manual mode; the rest of HSI0 is left alone. */
 static const unsigned long hsi0_regs[] __initconst = {
-	0x2120, 0x20fc, 0x2100, 0x2124, 0x2104, 0x2108,
+	0x2120, 0x20fc, 0x2100, 0x2124, 0x2104, 0x2108, 0x211c, 0x20f4, 0x20f8,
 };
 
 static const struct samsung_cmu_info hsi0_cmu __initconst = {
@@ -304,7 +315,7 @@ static const struct samsung_cmu_info hsi0_cmu __initconst = {
 	.nr_gate_clks = ARRAY_SIZE(hsi0_gates),
 	.ro_gate_clks = hsi0_ro_gates,
 	.nr_ro_gate_clks = ARRAY_SIZE(hsi0_ro_gates),
-	.nr_clk_ids = CLK_GOUT_HSI0_USI3_PCLK + 1,
+	.nr_clk_ids = CLK_GOUT_HSI0_USI1_PCLK + 1,
 	.clk_regs = hsi0_regs,
 	.nr_clk_regs = ARRAY_SIZE(hsi0_regs),
 	.clk_name = "bus",

@@ -1291,7 +1291,7 @@ int cs35l41_probe(struct cs35l41_private *cs35l41, const struct cs35l41_hw_cfg *
 {
 	u32 regid, reg_revid, i, mtl_revid, int_status, chipid_match;
 	int irq_pol = 0;
-	int ret;
+	int ret, boot_tries;
 
 	if (hw_cfg) {
 		cs35l41->hw_cfg = *hw_cfg;
@@ -1337,6 +1337,8 @@ int cs35l41_probe(struct cs35l41_private *cs35l41, const struct cs35l41_hw_cfg *
 	}
 
 	usleep_range(2000, 2100);
+	boot_tries = 0;
+boot_retry:
 
 	ret = regmap_read_poll_timeout(cs35l41->regmap, CS35L41_IRQ1_STATUS4,
 				       int_status, int_status & CS35L41_OTP_BOOT_DONE,
@@ -1372,6 +1374,16 @@ int cs35l41_probe(struct cs35l41_private *cs35l41, const struct cs35l41_hw_cfg *
 	 * CS35L41R will have odd MTLREVID
 	 */
 	chipid_match = (mtl_revid % 2) ? CS35L41R_CHIP_ID : CS35L41_CHIP_ID;
+	if (regid != chipid_match && cs35l41->reset_gpio && boot_tries++ < 3) {
+		/* A bad first ID read after power-up: pulse reset and read again. */
+		dev_info(cs35l41->dev, "Device ID %X, pulsing reset again (try %d)\n",
+			 regid, boot_tries);
+		gpiod_set_value_cansleep(cs35l41->reset_gpio, 0);
+		usleep_range(10000, 11000);
+		gpiod_set_value_cansleep(cs35l41->reset_gpio, 1);
+		usleep_range(10000, 11000);
+		goto boot_retry;
+	}
 	if (regid != chipid_match) {
 		dev_err(cs35l41->dev, "CS35L41 Device ID (%X). Expected ID %X\n",
 			regid, chipid_match);

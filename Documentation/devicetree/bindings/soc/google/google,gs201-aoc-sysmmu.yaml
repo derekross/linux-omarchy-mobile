@@ -4,20 +4,23 @@
 $id: http://devicetree.org/schemas/soc/google/google,gs201-aoc-sysmmu.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
-title: Google gs201 AoC System MMU
+title: Google gs201 and zuma AoC System MMU
 
 maintainers:
   - Derek Ross <derekross@gmail.com>
 
 description:
-  The Samsung System MMU (version 8) in front of the gs201 AoC, the audio
-  and sensor DSP. Only the AoC is behind it. It is programmed with the fixed
+  The Samsung System MMU in front of the AoC, the audio and sensor DSP,
+  version 8 on gs201, version 9 on zuma (Tensor G3), whose register map
+  differs. Only the AoC is behind it. It is programmed with the fixed
   translation windows the AoC firmware expects, by the AoC driver, while the
   AoC block is powered.
 
 properties:
   compatible:
-    const: google,gs201-aoc-sysmmu
+    enum:
+      - google,gs201-aoc-sysmmu
+      - google,zuma-aoc-sysmmu
 
   reg:
     maxItems: 1
