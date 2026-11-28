@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/soc/google/google,modemsmem.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Google modem SoC information in Qualcomm shared memory
+
+maintainers:
+  - Simon Schubert <simon@librem.one>
+
+description:
+  The modem firmware of the Google Pixel 3a and 3a XL (Qualcomm SDM670)
+  reads a description of the SoC (the platform version, type and subtype)
+  from an item in shared memory before its RF task starts. On these phones
+  the bootloader does not provide it, and the operating system writes it
+  from the SoC information it has.
+
+properties:
+  compatible:
+    const: google,modemsmem
+
+  qcom,smem:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: The shared memory item the modem reads the SoC information from.
+
+required:
+  - compatible
+  - qcom,smem
+
+additionalProperties: false
+
+examples:
+  - |
+    modemsmem {
+        compatible = "google,modemsmem";
+        qcom,smem = <134>;
+    };

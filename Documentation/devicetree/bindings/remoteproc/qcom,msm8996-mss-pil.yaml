@@ -16,11 +16,15 @@ description:
 
 properties:
   compatible:
-    enum:
-      - qcom,msm8996-mss-pil
-      - qcom,msm8998-mss-pil
-      - qcom,sdm660-mss-pil
-      - qcom,sdm845-mss-pil
+    oneOf:
+      - enum:
+          - qcom,msm8996-mss-pil
+          - qcom,msm8998-mss-pil
+          - qcom,sdm660-mss-pil
+          - qcom,sdm845-mss-pil
+      - items:
+          - const: qcom,sdm670-mss-pil
+          - const: qcom,sdm845-mss-pil
 
   reg:
     items:
@@ -279,7 +283,8 @@ allOf:
   - if:
       properties:
         compatible:
-          const: qcom,sdm845-mss-pil
+          contains:
+            const: qcom,sdm845-mss-pil
     then:
       properties:
         power-domains:

@@ -24,9 +24,12 @@
 /delete-node/ &ipa_fw_mem;
 /delete-node/ &ipa_gsi_mem;
 /delete-node/ &gpu_mem;
+/delete-node/ &rmtfs_mem;
 
 / {
-	aliases { };
+	aliases {
+		serial1 = &uart6;
+	};
 
 	battery: battery {
 		compatible = "simple-battery";
@@ -69,6 +72,32 @@
 	reserved-memory {
 		#address-cells = <2>;
 		#size-cells = <2>;
+
+		/*
+		 * The modem expects its rmtfs buffer here: stock allocates it
+		 * dynamically, but at this address every boot. Guard pages on
+		 * both sides keep other allocations away from it ("XPU
+		 * limitations"). From sdm670-google-common.dtsi in the
+		 * sdm670-mainline tree.
+		 */
+		rmtfs_lower_guard: rmtfs-lower-guard@fc200000 {
+			reg = <0 0xfc200000 0 0x1000>;
+			no-map;
+		};
+
+		rmtfs_mem: rmtfs-mem@fc201000 {
+			compatible = "qcom,rmtfs-mem";
+			reg = <0 0xfc201000 0 0x200000>;
+			no-map;
+
+			qcom,client-id = <1>;
+			qcom,vmid = <QCOM_SCM_VMID_MSS_MSA>;
+		};
+
+		rmtfs_upper_guard: rmtfs-upper-guard@fc401000 {
+			reg = <0 0xfc401000 0 0x1000>;
+			no-map;
+		};
 
 		mpss_region: mpss@8b000000 {
 			reg = <0 0x8b000000 0 0x9800000>;
@@ -193,6 +222,42 @@
 
 		pinctrl-0 = <&cam_vio_pin>;
 		pinctrl-names = "default";
+	};
+
+	modemsmem {
+		compatible = "google,modemsmem";
+		qcom,smem = <134>;
+	};
+
+	wcn3990-pmu {
+		compatible = "qcom,wcn3990-pmu";
+
+		vddio-supply = <&vreg_l13a_1p8>;
+		vddxo-supply = <&vreg_l9a_1p8>;
+		vddrf-supply = <&vreg_l6a_1p3>;
+		vddch0-supply = <&vreg_l19a_3p3>;
+
+		regulators {
+			vreg_pmu_io: ldo0 {
+				regulator-name = "vreg_pmu_io";
+			};
+
+			vreg_pmu_xo: ldo1 {
+				regulator-name = "vreg_pmu_xo";
+			};
+
+			vreg_pmu_rf: ldo2 {
+				regulator-name = "vreg_pmu_rf";
+			};
+
+			vreg_pmu_ch0: ldo3 {
+				regulator-name = "vreg_pmu_ch0";
+			};
+
+			vreg_pmu_ch1: ldo4 {
+				regulator-name = "vreg_pmu_ch1";
+			};
+		};
 	};
 };
 
@@ -568,6 +633,13 @@
 	status = "okay";
 };
 
+&mss_pil {
+	firmware-name = "qcom/sdm670/sargo/mba.mbn",
+			"qcom/sdm670/sargo/modem.mbn";
+
+	status = "okay";
+};
+
 &pm660_charger {
 	monitored-battery = <&battery>;
 	status = "okay";
@@ -620,6 +692,10 @@
 
 &pon_resin {
 	linux,code = <KEY_VOLUMEDOWN>;
+	status = "okay";
+};
+
+&qupv3_id_0 {
 	status = "okay";
 };
 
@@ -693,6 +769,26 @@
 	};
 };
 
+&uart6 {
+	pinctrl-0 = <&qup_uart6_4pin>;
+
+	status = "okay";
+
+	bluetooth {
+		compatible = "qcom,wcn3990-bt";
+
+		/* Relative to qca/: Google's NV and ROM patch for this board */
+		firmware-name = "sdm670/sargo/crnv21.bin", "sdm670/sargo/crbtfw21.tlv";
+
+		vddio-supply = <&vreg_pmu_io>;
+		vddxo-supply = <&vreg_pmu_xo>;
+		vddrf-supply = <&vreg_pmu_rf>;
+		vddch0-supply = <&vreg_pmu_ch0>;
+
+		max-speed = <3200000>;
+	};
+};
+
 &usb_1_hsphy {
 	vdd-supply = <&vreg_l1b_0p925>;
 	vdda-pll-supply = <&vreg_l10a_1p8>;
@@ -714,4 +810,16 @@
 	phys = <&usb_1_hsphy>;
 	phy-names = "usb2-phy";
 	maximum-speed = "high-speed";
+};
+
+&wifi {
+	vdd-0.8-cx-mx-supply = <&vreg_l5a_0p848>;
+	vdd-1.8-xo-supply = <&vreg_pmu_xo>;
+	vdd-1.3-rfa-supply = <&vreg_pmu_rf>;
+	vdd-3.3-ch0-supply = <&vreg_pmu_ch0>;
+
+	qcom,calibration-variant = "google_sargo";
+	qcom,snoc-host-cap-8bit-quirk;
+
+	status = "okay";
 };

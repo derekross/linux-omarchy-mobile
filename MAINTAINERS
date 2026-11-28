@@ -11180,6 +11180,13 @@ F:	drivers/media/i2c/s5kgn1.c
 F:	drivers/media/platform/samsung/gs201-csis/
 F:	drivers/phy/samsung/phy-gs201-mipi-dcphy-rx.c
 
+GOOGLE PIXEL 3A MODEM SOC INFORMATION
+M:	Simon Schubert <simon@librem.one>
+L:	linux-arm-msm@vger.kernel.org
+S:	Maintained
+F:	Documentation/devicetree/bindings/soc/google/google,modemsmem.yaml
+F:	drivers/soc/qcom/modemsmem.c
+
 GOOGLE TENSOR SoC SUPPORT
 M:	Peter Griffin <peter.griffin@linaro.org>
 R:	André Draszik <andre.draszik@linaro.org>
