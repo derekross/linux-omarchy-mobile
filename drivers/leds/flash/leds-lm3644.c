@@ -5,8 +5,9 @@
  * The chip sits in shutdown while its HWEN pin is low. This driver raises
  * HWEN only while the torch is lit, so every switch-on starts from the
  * register reset values, and it never enters flash (strobe) mode: no flash
- * timeout or strobe pin is involved. Brightness steps are the chip's torch
- * current codes, capped by the board's led-max-microamp.
+ * timeout is involved. An optional external strobe GPIO is held inactive.
+ * Brightness steps are the chip's torch current codes, capped by the
+ * board's led-max-microamp.
  */
 
 #include <linux/bits.h>
@@ -218,6 +219,7 @@ static void lm3644_shutdown(void *data)
 static int lm3644_probe(struct i2c_client *client)
 {
 	struct led_init_data init_data = {};
+	struct gpio_desc *strobe;
 	struct device *dev = &client->dev;
 	struct fwnode_handle *child;
 	u32 sources[2], max_ua, max_code;
@@ -237,6 +239,11 @@ static int lm3644_probe(struct i2c_client *client)
 	lm->regmap = devm_regmap_init_i2c(client, &lm3644_regmap);
 	if (IS_ERR(lm->regmap))
 		return PTR_ERR(lm->regmap);
+
+	/* Keep external flash triggering inactive before raising HWEN. */
+	strobe = devm_gpiod_get_optional(dev, "strobe", GPIOD_OUT_LOW);
+	if (IS_ERR(strobe))
+		return dev_err_probe(dev, PTR_ERR(strobe), "strobe GPIO\n");
 
 	lm->hwen = devm_gpiod_get(dev, "enable", GPIOD_OUT_LOW);
 	if (IS_ERR(lm->hwen))
