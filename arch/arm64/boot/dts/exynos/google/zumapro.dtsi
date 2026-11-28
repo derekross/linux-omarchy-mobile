@@ -686,6 +686,7 @@
 			reg = <0x0 0x10840000 0x1000>;
 			clocks = <&cmu_peric0 CLK_GOUT_GPIO_PERIC0>;
 			clock-names = "pclk";
+			interrupts = <GIC_SPI 634 IRQ_TYPE_LEVEL_HIGH>;
 			status = "disabled";
 
 			gpp0: gpp0-gpio-bank {
@@ -936,6 +937,7 @@
 			reg = <0x0 0x10c40000 0x1000>;
 			clocks = <&cmu_peric1 CLK_GOUT_GPIO_PERIC1>;
 			clock-names = "pclk";
+			interrupts = <GIC_SPI 649 IRQ_TYPE_LEVEL_HIGH>;
 			status = "disabled";
 
 			gpp19: gpp19-gpio-bank {
@@ -1177,6 +1179,7 @@
 			reg = <0x0 0x12040000 0x1000>;
 			clocks = <&cmu_hsi1 CLK_GOUT_GPIO_HSI1>;
 			clock-names = "pclk";
+			interrupts = <GIC_SPI 413 IRQ_TYPE_LEVEL_HIGH>;
 			status = "disabled";
 
 			gph0: gph0-gpio-bank {
@@ -1284,6 +1287,7 @@
 			reg = <0x0 0x13040000 0x1000>;
 			clocks = <&cmu_hsi2 CLK_GOUT_GPIO_HSI2>;
 			clock-names = "pclk";
+			interrupts = <GIC_SPI 432 IRQ_TYPE_LEVEL_HIGH>;
 			status = "disabled";
 
 			gph3: gph3-gpio-bank {
@@ -1320,6 +1324,7 @@
 			reg = <0x0 0x13060000 0x1000>;
 			clocks = <&cmu_hsi2 CLK_GOUT_GPIO_HSI2UFS>;
 			clock-names = "pclk";
+			interrupts = <GIC_SPI 433 IRQ_TYPE_LEVEL_HIGH>;
 			status = "disabled";
 
 			gph5: gph5-gpio-bank {
