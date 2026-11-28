@@ -1232,7 +1232,8 @@
 			phys = <&ufs_0_phy>;
 			phy-names = "ufs-phy";
 			pinctrl-0 = <&ufs_rst_n &ufs_refclk_out>;
-			pinctrl-names = "default";
+			pinctrl-1 = <&ufs_rst_n &ufs_refclk_out>;
+			pinctrl-names = "default", "sleep";
 			samsung,sysreg = <&sysreg_ufs 0x710>;
 			status = "disabled";
 		};
