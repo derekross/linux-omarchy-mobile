@@ -59,6 +59,9 @@ properties:
       - items:
           - const: google,zumapro-pcie
           - const: google,zuma-pcie
+      - items:
+          - const: google,gs201-lynx-pcie
+          - const: google,gs201-pcie
 
   reg:
     minItems: 3
