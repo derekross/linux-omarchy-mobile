@@ -255,6 +255,8 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 #define BRCMF_PCIE_MIN_SHARED_VERSION		5
 #define BRCMF_PCIE_MAX_SHARED_VERSION		BRCMF_PCIE_SHARED_VERSION_9
 #define BRCMF_PCIE_SHARED_VERSION_MASK		0x00FF
+#define BRCMF_PCIE_SHARED_ASSERT		0x0200
+#define BRCMF_PCIE_SHARED_TRAP			0x0400
 #define BRCMF_PCIE_SHARED_DMA_INDEX		0x10000
 #define BRCMF_PCIE_SHARED_D2H_SYNC_SEQNUM	0x20000
 #define BRCMF_PCIE_SHARED_D2H_SYNC_XORCSUM	0x40000
@@ -269,6 +271,7 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 #define BRCMF_SHARED_MAX_RXBUFPOST_OFFSET	34
 #define BRCMF_SHARED_RING_BASE_OFFSET		52
 #define BRCMF_SHARED_RX_DATAOFFSET_OFFSET	36
+#define BRCMF_SHARED_TRAP_ADDR_OFFSET		4
 #define BRCMF_SHARED_CONSOLE_ADDR_OFFSET	20
 #define BRCMF_SHARED_HTOD_MB_DATA_ADDR_OFFSET	40
 #define BRCMF_SHARED_DTOH_MB_DATA_ADDR_OFFSET	44
@@ -419,6 +422,8 @@ struct brcmf_pciedev_info {
 	const char *d3_ack_via;
 	bool irq_allocated;
 	bool wowl_enabled;
+	/* The firmware set its trap or assert flag; reported once. */
+	bool fw_trapped;
 	u8 dma_idx_sz;
 	void *idxbuf;
 	u32 idxbuf_sz;
@@ -1401,6 +1406,78 @@ static void brcmf_pcie_kick_poll(struct brcmf_pciedev_info *devinfo)
 			 msecs_to_jiffies(BRCMF_PCIE_POLL_MS));
 }
 
+/*
+ * Offsets in the firmware's trap record (struct brcmf_trap_info in sdio.c).
+ * On a BCM4389 trap, by the time the host reads the record, its epc, r14
+ * and pc fields all hold one address that is neither the console's pc nor
+ * its lr, so they are not reported; the console dump below has them.
+ */
+#define BRCMF_TRAP_TYPE_OFFSET	0
+#define BRCMF_TRAP_CPSR_OFFSET	8
+#define BRCMF_TRAP_SPSR_OFFSET	12
+#define BRCMF_TRAP_SP_OFFSET	68
+
+static bool
+brcmf_pcie_valid_ram_range(struct brcmf_pciedev_info *devinfo, u32 addr,
+			   u32 len);
+
+/*
+ * A firmware that traps or asserts sets a flag in the shared area and stops
+ * answering; nothing comes through the mailbox. Broadcom's driver looks at
+ * the flag when a command times out (dhdpcie_checkdied()). Look while
+ * polling, which runs after every interrupt, doorbell and hot resume, so a
+ * trap is reported within 10 ms rather than as a 2 s command timeout.
+ * brcmfmac's bus reset doesn't bring the BCM4389 back (see
+ * brcmf_pcie_pm_enter_D3()), so mark the bus down, which makes further
+ * commands fail at once, and leave recovery to a reload of the stack.
+ */
+static bool brcmf_pcie_check_trap(struct brcmf_pciedev_info *devinfo)
+{
+	struct brcmf_bus *bus = dev_get_drvdata(&devinfo->pdev->dev);
+	u32 base = devinfo->shared.tcm_base_address;
+	u32 flags, trap;
+
+	if (devinfo->fw_trapped)
+		return true;
+	if (!base)
+		return false;
+
+	flags = brcmf_pcie_read_tcm32(devinfo, base);
+	/* All ones: the link is gone, not a trap. */
+	if (flags == 0xffffffff ||
+	    !(flags & (BRCMF_PCIE_SHARED_TRAP | BRCMF_PCIE_SHARED_ASSERT)))
+		return false;
+
+	devinfo->fw_trapped = true;
+	if (flags & BRCMF_PCIE_SHARED_TRAP) {
+		trap = brcmf_pcie_read_tcm32(devinfo,
+					     base + BRCMF_SHARED_TRAP_ADDR_OFFSET);
+		/*
+		 * The record's address comes from the firmware, and each TCM
+		 * read moves the BAR1 window to it: outside RAM, that could
+		 * reach a powered-off domain, so don't read the record.
+		 */
+		if (!brcmf_pcie_valid_ram_range(devinfo, trap,
+						BRCMF_TRAP_SP_OFFSET + 4)) {
+			brcmf_err(bus, "firmware trap, record 0x%08x outside RAM (shared flags 0x%08x)\n",
+				  trap, flags);
+		} else {
+			brcmf_err(bus, "firmware trap type 0x%x, cpsr 0x%08x, spsr 0x%08x, sp 0x%08x (record 0x%08x)\n",
+				  brcmf_pcie_read_tcm32(devinfo, trap + BRCMF_TRAP_TYPE_OFFSET),
+				  brcmf_pcie_read_tcm32(devinfo, trap + BRCMF_TRAP_CPSR_OFFSET),
+				  brcmf_pcie_read_tcm32(devinfo, trap + BRCMF_TRAP_SPSR_OFFSET),
+				  brcmf_pcie_read_tcm32(devinfo, trap + BRCMF_TRAP_SP_OFFSET),
+				  trap);
+		}
+	} else {
+		brcmf_err(bus, "firmware assert (shared flags 0x%08x)\n", flags);
+	}
+	brcmf_err(bus, "firmware stopped; reload the driver stack to recover\n");
+	brcmf_pcie_bus_console_read(devinfo, true);
+	brcmf_bus_change_state(bus, BRCMF_BUS_DOWN);
+	return true;
+}
+
 static void brcmf_pcie_poll_worker(struct work_struct *work)
 {
 	struct brcmf_pciedev_info *devinfo =
@@ -1416,6 +1493,8 @@ static void brcmf_pcie_poll_worker(struct work_struct *work)
 	if (status & devinfo->reginfo->int_d2h_db)
 		brcmf_dbg(PCIE, "poll: mailboxint 0x%08x pending without an interrupt\n",
 			  status);
+	if (brcmf_pcie_check_trap(devinfo))
+		return;
 	brcmf_pcie_rx_process(devinfo);
 
 	left = READ_ONCE(devinfo->poll_left);
