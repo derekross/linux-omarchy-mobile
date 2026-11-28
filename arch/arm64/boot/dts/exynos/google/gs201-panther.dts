@@ -206,6 +206,88 @@
 		google,vgpio2ap-sysreg = <&sysreg_vgpio2ap>;
 		wakeup-source;
 
+		/* Stock's channels and shunts (gs201-pmic.dtsi) */
+		power-meter {
+			compatible = "samsung,s2mpg12-meter";
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			channel@0 {
+				reg = <0>;
+				samsung,source = <0x5c>;
+				label = "VSYS_PWR_MMWAVE";
+				shunt-resistor-micro-ohms = <10000>;
+			};
+
+			channel@1 {
+				reg = <1>;
+				samsung,source = <0x5d>;
+				label = "VSYS_PWR_MODEM";
+				shunt-resistor-micro-ohms = <5000>;
+			};
+
+			channel@2 {
+				reg = <2>;
+				samsung,source = <0x5e>;
+				label = "VSYS_PWR_RFFE";
+				shunt-resistor-micro-ohms = <5000>;
+			};
+
+			channel@3 {
+				reg = <3>;
+				samsung,source = <0x01>;
+				label = "S1M_VDD_MIF";
+			};
+
+			channel@4 {
+				reg = <4>;
+				samsung,source = <0x02>;
+				label = "S2M_VDD_CPUCL2";
+			};
+
+			channel@5 {
+				reg = <5>;
+				samsung,source = <0x03>;
+				label = "S3M_VDD_CPUCL1";
+			};
+
+			channel@6 {
+				reg = <6>;
+				samsung,source = <0x04>;
+				label = "S4M_VDD_CPUCL0";
+			};
+
+			channel@7 {
+				reg = <7>;
+				samsung,source = <0x05>;
+				label = "S5M_VDD_INT";
+			};
+
+			channel@8 {
+				reg = <8>;
+				samsung,source = <0x08>;
+				label = "S8M_LLDO2";
+			};
+
+			channel@9 {
+				reg = <9>;
+				samsung,source = <0x2f>;
+				label = "L15M_VDD_SLC_M";
+			};
+
+			channel@a {
+				reg = <10>;
+				samsung,source = <0x0a>;
+				label = "S10M_VDD_TPU";
+			};
+
+			channel@b {
+				reg = <11>;
+				samsung,source = <0x06>;
+				label = "S6M_LLDO1";
+			};
+		};
+
 		regulators {
 			/* Stock's 1.8 V, which ABL leaves programmed */
 			ldo25m: ldo25m {
@@ -228,18 +310,98 @@
 	};
 
 	/*
-	 * Sub PMIC, for the fingerprint sensor's and the GNSS receiver's
-	 * supplies: L15S_UDFPS_AVDD with stock's 2.5-3.3 V range, and
-	 * L9S_GNSS_CORE, L10S_GNSS_RF and L11S_GNSS_AUX with stock's ranges
-	 * (stock dtbo 0x30406, the same as the Pixel 7 Pro's), so
-	 * registering them sets no voltage. Only described rails can be
-	 * switched; the others stay as the bootloader set them. Disabled
-	 * until the fingerprint or GNSS overlay, each of which enables its
-	 * own rails.
+	 * Sub PMIC: its power meter, and the fingerprint sensor's and the GNSS
+	 * receiver's supplies: L15S_UDFPS_AVDD with stock's 2.5-3.3 V range,
+	 * and L9S_GNSS_CORE, L10S_GNSS_RF and L11S_GNSS_AUX with stock's ranges
+	 * (stock dtbo 0x30406, the same as the Pixel 7 Pro's), so registering
+	 * them sets no voltage. The PMIC is enabled for its meter. Only
+	 * described rails can be switched; the others stay as the bootloader
+	 * set them. Each described rail stays disabled until the fingerprint
+	 * or GNSS overlay, each of which enables its own rails.
 	 */
 	pmic-2 {
 		compatible = "samsung,s2mpg13-pmic";
-		status = "disabled";
+
+		/* Stock's channels and shunts (gs201-pmic.dtsi) */
+		power-meter {
+			compatible = "samsung,s2mpg13-meter";
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			channel@0 {
+				reg = <0>;
+				samsung,source = <0x5c>;
+				label = "VSYS_PWR_DISPLAY";
+				shunt-resistor-micro-ohms = <10000>;
+			};
+
+			channel@1 {
+				reg = <1>;
+				samsung,source = <0x5d>;
+				label = "VSYS_PWR_WLAN_BT";
+				shunt-resistor-micro-ohms = <10000>;
+			};
+
+			channel@2 {
+				reg = <2>;
+				samsung,source = <0x29>;
+				label = "L9S_GNSS_CORE";
+			};
+
+			channel@3 {
+				reg = <3>;
+				samsung,source = <0x01>;
+				label = "S1S_VDD_CAM";
+			};
+
+			channel@4 {
+				reg = <4>;
+				samsung,source = <0x02>;
+				label = "S2S_VDD_G3D";
+			};
+
+			channel@5 {
+				reg = <5>;
+				samsung,source = <0x04>;
+				label = "S4S_VDD2H_MEM";
+			};
+
+			channel@6 {
+				reg = <6>;
+				samsung,source = <0x05>;
+				label = "S5S_VDDQ_MEM";
+			};
+
+			channel@7 {
+				reg = <7>;
+				samsung,source = <0x08>;
+				label = "S8S_VDD_G3D_L2";
+			};
+
+			channel@8 {
+				reg = <8>;
+				samsung,source = <0x09>;
+				label = "S9S_VDD_AOC";
+			};
+
+			channel@9 {
+				reg = <9>;
+				samsung,source = <0x27>;
+				label = "L7S_SENSORS";
+			};
+
+			channel@a {
+				reg = <10>;
+				samsung,source = <0x2e>;
+				label = "L14S_ALIVE";
+			};
+
+			channel@b {
+				reg = <11>;
+				samsung,source = <0x22>;
+				label = "L2S_PLL_MIPI_UFS";
+			};
+		};
 
 		regulators {
 			ldo9s: ldo9s {

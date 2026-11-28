@@ -61,18 +61,21 @@ static const struct resource s2mpg12_rtc_resources[] = {
 };
 
 /*
- * RTC, and the LDOs. The regmap write window is the LDO control block.
+ * RTC, the LDOs and the power meter. The PMIC regmap write window is the
+ * LDO control block.
  * Rails with no DT constraints are registered and then left alone.
  */
 static const struct mfd_cell s2mpg12_devs[] = {
 	MFD_CELL_RES("s2mpg12-rtc", s2mpg12_rtc_resources),
 	MFD_CELL_NAME("s2mpg12-regulator"),
+	MFD_CELL_OF("s2mpg12-meter", NULL, NULL, 0, 0, "samsung,s2mpg12-meter"),
 };
 
-/* Only the LDOs and GPIOs so far: no interrupt, no RTC on this PMIC yet. */
+/* The LDOs, GPIOs and power meter: no interrupt, no RTC on this PMIC yet. */
 static const struct mfd_cell s2mpg13_devs[] = {
 	MFD_CELL_NAME("s2mpg13-regulator"),
 	MFD_CELL_OF("s2mpg13-gpio", NULL, NULL, 0, 0, "samsung,s2mpg13-gpio"),
+	MFD_CELL_OF("s2mpg13-meter", NULL, NULL, 0, 0, "samsung,s2mpg13-meter"),
 };
 
 static const struct resource s2mpg14_rtc_resources[] = {

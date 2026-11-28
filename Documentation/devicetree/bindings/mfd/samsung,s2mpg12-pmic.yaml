@@ -33,6 +33,12 @@ properties:
 
   wakeup-source: true
 
+  power-meter:
+    type: object
+    $ref: /schemas/hwmon/samsung,s2mpg12-meter.yaml
+    description:
+      The PMIC's power meter channels.
+
   regulators:
     type: object
     $ref: /schemas/regulator/samsung,s2mpg12-regulator.yaml
