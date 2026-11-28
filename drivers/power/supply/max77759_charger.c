@@ -11,6 +11,7 @@
 #include <linux/devm-helpers.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
+#include <linux/ktime.h>
 #include <linux/linear_range.h>
 #include <linux/math64.h>
 #include <linux/mfd/max77759.h>
@@ -56,7 +57,71 @@ static char guard_psy[32] = "max170xx_battery";
 module_param_string(guard_psy, guard_psy, sizeof(guard_psy), 0444);
 MODULE_PARM_DESC(guard_psy, "Battery power supply whose temp and voltage_now the guard reads");
 
+/*
+ * Charge defender, as the stock Pixel 8 Pro has it (google_charger.c, the
+ * bd-* values of zuma-shusky-charging.dtsi): after six hours plugged in
+ * with the battery at 4.27 V or more and 35.0 C or more, stop charging at
+ * 80 % (buck only) and resume at 79 %, until the cable comes out. Nothing
+ * drains the battery: above 80 % it stays there until use brings it down.
+ * Time is counted by the guard work, which does not run while the phone
+ * sleeps.
+ */
+static bool charge_defender;
+module_param(charge_defender, bool, 0644);
+MODULE_PARM_DESC(charge_defender,
+		 "Pixel 8 Pro only: after 6 h plugged in at 4.27 V or more and 35.0 C or more, stop charging at 80 % and resume at 79 % until unplugged (no active drain: a battery above 80 % stays there until used). Counted only while awake, and a charge under way goes on to the float while asleep. Default off.");
+
+#define DEFEND_UV			4270000
+#define DEFEND_DECIC			350
+#define DEFEND_S			21600
+#define DEFEND_MAX_STEP_S		60	/* most one guard run may count */
+#define DEFEND_END			80
+#define DEFEND_START			79
 #define STOP_RESUME_GAP			5	/* resume at end - 5 when start is 0 */
+#define HUSKY_BOOT_FV_MV		4350	/* float the husky bootloader sets */
+
+/*
+ * DONE check of the stock husky charger (max77759_is_full()): in the last
+ * tier the chip's DONE counts as full only within DONE_FULL_MARGIN_UV of
+ * the float; below it charging is restarted, as stock does, at most once
+ * per DONE_RESTART_GAP_S and DONE_RESTART_MAX times per plug-in; a DONE
+ * accepted as full gives the restarts back, but not the gap. A full
+ * battery is charged again once the capacity falls to DONE_RECHARGE_SOC
+ * or the voltage DONE_RECHARGE_UV below the float.
+ */
+#define DONE_FULL_MARGIN_UV		50000
+#define DONE_RECHARGE_UV		250000
+/*
+ * The 95 % rests on the percentage that ran ahead of the voltage near the
+ * top in a log from a Pixel 8 Pro; the 250 mV half is the one to trust.
+ */
+#define DONE_RECHARGE_SOC		95
+#define DONE_RESTART_GAP_S		600
+#define DONE_RESTART_MAX		5
+
+enum done_action {
+	DONE_NONE,	/* nothing to do */
+	DONE_FULL,	/* done counts as full */
+	DONE_RESTART,	/* restart charging */
+	DONE_REFUSED,	/* would restart, but out of restarts */
+	DONE_LIMIT,	/* the band's own limit, below the last tier */
+};
+
+#define DONE_UNCHECKED			-1	/* no DONE check ran */
+
+/**
+ * struct done_state - DONE check state, kept per plug-in
+ * @full: the battery was found full and stays so until recharge
+ * @restarts: restarts since plug-in or the last DONE accepted as full
+ * @ran: a restart ran since plug-in, so @last_s holds
+ * @last_s: time of the last restart, in seconds
+ */
+struct done_state {
+	bool full;
+	int restarts;
+	bool ran;
+	s64 last_s;
+};
 
 #define GUARD_PERIOD_MS			30000
 #define GUARD_RETRY_MS			2000	/* while there is no reading */
@@ -75,9 +140,13 @@ static const int guard_temp_decic[GUARD_NBANDS + 1] = {
  * @cv_mv: tier j charges up to cv_mv[j]
  * @cc_pct: charge current per band and tier, in percent of the design
  *	    capacity; 0 means the band does not charge in that tier
+ * @fv_max_mv: when set, the guard's float cap in place of the battery
+ *	       description's, so the float goes above that only while the
+ *	       guard runs
  */
 struct guard_table {
 	int ntiers;
+	u32 fv_max_mv;
 	u32 cv_mv[GUARD_MAX_TIERS];
 	u8 cc_pct[GUARD_NBANDS][GUARD_MAX_TIERS];
 };
@@ -101,9 +170,18 @@ static const struct guard_table guard_table_default = {
  * kernel/devices/google/shusky, branch android-gs-shusky-6.1-android16:
  * temperature and voltage limits from dts/zuma-shusky-battery.dtsi,
  * the 4950 mAh and the six rows from dts/zuma-husky-battery.dtsi.
+ *
+ * The battery node keeps the float at 4.20 V, so a kernel booted without
+ * the guard never charges higher. While the guard runs it caps the
+ * table at 4.45 V instead: under the board's google,fv-max-uv of 4.48 V
+ * (dts/zuma-shusky-charging.dtsi), which google,aafv-ref-cycles and
+ * google,aafv-ref-offset (dts/zuma-husky-battery.dtsi) lower by 20 mV
+ * per 200 cycles, to 4.38 V from 1000 cycles. 4.45 V is a choice, not
+ * from that schedule.
  */
 static const struct guard_table guard_table_husky = {
 	.ntiers = 4,
+	.fv_max_mv = 4450,
 	.cv_mv = { 4200, 4300, 4350, 4480 },
 	.cc_pct = {
 		{  50,  30,   0,  0 },	/*  0-10 C */
@@ -173,9 +251,20 @@ struct max77759_charger {
 	bool stop_inhibit;	/* charge suspended at the end threshold */
 	const char *bat_psy;	/* capacity source, NULL: guard_psy */
 
-	/* Charge thresholds, in percent, run by the guard work */
+	/* Charge thresholds, in percent, and defender, run by the guard work */
 	int end_threshold;
 	int start_threshold;
+	u32 defend_s;		/* time counted towards the defender */
+	bool defended;		/* defender latched until unplugged */
+	bool unplugged;		/* psy work saw the source go, under lock */
+	struct done_state done;	/* DONE check, husky only */
+	bool done_warned;	/* out of restarts said once */
+	int done_last;		/* last DONE check, or DONE_UNCHECKED, under lock */
+	bool done_active;	/* the DONE check is in force, under lock */
+	bool mode_rewrite;	/* a restart left the mode off, under lock */
+	ktime_t stop_last;
+	u32 boot_fv_mv;		/* float the bootloader left, 0: unknown */
+	bool float_unsafe;	/* restore failed: keep the stop on unbind */
 	bool apply_failed;	/* the chip did not hold the guard's limits */
 
 	/* Temperature guard */
@@ -249,6 +338,16 @@ static int get_status(struct max77759_charger *chg)
 	case MAX77759_CHGR_CHG_DTLS_TO:
 		return POWER_SUPPLY_STATUS_CHARGING;
 	case MAX77759_CHGR_CHG_DTLS_DONE:
+		/*
+		 * While the DONE check runs (husky, temp_guard on), Full only
+		 * for a DONE it accepted; until it has looked, for one it
+		 * restarts or refused, and while the guard has no reading or
+		 * holds charging off, the charge has stopped short of full.
+		 */
+		scoped_guard(mutex, &chg->lock) {
+			if (chg->done_active && chg->done_last != DONE_FULL)
+				return POWER_SUPPLY_STATUS_NOT_CHARGING;
+		}
 		return POWER_SUPPLY_STATUS_FULL;
 	case MAX77759_CHGR_CHG_DTLS_TIMER_FAULT:
 	case MAX77759_CHGR_CHG_DTLS_SUSP_BATT_THM:
@@ -603,6 +702,18 @@ static int stop_resume(int end, int start)
 	return start && start < end ? start : max(end - STOP_RESUME_GAP, 0);
 }
 
+/* The thresholds in force: the defender's, unless the user's are lower */
+static void stop_effective(int end, int start, bool defended, int *e, int *s)
+{
+	if (defended && end > DEFEND_END) {
+		*e = DEFEND_END;
+		*s = DEFEND_START;
+	} else {
+		*e = end;
+		*s = start;
+	}
+}
+
 static int max77759_charger_get_property(struct power_supply *psy,
 					 enum power_supply_property psp,
 					 union power_supply_propval *pval)
@@ -636,15 +747,21 @@ static int max77759_charger_get_property(struct power_supply *psy,
 		ret = get_input_current_limit(chg);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD:
-		/* The value in force: 75 for an end of 80 and a start of 0 */
-		scoped_guard(mutex, &chg->lock)
-			ret = chg->end_threshold >= 100 ? chg->start_threshold :
-			      stop_resume(chg->end_threshold,
-					  chg->start_threshold);
-		break;
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
-		scoped_guard(mutex, &chg->lock)
-			ret = chg->end_threshold;
+		/*
+		 * The values in force: start reads 75 for an end of 80 and a
+		 * start of 0, and the defender's 80 / 79 while it is latched.
+		 */
+		scoped_guard(mutex, &chg->lock) {
+			int e, s;
+
+			stop_effective(chg->end_threshold, chg->start_threshold,
+				       chg->defended, &e, &s);
+			if (psp == POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD)
+				ret = e;
+			else
+				ret = e >= 100 ? s : stop_resume(e, s);
+		}
 		break;
 	default:
 		ret = -EINVAL;
@@ -843,6 +960,20 @@ static int max77759_init_irqhandler(struct max77759_charger *chg)
 	return 0;
 }
 
+/*
+ * The float to restore, from what the chip holds at probe. On husky a
+ * float left by an earlier driver run is no bootloader's, so it is capped
+ * at the bootloader's, and an unreadable one is taken to be it.
+ */
+static u32 boot_float(bool husky, int read_mv)
+{
+	u32 mv = read_mv > 0 ? read_mv : 0;
+
+	if (husky)
+		return mv ? min(mv, HUSKY_BOOT_FV_MV) : HUSKY_BOOT_FV_MV;
+	return mv;
+}
+
 static int max77759_charger_init(struct max77759_charger *chg)
 {
 	struct power_supply_battery_info *info;
@@ -857,6 +988,10 @@ static int max77759_charger_init(struct max77759_charger *chg)
 	ret = charger_set_mode(chg, MAX77759_CHGR_MODE_OFF);
 	if (ret)
 		return ret;
+
+	/* Husky only: the bootloader's float, before the battery's replaces it */
+	if (chg->guard_table == &guard_table_husky)
+		chg->boot_fv_mv = boot_float(true, get_float_voltage(chg));
 
 	if (power_supply_get_battery_info(chg->psy, &info)) {
 		fv = CHG_FV_DEFAULT_MV;
@@ -954,6 +1089,15 @@ static void psy_work_item(struct work_struct *work)
 		charger_set_mode(chg, MAX77759_CHGR_MODE_CHG_BUCK_ON);
 	} else {
 		charger_set_mode(chg, MAX77759_CHGR_MODE_OFF);
+		/*
+		 * For the defender: a quick replug still counts as unplugged.
+		 * Only where the TCPM supply notifies us; the guard run's own
+		 * CHGIN read covers the rest.
+		 */
+		if (!online.intval) {
+			scoped_guard(mutex, &chg->lock)
+				chg->unplugged = true;
+		}
 	}
 
 	scoped_guard(mutex, &chg->retry_lock) {
@@ -1121,6 +1265,12 @@ static void guard_limits(const struct guard_table *tbl, int band, int tier,
 	*cc_ua = min(cc, cc_max_ua);
 }
 
+/* The guard's float cap: the table's own, else the battery description's */
+static u32 guard_fv_cap(const struct guard_table *tbl, u32 fv_max_mv)
+{
+	return tbl->fv_max_mv ?: fv_max_mv;
+}
+
 static const struct guard_table *guard_select_table(void)
 {
 	if (of_machine_is_compatible("google,zuma-husky"))
@@ -1205,6 +1355,30 @@ static void guard_release(struct max77759_charger *chg)
 }
 
 /*
+ * One defender step of @dt_s seconds. Time counts while plugged in at
+ * DEFEND_UV or more and DEFEND_DECIC or more; a lower voltage starts the
+ * count again, a lower temperature only pauses it. Unplugging clears the
+ * count and the latch. Returns whether the defender is latched.
+ */
+static bool defend_step(u32 *count_s, bool latched, bool plugged, int uv,
+			int decic, u32 dt_s)
+{
+	if (!plugged) {
+		*count_s = 0;
+		return false;
+	}
+	if (latched)
+		return true;
+	if (uv < DEFEND_UV) {
+		*count_s = 0;
+		return false;
+	}
+	if (decic >= DEFEND_DECIC)
+		*count_s += min(dt_s, DEFEND_MAX_STEP_S);
+	return *count_s >= DEFEND_S;
+}
+
+/*
  * Whether charging stays stopped: stop at @soc >= @end, resume at
  * @soc <= stop_resume(). An end of 100 never stops.
  */
@@ -1234,24 +1408,258 @@ static int stop_read_soc(struct max77759_charger *chg, int *soc)
 }
 
 /*
- * The charge thresholds. At 100 / 0 this reads nothing and writes
- * nothing.
+ * One DONE check. @done: the chip reports DONE; @band_last: the band
+ * charges up to the table's last tier; @last_tier: charging in that tier;
+ * @uv: battery voltage; @fv_mv: the float in force; @soc: capacity, or
+ * 100 when unknown; @now_s: a monotonic time in s.
+ */
+static enum done_action done_step(struct done_state *st, bool done,
+				  bool band_last, bool last_tier, int uv,
+				  u32 fv_mv, int soc, s64 now_s)
+{
+	s64 fv_uv = (s64)fv_mv * 1000;
+
+	if (!done) {
+		st->full = false;
+		return DONE_NONE;
+	}
+	/* Capped below the last tier: done there is the band's limit */
+	if (!band_last) {
+		st->full = false;
+		return DONE_LIMIT;
+	}
+	/*
+	 * Below the last tier done is never full, as in stock: a small
+	 * adapter under load can reach top-off far from it. Restart.
+	 */
+	if (last_tier && uv >= fv_uv - DONE_FULL_MARGIN_UV) {
+		/* A full charge gives the restarts back */
+		st->full = true;
+		st->restarts = 0;
+		return DONE_FULL;
+	}
+	if (last_tier && st->full && soc > DONE_RECHARGE_SOC &&
+	    uv >= fv_uv - DONE_RECHARGE_UV)
+		return DONE_FULL;
+	st->full = false;
+
+	if (st->restarts >= DONE_RESTART_MAX)
+		return DONE_REFUSED;
+	if (st->ran && now_s - st->last_s < DONE_RESTART_GAP_S)
+		return DONE_NONE;
+	return DONE_RESTART;
+}
+
+/* Count a restart that ran */
+static void done_restarted(struct done_state *st, s64 now_s)
+{
+	st->restarts++;
+	st->ran = true;
+	st->last_s = now_s;
+}
+
+/*
+ * The tier whose float is the one in force: the first whose voltage
+ * reaches @fv_cap_mv, the cap the guard applies. At a 4.20 V cap that is
+ * the first tier, at 4.45 V on husky the last. @band_last: the band
+ * charges up to that tier; @last_tier: charging in it.
+ */
+static void done_tiers(const struct guard_table *tbl, int band, int tier,
+		       u32 fv_cap_mv, bool *band_last, bool *last_tier)
+{
+	int full = 0;
+
+	while (full < tbl->ntiers - 1 && tbl->cv_mv[full] < fv_cap_mv)
+		full++;
+	*band_last = guard_top_tier(tbl, band) >= full;
+	*last_tier = *band_last && tier >= full;
+}
+
+#define DONE_RESTART_TRIES		3
+
+/*
+ * Charge mode off, then back on, as stock restarts a charge. Returns
+ * whether it ran, that is the mode went off. Putting the mode back is
+ * tried DONE_RESTART_TRIES times; if that fails it says so and marks
+ * the mode for the next guard run to write again.
+ */
+static bool charger_restart(struct max77759_charger *chg)
+{
+	int i, ret;
+
+	guard(mutex)(&chg->lock);
+
+	if (chg->mode != MAX77759_CHGR_MODE_CHG_BUCK_ON ||
+	    chg->inhibit || chg->stop_inhibit)
+		return false;
+	if (regmap_update_bits(chg->regmap, MAX77759_CHGR_REG_CHG_CNFG_00,
+			       MAX77759_CHGR_REG_CHG_CNFG_00_MODE,
+			       MAX77759_CHGR_MODE_OFF))
+		return false;
+	for (i = 0; i < DONE_RESTART_TRIES; i++) {
+		ret = charger_write_mode(chg, chg->mode);
+		if (!ret)
+			return true;
+	}
+	dev_err(chg->dev, "charging left off after a restart (%d)\n", ret);
+	chg->mode_rewrite = true;
+	return true;
+}
+
+/* A mode left off by a failed restart: write it again, under the lock */
+static void charger_mode_fix(struct max77759_charger *chg)
+{
+	guard(mutex)(&chg->lock);
+
+	if (chg->mode_rewrite && !charger_write_mode(chg, chg->mode)) {
+		chg->mode_rewrite = false;
+		dev_info(chg->dev, "charge mode written again after a restart\n");
+	}
+}
+
+/*
+ * Husky: a new plug-in gets its restarts back. No TCPM supply notifies the
+ * psy work there, so read CHGIN each run, as the defender does. An unplug
+ * and replug that both fall between two runs is missed.
+ */
+static void done_plug_check(struct max77759_charger *chg)
+{
+	if (!temp_guard || chg->guard_table != &guard_table_husky ||
+	    charger_input_valid(chg) != 0)
+		return;
+	chg->done = (struct done_state){ };
+	chg->done_warned = false;
+}
+
+/*
+ * @active: the DONE check is in force (husky, temp_guard on), so status
+ * reads Full only for a DONE it accepted.
+ */
+static void done_set_last(struct max77759_charger *chg, bool active,
+			  int action)
+{
+	guard(mutex)(&chg->lock);
+	chg->done_active = active;
+	chg->done_last = action;
+}
+
+/*
+ * Husky: the DONE check, after the guard has set the band and tier.
+ * Returns the action, or DONE_UNCHECKED on other boards or a failed read.
+ */
+static int done_work(struct max77759_charger *chg, int band, int tier, int uv,
+		     u32 fv_mv)
+{
+	const struct guard_table *tbl = chg->guard_table;
+	s64 now_s = div_s64(ktime_get_boottime_ns(), NSEC_PER_SEC);
+	enum done_action action;
+	bool band_last, last_tier;
+	int soc = 100;
+	u32 val;
+
+	if (tbl != &guard_table_husky)
+		return DONE_UNCHECKED;
+	if (regmap_read(chg->regmap, MAX77759_CHGR_REG_CHG_DETAILS_01, &val))
+		return DONE_UNCHECKED;
+
+	done_tiers(tbl, band, tier, guard_fv_cap(tbl, chg->fv_max_mv),
+		   &band_last, &last_tier);
+	if (chg->done.full)
+		stop_read_soc(chg, &soc);
+
+	action = done_step(&chg->done,
+			   FIELD_GET(MAX77759_CHGR_REG_CHG_DETAILS_01_CHG_DTLS, val) ==
+			   MAX77759_CHGR_CHG_DTLS_DONE,
+			   band_last, last_tier, uv, fv_mv, soc, now_s);
+	switch (action) {
+	case DONE_RESTART:
+		if (!charger_restart(chg))
+			break;
+		done_restarted(&chg->done, now_s);
+		dev_info(chg->dev, "done at %d mV, below %u mV: restart %d\n",
+			 uv / 1000, fv_mv, chg->done.restarts);
+		break;
+	case DONE_REFUSED:
+		if (!chg->done_warned)
+			dev_warn(chg->dev,
+				 "done at %d mV after %d restarts: no more until unplugged or full\n",
+				 uv / 1000, DONE_RESTART_MAX);
+		chg->done_warned = true;
+		break;
+	case DONE_FULL:
+		chg->done_warned = false;
+		break;
+	default:
+		break;
+	}
+	return action;
+}
+
+/*
+ * The charge thresholds and the defender. With the thresholds at 100 / 0
+ * and the defender off this reads nothing and writes nothing.
  */
 static void stop_work(struct max77759_charger *chg)
 {
-	int end, start, soc = -1;
-	bool stopped;
+	bool defender = charge_defender && chg->guard_table == &guard_table_husky;
+	ktime_t now = ktime_get_boottime();
+	int end, start, e, st, plugged, decic, uv, soc = -1;
+	bool unplugged, stopped, defended;
+	s64 dt_ms;
 
+	dt_ms = ktime_ms_delta(now, chg->stop_last);
+	chg->stop_last = now;
 	scoped_guard(mutex, &chg->lock) {
+		unplugged = chg->unplugged;
+		chg->unplugged = false;
+		/* A new plug-in gets its restarts back */
+		if (unplugged) {
+			chg->done = (struct done_state){ };
+			chg->done_warned = false;
+		}
 		end = chg->end_threshold;
 		start = chg->start_threshold;
 	}
 
+	defended = chg->defended;
+	if (!defender) {
+		chg->defend_s = 0;
+		defended = false;
+	} else {
+		/*
+		 * Each run reads CHGIN itself: on husky no TCPM supply
+		 * notifies the psy work. An unplug and replug that both fall
+		 * between two runs is missed.
+		 */
+		plugged = unplugged ? 0 : charger_input_valid(chg);
+		if (!plugged) {
+			if (defended)
+				dev_info(chg->dev, "unplugged: defender off\n");
+			chg->defend_s = 0;
+			defended = false;
+		} else if (plugged > 0 && !guard_read(&decic, &uv)) {
+			bool was = defended;
+
+			defended = defend_step(&chg->defend_s, was, true, uv,
+					       decic,
+					       clamp_val(div_s64(dt_ms, MSEC_PER_SEC), 0,
+							 U32_MAX));
+			if (defended && !was)
+				dev_info(chg->dev,
+					 "defender on: charging stops at %d %%, resumes at %d %%\n",
+					 DEFEND_END, DEFEND_START);
+		}
+	}
+	/* Under the lock: the threshold read-back reports it */
+	scoped_guard(mutex, &chg->lock)
+		chg->defended = defended;
+
+	stop_effective(end, start, defended, &e, &st);
 	stopped = chg->stop_inhibit;
-	if (end >= 100)
+	if (e >= 100)
 		stopped = false;
 	else if (!stop_read_soc(chg, &soc))
-		stopped = stop_next(stopped, soc, end, start);
+		stopped = stop_next(stopped, soc, e, st);
 
 	if (stopped != chg->stop_inhibit && soc >= 0)
 		dev_info(chg->dev, "charge %s at %d %%\n",
@@ -1261,41 +1669,27 @@ static void stop_work(struct max77759_charger *chg)
 	charger_set_inhibit(chg, &chg->stop_inhibit, stopped);
 }
 
-static void guard_work_item(struct work_struct *work)
+/*
+ * One guard run with temp_guard on, after the gauge read: @read_ok, and
+ * then @decic and @uv. Returns the delay to the next run, in ms.
+ */
+static unsigned int guard_run(struct max77759_charger *chg, bool read_ok,
+			      int decic, int uv)
 {
-	struct max77759_charger *chg =
-		container_of(work, struct max77759_charger, guard_work.work);
 	const struct guard_table *tbl = chg->guard_table;
-	int decic = 0, uv = 0, band, tier;
 	unsigned int next_ms = GUARD_PERIOD_MS;
-	bool read_ok;
+	int done = DONE_UNCHECKED;
+	int band, tier;
 	u32 fv, cc;
 
-	/*
-	 * The charge thresholds first: a stop they call for is in place
-	 * before the guard below can clear its own inhibit.
-	 */
-	stop_work(chg);
-
-	if (!temp_guard) {
-		WRITE_ONCE(chg->guard_no_reading, false);
-		if (chg->guard_active)
-			guard_release(chg);
-		goto out;
-	}
-
+	charger_mode_fix(chg);
+	done_plug_check(chg);
 	if (!chg->guard_active) {
 		chg->guard_active = true;
 		chg->guard_band = -2;
 		dev_info(chg->dev, "temperature guard on (%s)\n", guard_psy);
 	}
 
-	/*
-	 * No reading, no charging. A missing reading is usually the gauge
-	 * still starting (it answers once its model load is done), so look
-	 * again soon instead of a guard period later.
-	 */
-	read_ok = !guard_read(&decic, &uv);
 	WRITE_ONCE(chg->guard_no_reading, !read_ok);
 	if (!read_ok)
 		next_ms = GUARD_RETRY_MS;
@@ -1318,7 +1712,8 @@ static void guard_work_item(struct work_struct *work)
 	if (band != chg->guard_band)
 		chg->guard_tier = 0;
 	tier = guard_next_tier(tbl, band, chg->guard_tier, uv);
-	guard_limits(tbl, band, tier, chg->design_uah, chg->fv_max_mv,
+	guard_limits(tbl, band, tier, chg->design_uah,
+		     guard_fv_cap(tbl, chg->fv_max_mv),
 		     chg->cc_max_ua, &fv, &cc);
 
 	if (guard_apply(chg, fv, cc))
@@ -1333,7 +1728,39 @@ static void guard_work_item(struct work_struct *work)
 			 fv, cc);
 	chg->guard_band = band;
 	chg->guard_tier = tier;
+	done = done_work(chg, band, tier, uv, fv);
 out:
+	done_set_last(chg, tbl == &guard_table_husky, done);
+	return next_ms;
+}
+
+static void guard_work_item(struct work_struct *work)
+{
+	struct max77759_charger *chg =
+		container_of(work, struct max77759_charger, guard_work.work);
+	unsigned int next_ms = GUARD_PERIOD_MS;
+	int decic = 0, uv = 0;
+
+	/*
+	 * The charge thresholds first: a stop they call for is in place
+	 * before the guard below can clear its own inhibit.
+	 */
+	stop_work(chg);
+
+	if (!temp_guard) {
+		WRITE_ONCE(chg->guard_no_reading, false);
+		charger_mode_fix(chg);
+		if (chg->guard_active)
+			guard_release(chg);
+		done_set_last(chg, false, DONE_UNCHECKED);
+	} else {
+		/*
+		 * No reading, no charging. A missing reading is usually the
+		 * gauge still starting (it answers once its model load is
+		 * done), so look again soon instead of a guard period later.
+		 */
+		next_ms = guard_run(chg, !guard_read(&decic, &uv), decic, uv);
+	}
 	schedule_delayed_work(&chg->guard_work, msecs_to_jiffies(next_ms));
 }
 
@@ -1352,10 +1779,68 @@ static void max77759_charger_log_state(struct max77759_charger *chg,
 		 fv, cc, ilim);
 }
 
-/* On unbind, no charge threshold holds charging off any more */
+/* Restore the bootloader's float only to lower the chip's, never to raise it */
+static bool restore_float_needed(u32 cur_mv, u32 boot_mv)
+{
+	return boot_mv && cur_mv > boot_mv;
+}
+
+/*
+ * Pixel 8 Pro: leave no float above the bootloader's behind once the
+ * driver, and with it the guard and the defender, is gone. When the float
+ * cannot be read or put back, charging is stopped (buck only) and the
+ * unbind leaves it stopped, rather than charge on a float that may be the
+ * raised one.
+ */
+static int restore_float(struct max77759_charger *chg)
+{
+	u32 want;
+	int cur;
+
+	if (chg->guard_table != &guard_table_husky)
+		return 0;
+
+	cur = get_float_voltage(chg);
+	if (cur < 0) {
+		dev_err(chg->dev, "could not read the float (%d): charging stopped\n",
+			cur);
+		goto fail;
+	}
+	if (!restore_float_needed(cur, chg->boot_fv_mv))
+		return 0;
+
+	if (fv_quantize(chg->boot_fv_mv, &want) ||
+	    set_float_voltage_limit(chg, chg->boot_fv_mv) ||
+	    get_float_voltage(chg) != (int)want) {
+		dev_err(chg->dev,
+			"could not restore the float to %u mV: charging stopped\n",
+			chg->boot_fv_mv);
+		goto fail;
+	}
+	dev_info(chg->dev, "float restored to %u mV\n", chg->boot_fv_mv);
+	return 0;
+
+fail:
+	chg->float_unsafe = true;
+	charger_set_inhibit(chg, &chg->stop_inhibit, true);
+	return -EIO;
+}
+
+static void max77759_charger_restore_float(void *data)
+{
+	restore_float(data);
+}
+
+/*
+ * On unbind, no charge threshold holds charging off any more, unless the
+ * float could not be restored: then charging stays stopped.
+ */
 static void max77759_charger_clear_stop(void *data)
 {
 	struct max77759_charger *chg = data;
+
+	if (chg->float_unsafe)
+		return;
 
 	charger_set_inhibit(chg, &chg->stop_inhibit, false);
 }
@@ -1405,6 +1890,7 @@ static int max77759_charger_probe(struct platform_device *pdev)
 
 	max77759_charger_log_state(chg, "found");
 
+	chg->guard_table = guard_select_table();
 	ret = max77759_charger_init(chg);
 	if (ret)
 		return dev_err_probe(dev, ret,
@@ -1425,10 +1911,15 @@ static int max77759_charger_probe(struct platform_device *pdev)
 
 	/*
 	 * devm undoes in reverse: on unbind the guard work is cancelled,
-	 * then a threshold stop is cleared, and only then is charging
-	 * left on.
+	 * then the float is restored, then a threshold stop is cleared,
+	 * and only then is charging left on.
 	 */
 	ret = devm_add_action_or_reset(dev, max77759_charger_clear_stop, chg);
+	if (ret)
+		return ret;
+
+	ret = devm_add_action_or_reset(dev, max77759_charger_restore_float,
+				       chg);
 	if (ret)
 		return ret;
 
@@ -1450,7 +1941,8 @@ static int max77759_charger_probe(struct platform_device *pdev)
 	 * unregisters the notifier before it cancels the work.
 	 */
 	chg->guard_band = -2;
-	chg->guard_table = guard_select_table();
+	chg->done_last = DONE_UNCHECKED;
+	chg->stop_last = ktime_get_boottime();
 	ret = devm_delayed_work_autocancel(dev, &chg->guard_work, guard_work_item);
 	if (ret)
 		return dev_err_probe(dev, ret, "Failed to initialize guard work\n");
@@ -1481,6 +1973,91 @@ static int max77759_charger_probe(struct platform_device *pdev)
 	return 0;
 }
 
+/*
+ * Before sleep: no guard runs while asleep, so a float the guard raised
+ * above the battery description's would hold for as long as the phone
+ * sleeps on the cable, whatever the temperature does. Put the
+ * description's float back; the first guard run after resume raises it
+ * again if the band allows. If the chip does not take it, inhibit
+ * charging instead; that run clears the inhibit once it applies its
+ * limits. Returns 0 when the float is down or charging is inhibited,
+ * else an error: then the phone must not sleep.
+ */
+static int guard_sleep_float(struct max77759_charger *chg)
+{
+	int cur = get_float_voltage(chg);
+	u32 want;
+	int ret;
+
+	if (cur >= 0 && cur <= (int)chg->fv_max_mv)
+		return 0;
+	ret = cur < 0 ? cur : fv_quantize(chg->fv_max_mv, &want);
+	if (!ret)
+		ret = set_float_voltage_limit(chg, chg->fv_max_mv);
+	if (!ret && get_float_voltage(chg) != (int)want)
+		ret = -EIO;
+	if (!ret)
+		return 0;
+	guard_set_inhibit(chg, true);
+	if (!chg->inhibit) {
+		dev_err(chg->dev, "could not lower the float or stop charging for sleep (%d): sleep refused\n",
+			ret);
+		return -EIO;
+	}
+	dev_err(chg->dev, "could not lower the float for sleep (%d): charging inhibited\n",
+		ret);
+	return 0;
+}
+
+static int max77759_charger_suspend(struct device *dev)
+{
+	struct max77759_charger *chg = dev_get_drvdata(dev);
+
+	int ret = 0;
+
+	/* Other boards: the table has no cap of its own, nothing to pair */
+	if (!chg->guard_table->fv_max_mv)
+		return 0;
+
+	disable_delayed_work_sync(&chg->guard_work);
+	if (chg->guard_active)
+		ret = guard_sleep_float(chg);
+	if (ret) {
+		enable_delayed_work(&chg->guard_work);
+		schedule_delayed_work(&chg->guard_work, 0);
+	}
+	return ret;
+}
+
+static int max77759_charger_resume(struct device *dev)
+{
+	struct max77759_charger *chg = dev_get_drvdata(dev);
+
+	/* Paired with the early return in suspend */
+	if (!chg->guard_table->fv_max_mv)
+		return 0;
+
+	enable_delayed_work(&chg->guard_work);
+	schedule_delayed_work(&chg->guard_work, 0);
+	return 0;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(max77759_charger_pm, max77759_charger_suspend,
+				max77759_charger_resume);
+
+static void max77759_charger_shutdown(struct platform_device *pdev)
+{
+	struct max77759_charger *chg = platform_get_drvdata(pdev);
+
+	/* Husky only: other boards are left as they were */
+	if (chg->guard_table != &guard_table_husky)
+		return;
+
+	/* No guard run after this, not even one the notifier kicks */
+	disable_delayed_work_sync(&chg->guard_work);
+	max77759_charger_restore_float(chg);
+}
+
 static const struct platform_device_id max77759_charger_id[] = {
 	{ .name = "max77759-charger" },
 	{ }
@@ -1491,8 +2068,10 @@ static struct platform_driver max77759_charger_driver = {
 	.driver = {
 		.name = "max77759-charger",
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
+		.pm = pm_sleep_ptr(&max77759_charger_pm),
 	},
 	.probe = max77759_charger_probe,
+	.shutdown = max77759_charger_shutdown,
 	.id_table = max77759_charger_id,
 };
 module_platform_driver(max77759_charger_driver);
